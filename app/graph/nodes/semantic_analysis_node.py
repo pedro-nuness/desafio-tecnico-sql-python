@@ -1,0 +1,29 @@
+from app.domain.enums import PipelineStep
+from app.domain.exceptions import ModernizationError
+from app.domain.services.semantic_analyzer import SemanticAnalyzer
+from app.graph.state import ModernizationState, StateUpdate, failed
+
+
+class SemanticAnalysisNode:
+    """Deterministic analysis of the parsed IR: features, risks, strategy."""
+
+    def __init__(self, analyzer: SemanticAnalyzer) -> None:
+        self._analyzer = analyzer
+
+    def __call__(self, state: ModernizationState) -> StateUpdate:
+        procedure = state.get("parsed_procedure")
+        if procedure is None:
+            return failed(
+                PipelineStep.SEMANTIC_ANALYSIS, ModernizationError("no parsed procedure in state")
+            )
+        analysis = self._analyzer.analyze(procedure)
+        warnings = (
+            []
+            if state.get("schema_context")
+            else ["No schema provided: column types and constraints are inferred by the LLM."]
+        )
+        return StateUpdate(
+            semantic_analysis=analysis,
+            warnings=warnings,
+            completed_steps=[PipelineStep.SEMANTIC_ANALYSIS],
+        )

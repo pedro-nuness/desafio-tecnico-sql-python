@@ -1,0 +1,248 @@
+{
+  "execution_id": "01a0f424-a44e-704b-bbf0-a982ef7c8bb0",
+  "status": "success",
+  "created_at": "2026-09-30T21:07:17.198428+00:00",
+  "report": {
+    "parsing": {
+      "success": true,
+      "procedure_name": "sp_processar_lote_taxas",
+      "kind": "procedure",
+      "parser": "pglast",
+      "parameters": [
+        {
+          "name": "p_data_referencia",
+          "data_type": "date",
+          "mode": "in",
+          "has_default": false
+        }
+      ],
+      "return_type": null,
+      "statement_count": 22,
+      "referenced_tables": [
+        "contas",
+        "log_auditoria",
+        "taxas",
+        "transacoes"
+      ],
+      "called_functions": [
+        "date",
+        "jsonb_build_object"
+      ],
+      "warnings": []
+    },
+    "semantic_analysis": {
+      "detected_features": [
+        {
+          "feature": "conditional",
+          "occurrences": 5,
+          "lines": [
+            47,
+            53,
+            54,
+            55,
+            59
+          ]
+        },
+        {
+          "feature": "cursor",
+          "occurrences": 4,
+          "lines": [
+            15,
+            32,
+            35,
+            82
+          ]
+        },
+        {
+          "feature": "dml",
+          "occurrences": 4,
+          "lines": [
+            60,
+            62,
+            65,
+            84
+          ]
+        },
+        {
+          "feature": "function_calls",
+          "occurrences": 1,
+          "lines": [
+            15
+          ]
+        },
+        {
+          "feature": "in_parameters",
+          "occurrences": 1,
+          "lines": []
+        },
+        {
+          "feature": "jsonb",
+          "occurrences": 2,
+          "lines": [
+            65,
+            84
+          ]
+        },
+        {
+          "feature": "loop",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "feature": "variables",
+          "occurrences": 9,
+          "lines": [
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30
+          ]
+        }
+      ],
+      "risks": [
+        {
+          "code": "N_PLUS_ONE",
+          "severity": "high",
+          "message": "SQL executed inside a loop: one database round-trip per iteration. Prefer a single set-based statement.",
+          "line": 38
+        },
+        {
+          "code": "N_PLUS_ONE",
+          "severity": "high",
+          "message": "SQL executed inside a loop: one database round-trip per iteration. Prefer a single set-based statement.",
+          "line": 60
+        },
+        {
+          "code": "N_PLUS_ONE",
+          "severity": "high",
+          "message": "SQL executed inside a loop: one database round-trip per iteration. Prefer a single set-based statement.",
+          "line": 62
+        },
+        {
+          "code": "N_PLUS_ONE",
+          "severity": "high",
+          "message": "SQL executed inside a loop: one database round-trip per iteration. Prefer a single set-based statement.",
+          "line": 65
+        },
+        {
+          "code": "EXTERNAL_ROUTINE_DEPENDENCY",
+          "severity": "low",
+          "message": "Depends on other database routines: date.",
+          "line": null
+        }
+      ],
+      "dependencies": [
+        {
+          "name": "contas",
+          "kind": "table"
+        },
+        {
+          "name": "log_auditoria",
+          "kind": "table"
+        },
+        {
+          "name": "taxas",
+          "kind": "table"
+        },
+        {
+          "name": "transacoes",
+          "kind": "table"
+        },
+        {
+          "name": "date",
+          "kind": "function"
+        }
+      ],
+      "recommended_strategy": "hybrid",
+      "recommendations": [
+        {
+          "code": "KEEP_SET_BASED_SQL",
+          "message": "Keep joins, aggregates, CTEs and bulk DML as parameterized SQL."
+        },
+        {
+          "code": "REWRITE_ROW_BY_ROW",
+          "message": "Collapse per-row statements inside loops into one set-based statement."
+        }
+      ]
+    },
+    "generation": {
+      "success": true,
+      "strategy": "database_delegated",
+      "recommended_strategy": "hybrid",
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "generation-v1",
+      "input_tokens": 3461,
+      "output_tokens": 3100,
+      "latency_ms": 16716.88,
+      "finish_reason": "stop",
+      "architectural_decisions": [
+        {
+          "topic": "N+1 elimination",
+          "decision": "Collapsed the cursor loop (fee lookup, account debit, TARIFA insert, audit log per row) into a single statement with data-modifying CTEs (calculadas -> atualizadas/tarifas_inseridas/log_por_transacao/log_lote).",
+          "rationale": "All logic is pure relational computation; set-based SQL preserves semantics while removing four round-trips per transaction."
+        },
+        {
+          "topic": "Cumulative account debit",
+          "decision": "The UPDATE debits each account once using SUM(taxa) grouped by conta_origem_id instead of one UPDATE per transaction.",
+          "rationale": "A plain UPDATE ... FROM with multiple matching rows per account would apply only one (nondeterministic) fee; aggregating reproduces the cumulative effect of the original sequential loop."
+        },
+        {
+          "topic": "Transaction ownership",
+          "decision": "No commit/rollback in the function; everything runs on the caller's connection/transaction.",
+          "rationale": "The original procedure ran inside the caller's transaction; atomicity of the whole batch is preserved."
+        },
+        {
+          "topic": "Missing fee rows",
+          "decision": "LEFT JOIN LATERAL with WHERE percentual IS NOT NULL reproduces the original CONTINUE when no vigent fee row exists.",
+          "rationale": "SELECT INTO leaves NULLs when no row is found, and the original skips those transactions."
+        },
+        {
+          "topic": "Typed error",
+          "decision": "Introduced LoteTaxasError; the original had no RAISE, so it is only raised on unexpected execution failure.",
+          "rationale": "Rule 5 requires typed exceptions; normal-path behaviour (no exceptions raised) is unchanged."
+        }
+      ],
+      "warnings": [
+        "The original CASE kept TRANSFERENCIA fees unchanged and applied 1.10/0.90 multipliers; the multiplier is now computed in SQL with identical semantics.",
+        "The original loop debited accounts sequentially; the set-based version debits each account once with the summed fees. Net saldo result is identical, but any row-level triggers on contas fire once per account instead of once per transaction.",
+        "The final SELECT returns summary counts for logging only; the procedure still returns nothing to the caller, preserving the original contract.",
+        "DATE(data_transacao) is not sargable; consider indexing an expression or a generated date column if performance becomes an issue (same behaviour as legacy)."
+      ]
+    },
+    "validation": {
+      "valid_python": true,
+      "passed_all": true,
+      "validators": [
+        {
+          "validator": "python_ast",
+          "success": true,
+          "blocking": true,
+          "messages": []
+        },
+        {
+          "validator": "ruff",
+          "success": true,
+          "blocking": false,
+          "messages": []
+        }
+      ],
+      "warnings": []
+    },
+    "completed_steps": [
+      "parsing",
+      "semantic_analysis",
+      "generation",
+      "validation"
+    ],
+    "errors": [],
+    "warnings": []
+  }
+}

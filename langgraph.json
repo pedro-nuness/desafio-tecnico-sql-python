@@ -1,0 +1,12 @@
+{
+  "$schema": "https://langgra.ph/schema.json",
+  "python_version": "3.14",
+  "dependencies": ["."],
+  "graphs": {
+    "modernization": "./app/bootstrap.py:make_graph"
+  },
+  "http": {
+    "app": "./app/api/main.py:app"
+  },
+  "env": ".env"
+}

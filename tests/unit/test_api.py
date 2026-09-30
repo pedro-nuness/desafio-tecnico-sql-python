@@ -1,0 +1,81 @@
+from collections.abc import AsyncIterator, Callable
+from uuid import uuid4
+
+import pytest
+from fastapi import FastAPI
+from httpx import ASGITransport, AsyncClient
+
+from app.api.main import create_app
+from app.bootstrap import Container
+from app.config.settings import Settings
+from tests.conftest import ServiceFactory
+
+
+@pytest.fixture
+def api(make_service: ServiceFactory) -> FastAPI:
+    service = make_service()
+    return create_app(Settings(), container_factory=lambda _: Container(service))
+
+
+@pytest.fixture
+async def client(api: FastAPI) -> AsyncIterator[AsyncClient]:
+    async with api.router.lifespan_context(api):
+        transport = ASGITransport(app=api)
+        async with AsyncClient(transport=transport, base_url="http://test") as http:
+            yield http
+
+
+async def test_health(client: AsyncClient) -> None:
+    response = await client.get("/health")
+
+    assert response.status_code == 200
+    assert response.json() == {"status": "ok"}
+
+
+async def test_modernize_returns_structured_report(
+    client: AsyncClient, load_procedure: Callable[[str], str]
+) -> None:
+    response = await client.post(
+        "/modernize",
+        json={"source_code": load_procedure("process_orders"), "schema": "CREATE TABLE t();"},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "success"
+    assert body["generated_code"]
+    assert set(body["report"]) >= {"parsing", "semantic_analysis", "generation", "validation"}
+    assert body["report"]["parsing"]["procedure_name"] == "billing.process_customer_orders"
+    assert body["report"]["generation"]["strategy"] == "hybrid"
+    assert body["report"]["semantic_analysis"]["recommended_strategy"] == "hybrid"
+    assert body["report"]["validation"]["valid_python"] is True
+
+    stored = await client.get(f"/modernizations/{body['execution_id']}")
+    assert stored.status_code == 200
+    assert stored.json()["report"] == body["report"]
+
+
+async def test_schema_is_optional_and_failures_are_reported_in_the_body(
+    client: AsyncClient, load_procedure: Callable[[str], str]
+) -> None:
+    response = await client.post(
+        "/modernize", json={"source_code": load_procedure("invalid_syntax")}
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["status"] == "failure"
+    assert body["generated_code"] is None
+    assert body["report"]["errors"][0]["step"] == "parsing"
+
+
+async def test_empty_source_is_rejected(client: AsyncClient) -> None:
+    response = await client.post("/modernize", json={"source_code": ""})
+
+    assert response.status_code == 422
+
+
+async def test_unknown_execution_returns_404(client: AsyncClient) -> None:
+    response = await client.get(f"/modernizations/{uuid4()}")
+
+    assert response.status_code == 404

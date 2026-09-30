@@ -1,0 +1,271 @@
+{
+  "execution_id": "01a0f424-a44f-77cd-a7ee-36f136ce783d",
+  "status": "partial",
+  "created_at": "2026-09-30T21:07:17.199864+00:00",
+  "report": {
+    "parsing": {
+      "success": true,
+      "procedure_name": "sp_relatorio_mensal_cliente",
+      "kind": "function",
+      "parser": "pglast",
+      "parameters": [
+        {
+          "name": "p_cliente_id",
+          "data_type": "bigint",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "p_data_inicio",
+          "data_type": "date",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "p_data_fim",
+          "data_type": "date",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "mes_referencia",
+          "data_type": "date",
+          "mode": "table",
+          "has_default": false
+        },
+        {
+          "name": "total_creditos",
+          "data_type": "numeric(18, 2)",
+          "mode": "table",
+          "has_default": false
+        },
+        {
+          "name": "total_debitos",
+          "data_type": "numeric(18, 2)",
+          "mode": "table",
+          "has_default": false
+        },
+        {
+          "name": "saldo_consolidado",
+          "data_type": "numeric(18, 2)",
+          "mode": "table",
+          "has_default": false
+        },
+        {
+          "name": "qtd_transacoes",
+          "data_type": "integer",
+          "mode": "table",
+          "has_default": false
+        }
+      ],
+      "return_type": "TABLE(mes_referencia date, total_creditos numeric(18, 2), total_debitos numeric(18, 2), saldo_consolidado numeric(18, 2), qtd_transacoes integer)",
+      "statement_count": 8,
+      "referenced_tables": [
+        "contas",
+        "transacoes"
+      ],
+      "called_functions": [
+        "count",
+        "date_trunc",
+        "fn_saldo_cliente",
+        "sum"
+      ],
+      "warnings": []
+    },
+    "semantic_analysis": {
+      "detected_features": [
+        {
+          "feature": "aggregation",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "feature": "conditional",
+          "occurrences": 1,
+          "lines": [
+            27
+          ]
+        },
+        {
+          "feature": "cte",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "feature": "exception_handling",
+          "occurrences": 1,
+          "lines": [
+            26
+          ]
+        },
+        {
+          "feature": "in_parameters",
+          "occurrences": 3,
+          "lines": []
+        },
+        {
+          "feature": "join",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "feature": "out_parameters",
+          "occurrences": 5,
+          "lines": []
+        },
+        {
+          "feature": "raise",
+          "occurrences": 3,
+          "lines": [
+            28,
+            32,
+            75
+          ]
+        },
+        {
+          "feature": "recursive_cte",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "feature": "return_query",
+          "occurrences": 2,
+          "lines": [
+            34,
+            77
+          ]
+        },
+        {
+          "feature": "variables",
+          "occurrences": 1,
+          "lines": [
+            25
+          ]
+        }
+      ],
+      "risks": [
+        {
+          "code": "RECURSIVE_CTE",
+          "severity": "low",
+          "message": "Recursive CTE should stay in SQL; re-implementing it in Python is costly.",
+          "line": null
+        },
+        {
+          "code": "EXTERNAL_ROUTINE_DEPENDENCY",
+          "severity": "low",
+          "message": "Depends on other database routines: fn_saldo_cliente.",
+          "line": null
+        }
+      ],
+      "dependencies": [
+        {
+          "name": "contas",
+          "kind": "table"
+        },
+        {
+          "name": "transacoes",
+          "kind": "table"
+        },
+        {
+          "name": "fn_saldo_cliente",
+          "kind": "function"
+        }
+      ],
+      "recommended_strategy": "hybrid",
+      "recommendations": [
+        {
+          "code": "KEEP_SET_BASED_SQL",
+          "message": "Keep joins, aggregates, CTEs and bulk DML as parameterized SQL."
+        },
+        {
+          "code": "TYPED_EXCEPTIONS",
+          "message": "Map RAISE EXCEPTION to typed exceptions and RAISE NOTICE to logging."
+        },
+        {
+          "code": "RESULT_TYPE_FOR_OUT_PARAMS",
+          "message": "Return OUT/INOUT parameters as an immutable result type."
+        },
+        {
+          "code": "TYPED_ROWS",
+          "message": "Return RETURN QUERY rows as a sequence of typed rows."
+        }
+      ]
+    },
+    "generation": {
+      "success": true,
+      "strategy": "hybrid",
+      "recommended_strategy": "hybrid",
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "generation-v1",
+      "input_tokens": 3483,
+      "output_tokens": 2058,
+      "latency_ms": 136192.58,
+      "finish_reason": "stop",
+      "architectural_decisions": [
+        {
+          "topic": "Set-based SQL retention",
+          "decision": "The recursive CTE (months chain), the aggregated subquery over transacoes/contas and the final LEFT JOIN remain as one parameterized query executed via sqlalchemy.text().",
+          "rationale": "Joins, aggregates and recursive CTEs belong in the database; reimplementing recursion/aggregation in Python would be slower and less faithful."
+        },
+        {
+          "topic": "External routine dependency",
+          "decision": "fn_saldo_cliente is still called inside the database via SELECT fn_saldo_cliente(:cliente_id); its scalar result is bound as :v_saldo_atual into the main query.",
+          "rationale": "Its implementation was not provided, so translating it would risk behavioural drift; keeping it server-side preserves exact semantics."
+        }
+      ],
+      "warnings": [
+        "RAISE EXCEPTION became PeriodoInvalidoError raised before any SQL executes; callers relying on catching generic SQLSTATE errors must adapt.",
+        "Original WHEN OTHERS caught every error including those raised by fn_saldo_cliente; here the initial period check raises outside the try-block intentionally (it maps to RAISE EXCEPTION, which propagated anyway). All other failures fall back to the degraded row like the original.",
+        "If the fallback SELECT itself fails (e.g., broken connection), the exception propagates instead of returning a row — impossible-to-reproduce edge case of the original where the fallback could also fail silently.",
+        "saldo_consolidado can be Decimal|None because v_saldo_atual comes from fn_saldo_cliente whose nullability is unknown; the original coerced NULL implicitly at output time.",
+        "Assumes fn_saldo_cliente exists in the target database; verify before deployment.",
+        "No row locks needed (read-only routine); transaction ownership left entirely to the caller."
+      ]
+    },
+    "validation": {
+      "valid_python": true,
+      "passed_all": false,
+      "validators": [
+        {
+          "validator": "python_ast",
+          "success": true,
+          "blocking": true,
+          "messages": []
+        },
+        {
+          "validator": "ruff",
+          "success": false,
+          "blocking": false,
+          "messages": [
+            {
+              "message": "Module level import not at top of file",
+              "code": "E402",
+              "line": 21,
+              "column": 1
+            }
+          ]
+        }
+      ],
+      "warnings": [
+        "[ruff] L21: E402 Module level import not at top of file"
+      ]
+    },
+    "completed_steps": [
+      "parsing",
+      "semantic_analysis",
+      "generation",
+      "validation"
+    ],
+    "errors": [],
+    "warnings": []
+  }
+}

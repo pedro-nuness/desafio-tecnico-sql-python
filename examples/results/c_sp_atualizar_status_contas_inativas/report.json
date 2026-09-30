@@ -1,0 +1,189 @@
+{
+  "execution_id": "01a0f424-a44b-768e-9d20-ba28ccfc9ae8",
+  "status": "failure",
+  "created_at": "2026-09-30T21:07:17.195533+00:00",
+  "report": {
+    "parsing": {
+      "success": true,
+      "procedure_name": "sp_atualizar_status_contas_inativas",
+      "kind": "procedure",
+      "parser": "pglast",
+      "parameters": [
+        {
+          "name": "p_dias",
+          "data_type": "integer",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "p_afetadas",
+          "data_type": "integer",
+          "mode": "out",
+          "has_default": false
+        }
+      ],
+      "return_type": null,
+      "statement_count": 5,
+      "referenced_tables": [
+        "contas",
+        "log_auditoria",
+        "transacoes"
+      ],
+      "called_functions": [
+        "jsonb_build_object",
+        "now"
+      ],
+      "warnings": []
+    },
+    "semantic_analysis": {
+      "detected_features": [
+        {
+          "feature": "conditional",
+          "occurrences": 1,
+          "lines": [
+            15
+          ]
+        },
+        {
+          "feature": "dml",
+          "occurrences": 2,
+          "lines": [
+            19,
+            31
+          ]
+        },
+        {
+          "feature": "get_diagnostics",
+          "occurrences": 1,
+          "lines": [
+            29
+          ]
+        },
+        {
+          "feature": "in_parameters",
+          "occurrences": 1,
+          "lines": []
+        },
+        {
+          "feature": "jsonb",
+          "occurrences": 1,
+          "lines": [
+            31
+          ]
+        },
+        {
+          "feature": "out_parameters",
+          "occurrences": 1,
+          "lines": []
+        },
+        {
+          "feature": "raise",
+          "occurrences": 1,
+          "lines": [
+            16
+          ]
+        }
+      ],
+      "risks": [
+        {
+          "code": "DIAGNOSTICS_SEMANTICS",
+          "severity": "low",
+          "message": "GET DIAGNOSTICS must be mapped to driver equivalents (e.g. rowcount).",
+          "line": null
+        }
+      ],
+      "dependencies": [
+        {
+          "name": "contas",
+          "kind": "table"
+        },
+        {
+          "name": "log_auditoria",
+          "kind": "table"
+        },
+        {
+          "name": "transacoes",
+          "kind": "table"
+        }
+      ],
+      "recommended_strategy": "hybrid",
+      "recommendations": [
+        {
+          "code": "KEEP_SET_BASED_SQL",
+          "message": "Keep joins, aggregates, CTEs and bulk DML as parameterized SQL."
+        },
+        {
+          "code": "TYPED_EXCEPTIONS",
+          "message": "Map RAISE EXCEPTION to typed exceptions and RAISE NOTICE to logging."
+        },
+        {
+          "code": "RESULT_TYPE_FOR_OUT_PARAMS",
+          "message": "Return OUT/INOUT parameters as an immutable result type."
+        },
+        {
+          "code": "ROWCOUNT",
+          "message": "Use the driver's rowcount instead of GET DIAGNOSTICS ROW_COUNT."
+        }
+      ]
+    },
+    "generation": {
+      "success": true,
+      "strategy": "hybrid",
+      "recommended_strategy": "hybrid",
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "generation-v1",
+      "input_tokens": 2147,
+      "output_tokens": 1112,
+      "latency_ms": 6489.47,
+      "finish_reason": "stop",
+      "architectural_decisions": [],
+      "warnings": [
+        "LLM did not report a strategy; assuming the recommended one (hybrid)."
+      ]
+    },
+    "validation": {
+      "valid_python": false,
+      "passed_all": false,
+      "validators": [
+        {
+          "validator": "python_ast",
+          "success": false,
+          "blocking": true,
+          "messages": [
+            {
+              "message": "unterminated triple-quoted string literal (detected at line 99)",
+              "code": null,
+              "line": 99,
+              "column": 1
+            }
+          ]
+        },
+        {
+          "validator": "ruff",
+          "success": false,
+          "blocking": false,
+          "messages": [
+            {
+              "message": "missing closing quote in string literal",
+              "code": "invalid-syntax",
+              "line": 99,
+              "column": 1
+            }
+          ]
+        }
+      ],
+      "warnings": [
+        "[ruff] L99: invalid-syntax missing closing quote in string literal"
+      ]
+    },
+    "completed_steps": [
+      "parsing",
+      "semantic_analysis",
+      "generation",
+      "validation"
+    ],
+    "errors": [],
+    "warnings": []
+  }
+}

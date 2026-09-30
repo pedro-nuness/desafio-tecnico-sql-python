@@ -1,0 +1,126 @@
+{
+  "execution_id": "01a0f424-a448-70d3-a29f-7392c1e8a93e",
+  "status": "success",
+  "created_at": "2026-09-30T21:07:17.192060+00:00",
+  "report": {
+    "parsing": {
+      "success": true,
+      "procedure_name": "fn_saldo_cliente",
+      "kind": "function",
+      "parser": "pglast",
+      "parameters": [
+        {
+          "name": "p_cliente_id",
+          "data_type": "bigint",
+          "mode": "in",
+          "has_default": false
+        }
+      ],
+      "return_type": "numeric(18, 2)",
+      "statement_count": 2,
+      "referenced_tables": [
+        "contas"
+      ],
+      "called_functions": [
+        "sum"
+      ],
+      "warnings": []
+    },
+    "semantic_analysis": {
+      "detected_features": [
+        {
+          "feature": "aggregation",
+          "occurrences": 1,
+          "lines": [
+            15
+          ]
+        },
+        {
+          "feature": "in_parameters",
+          "occurrences": 1,
+          "lines": []
+        },
+        {
+          "feature": "variables",
+          "occurrences": 1,
+          "lines": [
+            13
+          ]
+        }
+      ],
+      "risks": [],
+      "dependencies": [
+        {
+          "name": "contas",
+          "kind": "table"
+        }
+      ],
+      "recommended_strategy": "database_delegated",
+      "recommendations": [
+        {
+          "code": "KEEP_SET_BASED_SQL",
+          "message": "Keep joins, aggregates, CTEs and bulk DML as parameterized SQL."
+        }
+      ]
+    },
+    "generation": {
+      "success": true,
+      "strategy": "database_delegated",
+      "recommended_strategy": "database_delegated",
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "generation-v1",
+      "input_tokens": 1552,
+      "output_tokens": 560,
+      "latency_ms": 4149.31,
+      "finish_reason": "stop",
+      "architectural_decisions": [
+        {
+          "topic": "Aggregation placement",
+          "decision": "Kept the SUM/COALESCE aggregation as a single parameterized SQL statement executed via SQLAlchemy text().",
+          "rationale": "Aggregates belong close to the database; the query is trivially set-based and uses the idx_contas_cliente index."
+        },
+        {
+          "topic": "Transaction ownership",
+          "decision": "No commit/rollback in the function; the read runs on the caller's connection/transaction.",
+          "rationale": "The original PL/pgSQL function does not manage transactions; the caller owns the transaction."
+        },
+        {
+          "topic": "Return type",
+          "decision": "Returns Decimal directly instead of a frozen dataclass.",
+          "rationale": "The routine returns a single scalar numeric(18,2), not a row or OUT-parameter set; Decimal preserves numeric semantics."
+        }
+      ],
+      "warnings": [
+        "The original returns NUMERIC(18,2); PostgreSQL rounds to the column scale on return. Python returns the raw SUM result; wrap with quantize(Decimal('0.01')) if exact scale rounding is required."
+      ]
+    },
+    "validation": {
+      "valid_python": true,
+      "passed_all": true,
+      "validators": [
+        {
+          "validator": "python_ast",
+          "success": true,
+          "blocking": true,
+          "messages": []
+        },
+        {
+          "validator": "ruff",
+          "success": true,
+          "blocking": false,
+          "messages": []
+        }
+      ],
+      "warnings": []
+    },
+    "completed_steps": [
+      "parsing",
+      "semantic_analysis",
+      "generation",
+      "validation"
+    ],
+    "errors": [],
+    "warnings": []
+  }
+}

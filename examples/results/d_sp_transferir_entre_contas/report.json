@@ -1,0 +1,233 @@
+{
+  "execution_id": "01a0f424-a44d-7433-aa23-a9204a1858c2",
+  "status": "partial",
+  "created_at": "2026-09-30T21:07:17.197043+00:00",
+  "report": {
+    "parsing": {
+      "success": true,
+      "procedure_name": "sp_transferir_entre_contas",
+      "kind": "procedure",
+      "parser": "pglast",
+      "parameters": [
+        {
+          "name": "p_conta_origem",
+          "data_type": "bigint",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "p_conta_destino",
+          "data_type": "bigint",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "p_valor",
+          "data_type": "numeric(18, 2)",
+          "mode": "in",
+          "has_default": false
+        }
+      ],
+      "return_type": null,
+      "statement_count": 19,
+      "referenced_tables": [
+        "contas",
+        "log_auditoria",
+        "transacoes"
+      ],
+      "called_functions": [
+        "jsonb_build_object"
+      ],
+      "warnings": []
+    },
+    "semantic_analysis": {
+      "detected_features": [
+        {
+          "feature": "conditional",
+          "occurrences": 5,
+          "lines": [
+            20,
+            24,
+            34,
+            38,
+            42
+          ]
+        },
+        {
+          "feature": "dml",
+          "occurrences": 5,
+          "lines": [
+            46,
+            47,
+            49,
+            52,
+            66
+          ]
+        },
+        {
+          "feature": "exception_handling",
+          "occurrences": 1,
+          "lines": [
+            19
+          ]
+        },
+        {
+          "feature": "in_parameters",
+          "occurrences": 3,
+          "lines": []
+        },
+        {
+          "feature": "jsonb",
+          "occurrences": 2,
+          "lines": [
+            52,
+            66
+          ]
+        },
+        {
+          "feature": "raise",
+          "occurrences": 6,
+          "lines": [
+            21,
+            25,
+            35,
+            39,
+            43,
+            77
+          ]
+        },
+        {
+          "feature": "row_locking",
+          "occurrences": 2,
+          "lines": [
+            28,
+            31
+          ]
+        },
+        {
+          "feature": "variables",
+          "occurrences": 3,
+          "lines": [
+            16,
+            17,
+            18
+          ]
+        }
+      ],
+      "risks": [
+        {
+          "code": "ROW_LOCKING",
+          "severity": "medium",
+          "message": "Row locks (FOR UPDATE/SHARE) only hold inside one transaction; lock and subsequent writes must share the same connection/transaction.",
+          "line": null
+        }
+      ],
+      "dependencies": [
+        {
+          "name": "contas",
+          "kind": "table"
+        },
+        {
+          "name": "log_auditoria",
+          "kind": "table"
+        },
+        {
+          "name": "transacoes",
+          "kind": "table"
+        }
+      ],
+      "recommended_strategy": "hybrid",
+      "recommendations": [
+        {
+          "code": "KEEP_SET_BASED_SQL",
+          "message": "Keep joins, aggregates, CTEs and bulk DML as parameterized SQL."
+        },
+        {
+          "code": "CALLER_OWNS_TRANSACTION",
+          "message": "Receive an open connection; do not commit inside the function."
+        },
+        {
+          "code": "TYPED_EXCEPTIONS",
+          "message": "Map RAISE EXCEPTION to typed exceptions and RAISE NOTICE to logging."
+        }
+      ]
+    },
+    "generation": {
+      "success": true,
+      "strategy": "hybrid",
+      "recommended_strategy": "hybrid",
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "generation-v1",
+      "input_tokens": 3098,
+      "output_tokens": 2578,
+      "latency_ms": 13010.28,
+      "finish_reason": "stop",
+      "architectural_decisions": [
+        {
+          "topic": "Transaction ownership",
+          "decision": "Function receives an open AsyncConnection and never commits; the caller owns the outer transaction.",
+          "rationale": "Row locks (FOR UPDATE) and dependent writes must share one transaction; committing inside would release locks and break atomicity."
+        },
+        {
+          "topic": "Exception block semantics",
+          "decision": "The PL/pgSQL EXCEPTION WHEN OTHERS block is reproduced with conn.begin_nested() (SAVEPOINT): on failure the savepoint is rolled back, the error audit row is inserted, and the error is re-raised.",
+          "rationale": "PL/pgSQL exception handlers run in an implicit subtransaction, so the error log survives even though the failed DML is undone; a plain except on the caller's transaction could not write the log after a failed statement."
+        },
+        {
+          "topic": "Relational logic placement",
+          "decision": "All SELECT ... FOR UPDATE, UPDATEs and INSERTs remain as parameterized SQL via sqlalchemy.text(); jsonb_build_object is kept in SQL.",
+          "rationale": "Locking, DML and jsonb construction are database concerns; moving them to Python would change locking/atomicity semantics."
+        },
+        {
+          "topic": "Error typing",
+          "decision": "Each RAISE EXCEPTION maps to a typed exception subclassing TransferenciaError; SQLERRM becomes str(exc).",
+          "rationale": "Typed exceptions allow callers to handle specific failure modes; the generic handler still catches DBAPIError for the audit-log path."
+        }
+      ],
+      "warnings": [
+        "The error-audit INSERT (TRANSFERENCIA_ERRO) runs on the caller's transaction after the savepoint rollback; if the caller later rolls back the outer transaction, the error log is lost too. In PL/pgSQL the same applies unless the caller committed around the CALL.",
+        "The generic 'except Exception' also catches the typed TransferenciaError so the error log is written for validation failures as well, matching WHEN OTHERS; the original error is always re-raised.",
+        "SQLERRM in PL/pgSQL is the database error message; str(exc) on a DBAPIError may include Python-side wrapper text, so the 'erro' field in the audit JSON may differ slightly in formatting.",
+        "p_valor is typed Decimal | None to mirror NUMERIC(18,2); callers should pass Decimal, not float, to avoid precision drift.",
+        "No RAISE NOTICE/INFO/WARNING existed in the routine; logging is used only for the failure path (an addition for observability, not a behaviour change)."
+      ]
+    },
+    "validation": {
+      "valid_python": true,
+      "passed_all": false,
+      "validators": [
+        {
+          "validator": "python_ast",
+          "success": true,
+          "blocking": true,
+          "messages": []
+        },
+        {
+          "validator": "ruff",
+          "success": false,
+          "blocking": false,
+          "messages": [
+            {
+              "message": "`typing.Any` imported but unused",
+              "code": "F401",
+              "line": 15,
+              "column": 20
+            }
+          ]
+        }
+      ],
+      "warnings": [
+        "[ruff] L15: F401 `typing.Any` imported but unused"
+      ]
+    },
+    "completed_steps": [
+      "parsing",
+      "semantic_analysis",
+      "generation",
+      "validation"
+    ],
+    "errors": [],
+    "warnings": []
+  }
+}

@@ -1,0 +1,27 @@
+from app.domain.enums import GenerationStrategy
+from app.domain.models.value_object import ValueObject
+
+
+class ArchitecturalDecision(ValueObject):
+    topic: str
+    decision: str
+    rationale: str
+
+
+class GenerationMetadata(ValueObject):
+    provider: str
+    model: str
+    prompt_version: str
+    input_tokens: int | None = None
+    output_tokens: int | None = None
+    latency_ms: float
+    finish_reason: str | None = None
+
+
+class GenerationResult(ValueObject):
+    code: str
+    strategy: GenerationStrategy
+    recommended_strategy: GenerationStrategy
+    architectural_decisions: tuple[ArchitecturalDecision, ...] = ()
+    warnings: tuple[str, ...] = ()
+    metadata: GenerationMetadata
