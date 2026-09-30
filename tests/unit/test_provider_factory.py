@@ -1,9 +1,8 @@
 import pytest
-from pydantic import SecretStr
+from pydantic import SecretStr, ValidationError
 
 from app.config.settings import LLMProviderName, Settings
 from app.domain.exceptions import ConfigurationError
-from app.infrastructure.llm.fake_provider import FakeLLMProvider
 from app.infrastructure.llm.openai_provider import OpenAIProvider
 from app.infrastructure.llm.provider_factory import OPENROUTER_BASE_URL, create_llm_provider
 
@@ -17,8 +16,9 @@ def _settings(provider: LLMProviderName, api_key: str | None = "sk-test") -> Set
     )
 
 
-def test_fake_provider_needs_no_key() -> None:
-    assert isinstance(create_llm_provider(_settings(LLMProviderName.FAKE, None)), FakeLLMProvider)
+def test_unsupported_provider_rejected() -> None:
+    with pytest.raises(ValidationError):
+        Settings(llm_provider="fake", _env_file=None)  # type: ignore[call-arg]
 
 
 @pytest.mark.parametrize("provider", [LLMProviderName.OPENAI, LLMProviderName.OPENROUTER])

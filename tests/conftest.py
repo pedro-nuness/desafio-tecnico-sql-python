@@ -16,13 +16,12 @@ from app.graph.builder import (
     build_modernization_graph,
 )
 from app.graph.pipeline import LangGraphModernizationPipeline
-from app.infrastructure.llm.fake_provider import FakeLLMProvider
 from app.infrastructure.parsing.pglast_parser import PglastParser
 from app.infrastructure.validation.composite_validator import CompositeCodeValidator
 from app.infrastructure.validation.python_ast_validator import PythonASTValidator
 from app.infrastructure.validation.ruff_validator import RuffValidator
 from app.prompts.generation_prompt import GenerationPromptBuilder
-from tests.fakes import InMemoryStore
+from tests.fakes import FakeLLMProvider, InMemoryStore
 
 PROCEDURES_DIR = Path(__file__).parent / "fixtures" / "procedures"
 

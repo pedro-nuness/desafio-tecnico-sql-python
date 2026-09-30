@@ -8,7 +8,6 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 class LLMProviderName(StrEnum):
     OPENAI = "openai"
     OPENROUTER = "openrouter"
-    FAKE = "fake"
 
 
 class Settings(BaseSettings):
@@ -22,8 +21,8 @@ class Settings(BaseSettings):
     )
     database_echo: bool = False
 
-    llm_provider: LLMProviderName = LLMProviderName.FAKE
-    llm_model: str = "fake-model"
+    llm_provider: LLMProviderName = LLMProviderName.OPENROUTER
+    llm_model: str = "anthropic/claude-sonnet-4.5"
     llm_api_key: SecretStr | None = None
     llm_base_url: str | None = None
     """Override the provider endpoint (any OpenAI-compatible API)."""

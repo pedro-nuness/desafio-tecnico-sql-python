@@ -7,7 +7,6 @@ Nothing in graph/, application/ or domain/ changes.
 from app.application.ports.llm.llm_provider import LLMProvider
 from app.config.settings import LLMProviderName, Settings
 from app.domain.exceptions import ConfigurationError
-from app.infrastructure.llm.fake_provider import FakeLLMProvider
 from app.infrastructure.llm.openai_provider import OpenAIProvider
 
 OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
@@ -15,8 +14,6 @@ OPENROUTER_BASE_URL = "https://openrouter.ai/api/v1"
 
 def create_llm_provider(settings: Settings) -> LLMProvider:
     match settings.llm_provider:
-        case LLMProviderName.FAKE:
-            return FakeLLMProvider(model=settings.llm_model)
         case LLMProviderName.OPENAI:
             return OpenAIProvider(
                 api_key=_require_api_key(settings),

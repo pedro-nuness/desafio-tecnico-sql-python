@@ -2,7 +2,7 @@
 
 from app.domain.enums import ModernizationStatus
 from app.domain.models.modernization import Modernization, ModernizationReport
-from app.infrastructure.persistence.models.modernization_history import ModernizationHistoryModel
+from app.infrastructure.persistence.models import ModernizationHistoryModel
 
 
 def to_model(modernization: Modernization) -> ModernizationHistoryModel:

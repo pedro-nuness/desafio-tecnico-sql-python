@@ -9,7 +9,7 @@ from app.bootstrap import default_container, make_graph
 
 @pytest.fixture
 def fresh_default_container(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    monkeypatch.setenv("LLM_PROVIDER", "fake")  # never build a real LLM client here
+    monkeypatch.setenv("LLM_API_KEY", "sk-test-key")
     default_container.cache_clear()
     yield
     default_container.cache_clear()

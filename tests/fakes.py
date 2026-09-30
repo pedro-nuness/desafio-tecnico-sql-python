@@ -1,9 +1,12 @@
-"""In-memory test doubles for the persistence ports (no database needed)."""
+"""In-memory test doubles for persistence and LLM ports."""
 
+import json
+from collections.abc import Sequence
 from types import TracebackType
 from typing import Self
 from uuid import UUID
 
+from app.application.ports.llm.llm_provider import LLMRequest, LLMResponse
 from app.domain.exceptions import ModernizationNotFoundError
 from app.domain.models.modernization import Modernization
 
@@ -60,3 +63,67 @@ class InMemoryStore:
 
     def uow(self) -> InMemoryUnitOfWork:
         return InMemoryUnitOfWork(self)
+
+
+DEFAULT_TEST_CODE = """\
+from sqlalchemy import text
+from sqlalchemy.ext.asyncio import AsyncConnection
+
+
+async def modernized_routine(conn: AsyncConnection) -> None:
+    await conn.execute(text("SELECT 1"))
+"""
+
+DEFAULT_TEST_RESPONSE = json.dumps(
+    {
+        "python_code": DEFAULT_TEST_CODE,
+        "strategy": "hybrid",
+        "architectural_decisions": [
+            {
+                "topic": "sql",
+                "decision": "Test double output",
+                "rationale": "In-memory test double for unit tests.",
+            }
+        ],
+        "warnings": [],
+    }
+)
+
+
+class FakeLLMProvider:
+    """Returns scripted responses in order (the last one repeats) or raises `error`.
+
+    Every request is recorded in `requests` so tests can assert on the prompt.
+    """
+
+    def __init__(
+        self,
+        responses: Sequence[str] = (DEFAULT_TEST_RESPONSE,),
+        *,
+        error: Exception | None = None,
+        model: str = "test-model",
+        provider: str = "fake",
+    ) -> None:
+        if not responses:
+            raise ValueError("FakeLLMProvider needs at least one response")
+        self._responses = list(responses)
+        self._error = error
+        self._model = model
+        self._provider = provider
+        self.requests: list[LLMRequest] = []
+
+    async def generate(self, request: LLMRequest) -> LLMResponse:
+        self.requests.append(request)
+        if self._error is not None:
+            raise self._error
+        index = min(len(self.requests), len(self._responses)) - 1
+        content = self._responses[index]
+        return LLMResponse(
+            content=content,
+            provider=self._provider,
+            model=self._model,
+            input_tokens=len(request.system_prompt + request.user_prompt) // 4,
+            output_tokens=len(content) // 4,
+            latency_ms=0.0,
+            finish_reason="stop",
+        )

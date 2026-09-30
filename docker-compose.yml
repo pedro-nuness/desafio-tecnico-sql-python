@@ -2,8 +2,8 @@ name: plpgsql-modernizer
 
 x-app-env: &app-env
   DATABASE_URL: postgresql+asyncpg://modernizer:modernizer@postgres:5432/modernizer
-  LLM_PROVIDER: ${LLM_PROVIDER:-fake}
-  LLM_MODEL: ${LLM_MODEL:-fake-model}
+  LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
+  LLM_MODEL: ${LLM_MODEL:-z-ai/glm-5.3-flash}
   LLM_API_KEY: ${LLM_API_KEY:-}
   LLM_BASE_URL: ${LLM_BASE_URL:-}
   LLM_REASONING_EFFORT: ${LLM_REASONING_EFFORT:-}

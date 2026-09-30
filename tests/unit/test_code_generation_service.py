@@ -10,10 +10,10 @@ from app.domain.models.generation import GenerationResult
 from app.domain.models.parsing import ParsedProcedure
 from app.domain.models.semantic_analysis import SemanticAnalysis
 from app.domain.services.semantic_analyzer import SemanticAnalyzer
-from app.infrastructure.llm.fake_provider import FakeLLMProvider
 from app.infrastructure.parsing.pglast_parser import PglastParser
 from app.prompts.generation_prompt import PROMPT_VERSION, GenerationPromptBuilder
 from tests.conftest import VALID_CODE, llm_payload
+from tests.fakes import FakeLLMProvider
 
 type Analyzed = tuple[str, ParsedProcedure, SemanticAnalysis]
 

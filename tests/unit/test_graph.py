@@ -4,9 +4,8 @@ from collections.abc import Callable
 
 from app.domain.enums import ModernizationStatus, PipelineStep
 from app.graph.builder import RetryPolicy
-from app.infrastructure.llm.fake_provider import FakeLLMProvider
 from tests.conftest import VALID_CODE, GraphFactory, ServiceFactory, llm_payload
-from tests.fakes import InMemoryStore
+from tests.fakes import FakeLLMProvider, InMemoryStore
 
 BROKEN = llm_payload(code="def broken(:\n")
 LINT_ONLY = "import os\n\nvalue = 1\n"

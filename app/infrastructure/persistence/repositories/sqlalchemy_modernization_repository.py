@@ -5,7 +5,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.domain.exceptions import ModernizationNotFoundError
 from app.domain.models.modernization import Modernization
 from app.infrastructure.persistence.mappers import modernization_mapper as mapper
-from app.infrastructure.persistence.models.modernization_history import ModernizationHistoryModel
+from app.infrastructure.persistence.models import ModernizationHistoryModel
 
 
 class SqlAlchemyModernizationRepository:

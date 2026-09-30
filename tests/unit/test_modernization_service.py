@@ -5,9 +5,8 @@ import pytest
 from app.domain.enums import ModernizationStatus, PipelineStep
 from app.domain.exceptions import LLMProviderError, ModernizationNotFoundError
 from app.domain.models.validation import ValidationResult
-from app.infrastructure.llm.fake_provider import FakeLLMProvider
 from tests.conftest import ServiceFactory, llm_payload
-from tests.fakes import InMemoryStore
+from tests.fakes import FakeLLMProvider, InMemoryStore
 
 ALL_STEPS = tuple(PipelineStep)
 

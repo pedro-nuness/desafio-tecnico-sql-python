@@ -13,13 +13,13 @@ from app.domain.models.modernization import Modernization, PipelineError, Pipeli
 from app.domain.services.semantic_analyzer import SemanticAnalyzer
 from app.graph.builder import build_modernization_graph
 from app.graph.pipeline import LangGraphModernizationPipeline
-from app.infrastructure.llm.fake_provider import FakeLLMProvider
 from app.infrastructure.parsing.pglast_parser import PglastParser
 from app.infrastructure.persistence.database.unit_of_work import SqlAlchemyUnitOfWork
 from app.infrastructure.validation.composite_validator import CompositeCodeValidator
 from app.infrastructure.validation.python_ast_validator import PythonASTValidator
 from app.prompts.generation_prompt import GenerationPromptBuilder
 from tests.conftest import llm_payload
+from tests.fakes import FakeLLMProvider
 
 pytestmark = pytest.mark.integration
 

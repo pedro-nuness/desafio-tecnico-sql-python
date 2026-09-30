@@ -49,9 +49,7 @@ Sobe três serviços:
 | `migrate`  | job one-shot `alembic upgrade head` (espera o Postgres ficar healthy)  |
 | `app`      | **servidor LangGraph CLI** (`langgraph dev`) em `:8000`: graph + API LangGraph + Studio + nossas rotas (só inicia após `migrate` terminar com 0) |
 
-O compose lê o `.env` da raiz (copie de `.env.example`) para as variáveis de LLM. Sem `.env`, usa
-`LLM_PROVIDER=fake` (saída determinística, sem chave), suficiente para exercitar o vertical slice
-inteiro. Para um LLM real, configure o `.env` ou passe na linha de comando:
+O compose lê o `.env` da raiz (copie de `.env.example`) para as variáveis de LLM:
 
 ```bash
 LLM_PROVIDER=openrouter LLM_MODEL=anthropic/claude-sonnet-4.5 LLM_API_KEY=sk-or-... docker compose up --build
@@ -191,7 +189,7 @@ flowchart TB
 
     subgraph Driven["Driven adapters (app/infrastructure, app/graph)"]
         A1["PglastParser"]
-        A2["OpenAIProvider (openai / openrouter)<br/>FakeLLMProvider"]
+        A2["OpenAIProvider (openai / openrouter)"]
         A3["PythonASTValidator · RuffValidator<br/>CompositeCodeValidator"]
         A4["SqlAlchemyUnitOfWork<br/>SqlAlchemyModernizationRepository"]
         A5["LangGraphModernizationPipeline"]
@@ -227,7 +225,7 @@ bootstrap.py = composition root (único lugar que conhece todos os adapters)
 
 | Eixo                 | Port                                   | Adapters hoje                                         |
 |----------------------|----------------------------------------|-------------------------------------------------------|
-| LLM provider/modelo  | `LLMProvider`                          | `OpenAIProvider` (OpenAI e OpenRouter), `FakeLLMProvider` |
+| LLM provider/modelo  | `LLMProvider`                          | `OpenAIProvider` (OpenAI e OpenRouter)                |
 | Parser SQL           | `SQLParser`                            | `PglastParser`                                        |
 | Validadores          | `CodeValidator`                        | `PythonASTValidator`, `RuffValidator`, `CompositeCodeValidator` |
 | Persistência         | `UnitOfWork` + `ModernizationRepository` | `SqlAlchemyUnitOfWork`, `SqlAlchemyModernizationRepository` |
@@ -348,8 +346,8 @@ Centralizada em `app/config/settings.py` (`pydantic-settings`; lê env vars e `.
 | variável                | default                                                       | descrição                                  |
 |-------------------------|---------------------------------------------------------------|--------------------------------------------|
 | `DATABASE_URL`          | `postgresql+asyncpg://modernizer:modernizer@localhost:5432/modernizer` | driver async obrigatório          |
-| `LLM_PROVIDER`          | `fake`                                                        | `fake` \| `openai` \| `openrouter`         |
-| `LLM_MODEL`             | `fake-model`                                                  | ex.: `anthropic/claude-sonnet-4.5` (OpenRouter), `gpt-...` (OpenAI) |
+| `LLM_PROVIDER`          | `openrouter`                                                  | `openai` \| `openrouter`                   |
+| `LLM_MODEL`             | `anthropic/claude-sonnet-4.5`                                 | ex.: `anthropic/claude-sonnet-4.5` (OpenRouter), `gpt-...` (OpenAI) |
 | `LLM_API_KEY`           | —                                                             | obrigatório para `openai`/`openrouter` (falha no startup se ausente) |
 | `LLM_BASE_URL`          | —                                                             | qualquer endpoint OpenAI-compatible        |
 | `LLM_TEMPERATURE`       | `0.0`                                                         |                                            |
@@ -404,7 +402,7 @@ uv run ruff check . && uv run ruff format --check .
 ```
 
 - **Unitários (64)**: parser (`pglast`), análise semântica (inclusive sobre IR montado à mão, sem
-  parser), `CodeGenerationService` com `FakeLLMProvider` (verifica que o prompt carrega parsing +
+  parser), `CodeGenerationService` com test double (verifica que o prompt carrega parsing +
   análise; resposta truncada; `strategy` ausente), validadores (AST, Ruff, composite),
   `ModernizationService` com LangGraph real + UoW em memória (sucesso, falha do LLM, falha de
   parsing, Python inválido, lint → partial, crash inesperado), graph (loop de reparo com feedback,
@@ -432,20 +430,20 @@ app/
 │   ├── ports/                # Protocols: llm/, parsing/, validation/, repositories/, pipeline/
 │   └── services/             # modernization_service.py, code_generation_service.py
 ├── domain/
-│   ├── enums/                # ModernizationStatus, GenerationStrategy, PipelineStep
-│   ├── exceptions/
+│   ├── enums.py              # ModernizationStatus, GenerationStrategy, PipelineStep
+│   ├── exceptions.py         # hierarquia de exceções de domínio
 │   ├── models/               # parsing (IR), semantic_analysis, generation, validation, modernization (+report)
 │   └── services/             # semantic_analyzer.py (puro, determinístico)
 ├── graph/
 │   ├── state.py · builder.py · pipeline.py
 │   └── nodes/                # parsing, semantic_analysis, generation, validation
 ├── infrastructure/
-│   ├── llm/                  # openai_provider.py, fake_provider.py, provider_factory.py
+│   ├── llm/                  # openai_provider.py, provider_factory.py
 │   ├── parsing/              # pglast_parser.py (único import de pglast)
 │   ├── validation/           # python_ast_validator.py, ruff_validator.py, composite_validator.py
 │   └── persistence/
 │       ├── database/         # base, engine, session, unit_of_work
-│       ├── models/           # uma classe ORM por arquivo
+│       ├── models.py         # classes ORM
 │       ├── repositories/     # um repository por aggregate
 │       └── mappers/          # ORM <-> domínio
 ├── prompts/generation_prompt.py
@@ -791,7 +789,6 @@ assíncrono (ver Evolução futura).
   [Decisões de tradução por anexo](#decisões-de-tradução-por-anexo)). O status `success` significa
   "Python válido e sem lint", **não** "tradução correta".
 - `POST /modernize` é síncrono (a request espera o LLM, incluindo a eventual retentativa — AD-13).
-- O `FakeLLMProvider` devolve um módulo placeholder — serve para exercitar o pipeline, não traduz.
 
 ## Trade-offs
 
