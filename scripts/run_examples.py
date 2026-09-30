@@ -68,9 +68,9 @@ def _summary(settings: Settings, runs: list[tuple[str, Modernization]]) -> str:
         f"Modelo: `{settings.llm_provider.value}/{settings.llm_model}` · "
         "schema do Anexo A enviado como contexto · gerado por `scripts/run_examples.py`.",
         "",
-        "| procedure | status | estratégia (LLM / recomendada) | riscos | ruff | tokens in/out"
-        " | latência |",
-        "|---|---|---|---|---|---|---|",
+        "| procedure | status | tentativas | estratégia (LLM / recomendada) | riscos | ruff"
+        " | tokens in/out (última) | duração total |",
+        "|---|---|---|---|---|---|---|---|",
     ]
     for name, run in runs:
         report = run.report
@@ -89,6 +89,7 @@ def _summary(settings: Settings, runs: list[tuple[str, Modernization]]) -> str:
                 [
                     f"[{name}]({name}/)",
                     run.status.value,
+                    str(generation.attempt) if generation and generation.attempt else "—",
                     (
                         f"{generation.strategy} / {generation.recommended_strategy}"
                         if generation and generation.success
@@ -101,11 +102,7 @@ def _summary(settings: Settings, runs: list[tuple[str, Modernization]]) -> str:
                         if generation and generation.success
                         else "—"
                     ),
-                    (
-                        f"{generation.latency_ms / 1000:.1f}s"
-                        if generation and generation.latency_ms
-                        else "—"
-                    ),
+                    f"{(run.updated_at - run.created_at).total_seconds():.1f}s",
                 ]
             )
             + " |"

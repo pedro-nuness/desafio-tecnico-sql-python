@@ -14,6 +14,7 @@ from app.domain.models.generation import (
     ArchitecturalDecision,
     GenerationMetadata,
     GenerationResult,
+    RepairFeedback,
 )
 from app.domain.models.parsing import ParsedProcedure
 from app.domain.models.semantic_analysis import SemanticAnalysis
@@ -57,12 +58,14 @@ class CodeGenerationService:
         analysis: SemanticAnalysis,
         source_code: str,
         schema_context: str | None,
+        feedback: RepairFeedback | None = None,
     ) -> GenerationResult:
         prompt = self._prompt_builder.build(
             procedure=procedure,
             analysis=analysis,
             source_code=source_code,
             schema_context=schema_context,
+            feedback=feedback,
         )
         response = await self._llm.generate(
             LLMRequest(
@@ -111,6 +114,7 @@ class CodeGenerationService:
                 output_tokens=response.output_tokens,
                 latency_ms=response.latency_ms,
                 finish_reason=response.finish_reason,
+                attempt=feedback.attempt if feedback else 1,
             ),
         )
 

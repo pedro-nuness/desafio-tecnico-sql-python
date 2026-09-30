@@ -1,7 +1,7 @@
 {
-  "execution_id": "01a0f424-a44f-77cd-a7ee-36f136ce783d",
-  "status": "partial",
-  "created_at": "2026-09-30T21:07:17.199864+00:00",
+  "execution_id": "01a0f43f-3060-744b-bf1d-da2f36188f3a",
+  "status": "success",
+  "created_at": "2026-09-30T21:36:16.992122+00:00",
   "report": {
     "parsing": {
       "success": true,
@@ -205,35 +205,40 @@
       "recommended_strategy": "hybrid",
       "provider": "openrouter",
       "model": "z-ai/glm-5.3-flash",
-      "prompt_version": "generation-v1",
+      "prompt_version": "generation-v2",
       "input_tokens": 3483,
-      "output_tokens": 2058,
-      "latency_ms": 136192.58,
+      "output_tokens": 2092,
+      "latency_ms": 109727.79,
       "finish_reason": "stop",
+      "attempt": 1,
       "architectural_decisions": [
         {
-          "topic": "Set-based SQL retention",
-          "decision": "The recursive CTE (months chain), the aggregated subquery over transacoes/contas and the final LEFT JOIN remain as one parameterized query executed via sqlalchemy.text().",
-          "rationale": "Joins, aggregates and recursive CTEs belong in the database; reimplementing recursion/aggregation in Python would be slower and less faithful."
+          "topic": "Recursive CTE and aggregation placement",
+          "decision": "Kept the recursive months CTE, the movimento aggregate and the final join/order entirely as parameterized SQL via sqlalchemy.text().",
+          "rationale": "Set-based relational logic performs best and stays closest to the database; reimplementing a recursive month generator in Python would be costlier and slower."
         },
         {
-          "topic": "External routine dependency",
-          "decision": "fn_saldo_cliente is still called inside the database via SELECT fn_saldo_cliente(:cliente_id); its scalar result is bound as :v_saldo_atual into the main query.",
-          "rationale": "Its implementation was not provided, so translating it would risk behavioural drift; keeping it server-side preserves exact semantics."
+          "topic": "External dependency fn_saldo_cliente",
+          "decision": "Called once up front via a small scalar query and passed back into the main SQL as a bind parameter.",
+          "rationale": "The routine depends on a database-defined function whose implementation lives outside this migration scope; calling it once avoids evaluating it inside every output row while preserving results."
+        },
+        {
+          "topic": "Exception/fallback semantics",
+          "decision": "RAISE EXCEPTION became RelatorioError raised before any SQL; the WHEN OTHERS block became a broad except that logs a warning and executes the fallback-row SQL against the same connection.",
+          "rationale": "Preserves the legacy degraded-mode contract (always returning at least one row) without swallowing the invalid-period case, which was an intentional hard failure."
         }
       ],
       "warnings": [
-        "RAISE EXCEPTION became PeriodoInvalidoError raised before any SQL executes; callers relying on catching generic SQLSTATE errors must adapt.",
-        "Original WHEN OTHERS caught every error including those raised by fn_saldo_cliente; here the initial period check raises outside the try-block intentionally (it maps to RAISE EXCEPTION, which propagated anyway). All other failures fall back to the degraded row like the original.",
-        "If the fallback SELECT itself fails (e.g., broken connection), the exception propagates instead of returning a row — impossible-to-reproduce edge case of the original where the fallback could also fail silently.",
-        "saldo_consolidado can be Decimal|None because v_saldo_atual comes from fn_saldo_cliente whose nullability is unknown; the original coerced NULL implicitly at output time.",
-        "Assumes fn_saldo_cliente exists in the target database; verify before deployment.",
-        "No row locks needed (read-only routine); transaction ownership left entirely to the caller."
+        "In PL/pgSQL, an exception aborts the current transaction's changes within the block; here the caller owns the transaction, so after a failed main-query execution the connection state depends on how SQLAlchemy/the driver handled the error — verify whether the fallback SELECT can still execute on the same transaction or needs a savepoint/nested transaction around the main query attempt.",
+        "saldo_consolidado in the fallback path is computed from fn_saldo_cliente even though its own evaluation could have been what failed; in the worst case v_saldo_atual remains unset (None) and COALESCE(...,0) applies, matching the legacy variable default but masking the underlying balance failure.",
+        "qtd_transacoes counts all EFETIVADAS transactions touching either account side, meaning transfers between two accounts of the same client count twice toward credits/debits sums relative to net position — preserved verbatim from the legacy SQL.",
+        "If fn_saldo_cliente does not exist in the migrated schema, replace _SALDO_ATUAL_SQL with equivalent inline SQL computing the balance from contas.saldo/transacoes.",
+        "No row locking exists in the original routine; none were added. Report reflects committed/current snapshot consistent with the caller's isolation level."
       ]
     },
     "validation": {
       "valid_python": true,
-      "passed_all": false,
+      "passed_all": true,
       "validators": [
         {
           "validator": "python_ast",
@@ -243,21 +248,12 @@
         },
         {
           "validator": "ruff",
-          "success": false,
+          "success": true,
           "blocking": false,
-          "messages": [
-            {
-              "message": "Module level import not at top of file",
-              "code": "E402",
-              "line": 21,
-              "column": 1
-            }
-          ]
+          "messages": []
         }
       ],
-      "warnings": [
-        "[ruff] L21: E402 Module level import not at top of file"
-      ]
+      "warnings": []
     },
     "completed_steps": [
       "parsing",

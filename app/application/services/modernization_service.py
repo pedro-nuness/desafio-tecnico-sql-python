@@ -10,11 +10,10 @@ logger = logging.getLogger(__name__)
 
 
 class ModernizationService:
-    """Use case: modernize one routine and record the execution, whatever happens.
+    """Use cases: modernize one routine, and read a recorded execution.
 
-    Two short transactions instead of one long one: the RUNNING row is committed before
-    the (slow, failure-prone) LLM call, so every execution leaves a trace even if the
-    process dies; the final state is written once the pipeline returns.
+    Recording the run is part of the pipeline contract (the graph persists it), so the
+    same guarantee holds for runs started outside this service (LangGraph API / Studio).
     """
 
     def __init__(self, pipeline: ModernizationPipeline, uow_factory: UnitOfWorkFactory) -> None:
@@ -22,22 +21,7 @@ class ModernizationService:
         self._uow_factory = uow_factory
 
     async def modernize(self, source_code: str, schema_context: str | None = None) -> Modernization:
-        modernization = Modernization.start(source_code, schema_context)
-        async with self._uow_factory() as uow:
-            await uow.modernizations.save(modernization)
-            await uow.commit()
-
-        outcome = await self._pipeline.run(
-            execution_id=modernization.id,
-            source_code=source_code,
-            schema_context=schema_context,
-        )
-        finished = modernization.complete(outcome)
-
-        async with self._uow_factory() as uow:
-            await uow.modernizations.update(finished)
-            await uow.commit()
-
+        finished = await self._pipeline.run(source_code=source_code, schema_context=schema_context)
         logger.info(
             "modernization finished",
             extra={"execution_id": str(finished.id), "status": finished.status.value},

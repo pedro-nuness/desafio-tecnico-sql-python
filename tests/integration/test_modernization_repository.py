@@ -91,15 +91,17 @@ async def test_update_of_unknown_aggregate_raises(session_factory: SessionFactor
 
 
 def _service(session_factory: SessionFactory, llm: FakeLLMProvider) -> ModernizationService:
+    def uow_factory() -> SqlAlchemyUnitOfWork:
+        return SqlAlchemyUnitOfWork(session_factory)
+
     graph = build_modernization_graph(
         parser=PglastParser(),
         analyzer=SemanticAnalyzer(),
         generation_service=CodeGenerationService(llm, GenerationPromptBuilder()),
         validator=CompositeCodeValidator([PythonASTValidator()]),
+        uow_factory=uow_factory,
     )
-    return ModernizationService(
-        LangGraphModernizationPipeline(graph), lambda: SqlAlchemyUnitOfWork(session_factory)
-    )
+    return ModernizationService(LangGraphModernizationPipeline(graph), uow_factory)
 
 
 async def test_every_execution_is_persisted_including_failures(

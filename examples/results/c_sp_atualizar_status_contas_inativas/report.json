@@ -1,7 +1,7 @@
 {
-  "execution_id": "01a0f424-a44b-768e-9d20-ba28ccfc9ae8",
-  "status": "failure",
-  "created_at": "2026-09-30T21:07:17.195533+00:00",
+  "execution_id": "01a0f43f-305b-7070-9aef-96fe0e92eb34",
+  "status": "success",
+  "created_at": "2026-09-30T21:36:16.987232+00:00",
   "report": {
     "parsing": {
       "success": true,
@@ -132,58 +132,69 @@
       "recommended_strategy": "hybrid",
       "provider": "openrouter",
       "model": "z-ai/glm-5.3-flash",
-      "prompt_version": "generation-v1",
-      "input_tokens": 2147,
-      "output_tokens": 1112,
-      "latency_ms": 6489.47,
+      "prompt_version": "generation-v2",
+      "input_tokens": 2762,
+      "output_tokens": 1002,
+      "latency_ms": 4578.24,
       "finish_reason": "stop",
-      "architectural_decisions": [],
-      "warnings": [
-        "LLM did not report a strategy; assuming the recommended one (hybrid)."
-      ]
-    },
-    "validation": {
-      "valid_python": false,
-      "passed_all": false,
-      "validators": [
+      "attempt": 2,
+      "architectural_decisions": [
         {
-          "validator": "python_ast",
-          "success": false,
-          "blocking": true,
-          "messages": [
-            {
-              "message": "unterminated triple-quoted string literal (detected at line 99)",
-              "code": null,
-              "line": 99,
-              "column": 1
-            }
-          ]
+          "topic": "DML permanece em SQL",
+          "decision": "UPDATE em lote e INSERT de auditoria mantidos como SQL parametrizado via sqlalchemy.text()",
+          "rationale": "Regra 7: DML em massa deve permanecer set-based no banco; Python apenas valida entrada e coordena."
         },
         {
-          "validator": "ruff",
-          "success": false,
-          "blocking": false,
-          "messages": [
-            {
-              "message": "missing closing quote in string literal",
-              "code": "invalid-syntax",
-              "line": 99,
-              "column": 1
-            }
-          ]
+          "topic": "Intervalo de dias",
+          "decision": "Substituído (p_dias || ' days')::INTERVAL por make_interval(days => :p_dias) com bind param",
+          "rationale": "Evita concatenação de string no SQL e mantém o parâmetro totalmente ligado; semanticamente equivalente."
+        },
+        {
+          "topic": "Transação",
+          "decision": "Nenhum commit/rollback no módulo",
+          "rationale": "A procedure legada não controla transações; o chamador é o dono da transação (regra 3)."
+        },
+        {
+          "topic": "OUT param",
+          "decision": "p_afetadas retornado como frozen dataclass ResultadoInativacao",
+          "rationale": "Regra 6: parâmetros OUT viram tipo de resultado imutável."
         }
       ],
       "warnings": [
-        "[ruff] L99: invalid-syntax missing closing quote in string literal"
+        "rowcount em SQLAlchemy/asyncpg reflete linhas afetadas pelo UPDATE, equivalente a GET DIAGNOSTICS ROW_COUNT; verifique se o driver não reporta -1 em casos de server-side cursors (não aplicável a UPDATE simples).",
+        "A checagem p_dias is None é redundante com a type hint int, mas preservada para fidelidade ao comportamento legado (NULL era rejeitado)."
       ]
+    },
+    "validation": {
+      "valid_python": true,
+      "passed_all": true,
+      "validators": [
+        {
+          "validator": "python_ast",
+          "success": true,
+          "blocking": true,
+          "messages": []
+        },
+        {
+          "validator": "ruff",
+          "success": true,
+          "blocking": false,
+          "messages": []
+        }
+      ],
+      "warnings": []
     },
     "completed_steps": [
       "parsing",
       "semantic_analysis",
       "generation",
+      "validation",
+      "generation",
       "validation"
     ],
     "errors": [],
-    "warnings": []
+    "warnings": [
+      "generation attempt 2: regenerated after 1 validation issue(s) in the previous attempt"
+    ]
   }
 }

@@ -26,6 +26,7 @@ substituíveis.
 - [Migrations](#migrations)
 - [Testes e qualidade](#testes-e-qualidade)
 - [Estrutura de pastas](#estrutura-de-pastas)
+- [Decisões de tradução por anexo](#decisões-de-tradução-por-anexo)
 - [Architectural Decisions](#architectural-decisions)
 - [Limitações conhecidas](#limitações-conhecidas)
 - [Evolução futura](#evolução-futura)
@@ -46,10 +47,11 @@ Sobe três serviços:
 |------------|------------------------------------------------------------------------|
 | `postgres` | PostgreSQL 17 com healthcheck (`pg_isready`)                           |
 | `migrate`  | job one-shot `alembic upgrade head` (espera o Postgres ficar healthy)  |
-| `app`      | FastAPI/uvicorn em `:8000` (só inicia após `migrate` terminar com 0)   |
+| `app`      | **servidor LangGraph CLI** (`langgraph dev`) em `:8000`: graph + API LangGraph + Studio + nossas rotas (só inicia após `migrate` terminar com 0) |
 
-Sem configuração nenhuma o compose usa `LLM_PROVIDER=fake` (saída determinística, sem chave),
-suficiente para exercitar o vertical slice inteiro. Para um LLM real:
+O compose lê o `.env` da raiz (copie de `.env.example`) para as variáveis de LLM. Sem `.env`, usa
+`LLM_PROVIDER=fake` (saída determinística, sem chave), suficiente para exercitar o vertical slice
+inteiro. Para um LLM real, configure o `.env` ou passe na linha de comando:
 
 ```bash
 LLM_PROVIDER=openrouter LLM_MODEL=anthropic/claude-sonnet-4.5 LLM_API_KEY=sk-or-... docker compose up --build
@@ -64,6 +66,22 @@ curl localhost:8000/health
 ```bash
 curl -X POST localhost:8000/modernize -H "content-type: application/json" -d '{"source_code": "CREATE FUNCTION add_one(p int) RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETURN p + 1; END $$;"}'
 ```
+
+Mesmo pipeline pela API nativa do LangGraph (também gravado em `modernization_history`):
+
+```bash
+curl -X POST localhost:8000/runs/wait -H "content-type: application/json" -d '{"assistant_id": "modernization", "input": {"source_code": "CREATE FUNCTION add_one(p int) RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETURN p + 1; END $$;"}}'
+```
+
+Studio: `https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:8000`. Docs da API:
+`http://localhost:8000/docs`.
+
+Todas as requisições prontas (health, os cinco anexos com schema, consulta por id, casos de erro,
+API do LangGraph com e sem streaming) em [`docs/api.http`](docs/api.http), para a extensão
+[REST Client](https://marketplace.visualstudio.com/items?itemName=humao.rest-client) do VS Code.
+
+> Windows: se `localhost` não responder, use `127.0.0.1` — outro serviço (ex.: relay do WSL) pode
+> estar ocupando a porta em IPv6 (`[::1]`).
 
 ### Local (uv)
 
@@ -80,24 +98,25 @@ uv run alembic upgrade head
 ```
 
 ```bash
-uv run uvicorn app.api.main:app --reload
-```
-
-### Servidor LangGraph (`langgraph dev` + Studio)
-
-```bash
 uv run langgraph dev --allow-blocking
 ```
 
-O `langgraph.json` registra o graph `modernization` (factory `app/bootstrap.py:make_graph`) e monta
+(Alternativa só com as rotas FastAPI, sem API/Studio do LangGraph:
+`uv run uvicorn app.api.main:app --reload`.)
+
+### Servidor LangGraph (`langgraph dev` + Studio)
+
+É o mesmo servidor do container `app`. O `langgraph.json` registra o graph `modernization` (factory `app/bootstrap.py:make_graph`) e monta
 a própria API FastAPI via `http.app`, então o mesmo servidor expõe:
 
-- API do LangGraph (`/assistants`, `/threads`, `/runs/...`) e o Studio;
+- API do LangGraph (`/assistants`, `/threads`, `/runs/...`) e o Studio — runs disparadas por aqui
+  (input `{"source_code": "...", "schema_context": "..."}`) também são gravadas em
+  `modernization_history`, porque a persistência está no próprio graph;
 - `GET /health`, `POST /modernize`, `GET /modernizations/{id}` (nossas rotas, com lifespan combinado).
 
 > `--allow-blocking`: o `langgraph dev` usa *blockbuster* para acusar I/O síncrono no event loop.
 > O `asyncpg` resolve `~/.postgresql` (defaults de SSL) ao abrir cada conexão do pool, o que é
-> acusado como bloqueante. É interno do driver, custa microssegundos e não existe no uvicorn/Docker.
+> acusado como bloqueante. É interno do driver e custa microssegundos (no uvicorn não há essa checagem).
 
 ### Anexos B–F (casos de teste do desafio)
 
@@ -110,7 +129,8 @@ uv run python -m scripts.run_examples
 ```
 
 Saída em `examples/results/`: `<procedure>/generated.py`, `<procedure>/report.json` e
-[`SUMMARY.md`](examples/results/SUMMARY.md) (status, estratégia, riscos, Ruff, tokens, latência).
+[`SUMMARY.md`](examples/results/SUMMARY.md) (status, tentativas, estratégia, riscos, Ruff, tokens,
+duração).
 Os resultados versionados são uma execução real, **não curada**: falhas e `partial` ficam como
 saíram, porque mostram o que a validação pega.
 
@@ -126,10 +146,13 @@ flowchart LR
     API --> ModernizationService
     ModernizationService --> ModernizationPipeline
     ModernizationPipeline -. implementado por .-> LangGraph
-    LangGraph --> Parsing
+    LangGraph --> RecordStart
+    RecordStart --> Parsing
     Parsing --> Analysis
     Analysis --> Generation
     Generation --> Validation
+    Validation -. retry .-> Generation
+    Validation --> RecordResult
 
     Parsing --> SQLParser
     Analysis --> SemanticAnalyzer
@@ -138,7 +161,9 @@ flowchart LR
     CodeGenerationService --> LLMProvider
     Validation --> CodeValidator
 
-    ModernizationService --> UnitOfWork
+    RecordStart --> UnitOfWork
+    RecordResult --> UnitOfWork
+    ModernizationService -. leitura .-> UnitOfWork
     UnitOfWork --> Repository
     Repository --> PostgreSQL
 ```
@@ -174,6 +199,7 @@ flowchart TB
 
     FASTAPI --> SVC
     LGCLI --> A5
+    A5 --> P4
     SVC --> DOM
     SVC --> P4
     SVC --> P5
@@ -216,14 +242,17 @@ Não há `BaseService`, `BaseRepository`, `GenericDAO` etc. O único "base" é
 
 ```mermaid
 flowchart LR
-    START((START)) --> parsing
+    START((START)) --> record_start
+    record_start --> parsing
     parsing -- ok --> semantic_analysis
     semantic_analysis -- ok --> generation
     generation -- ok --> validation
-    validation --> END((END))
-    parsing -. falhou .-> END
-    semantic_analysis -. falhou .-> END
-    generation -. falhou .-> END
+    validation -- "reprovado · tentativas < máx · dentro do orçamento" --> generation
+    validation -- "aprovado ou sem retry" --> record_result
+    parsing -. falhou .-> record_result
+    semantic_analysis -. falhou .-> record_result
+    generation -. falhou .-> record_result
+    record_result --> END((END))
 ```
 
 - **Estado tipado** (`app/graph/state.py`): `ModernizationState` (`TypedDict`) com modelos de domínio
@@ -232,13 +261,22 @@ flowchart LR
 - **Nodes finos** (`app/graph/nodes/`): cada um chama um port/serviço, converte erros *esperados*
   do domínio em `PipelineError` e devolve um `StateUpdate` parcial. Nenhum node monta prompt,
   conhece vendor ou chama `ast`/Ruff diretamente.
-- **Short-circuit**: se um passo falha, arestas condicionais levam a `END` (o graph desenhado
-  continua sendo `START → parsing → semantic_analysis → generation → validation → END`).
+- **Persistência como nós** (`record_start` / `record_result`): toda run é gravada, entre pela
+  `POST /modernize`, pela API do LangGraph (`/runs`) ou pelo Studio. `record_start` commita
+  `running` antes do LLM; `record_result` grava status, código e relatório finais (AD-07).
+- **Short-circuit**: se um passo falha, arestas condicionais levam direto a `record_result`.
+- **Loop de reparo** (`validation → generation`, AD-13): se a validação reprova (AST ou Ruff), a
+  geração roda de novo com o código anterior e a lista de problemas no prompt, até
+  `GENERATION_MAX_ATTEMPTS` (default 2) e só se a run tiver menos de
+  `GENERATION_RETRY_BUDGET_SECONDS` (default 90 s). `completed_steps` mostra cada tentativa
+  (`…generation, validation, generation, validation`) e `report.generation.attempt` diz qual
+  tentativa produziu o código final.
 - **Dependências injetadas nos nodes** (instâncias callable construídas no builder), não via
   `config`/`context` — assim o mesmo graph roda no uvicorn e no servidor LangGraph.
-- **Resiliência**: `LangGraphModernizationPipeline` consome `astream(stream_mode="values")` e guarda
-  o último snapshot. Se algo inesperado escapar de um node, o outcome ainda contém os passos já
-  concluídos e o erro é atribuído ao passo seguinte. O port garante: `run()` nunca lança.
+- **Resiliência**: cada nó do pipeline é embrulhado por uma guarda (`_guarded` no builder) que
+  converte exceção inesperada em `PipelineError` daquele passo, então a run ainda chega em
+  `record_result` com tudo que foi produzido até ali. Só falha de persistência propaga (uma run
+  que não pode ser registrada deve falhar alto).
 
 ---
 
@@ -285,15 +323,15 @@ Falhas do pipeline **não** viram HTTP 5xx: a execução foi registrada e o corp
 |---------------------|---------------------------------------------------------------------------------------------------|
 | `parsing`           | `success`, `procedure_name`, `kind`, `parser`, parâmetros/modos, `return_type`, tabelas, funções, `warnings` |
 | `semantic_analysis` | `detected_features` (com ocorrências e linhas), `risks` (`code`, `severity`, `message`, `line`), `dependencies`, `recommended_strategy`, `recommendations` |
-| `generation`        | `strategy` (escolhida pelo LLM), `recommended_strategy` (determinística), `provider`, `model`, `prompt_version`, tokens, `latency_ms`, `finish_reason`, `architectural_decisions`, `warnings` |
+| `generation`        | `strategy` (escolhida pelo LLM), `recommended_strategy` (determinística), `provider`, `model`, `prompt_version`, tokens, `latency_ms`, `finish_reason`, `attempt` (tentativa que produziu o código), `architectural_decisions`, `warnings` |
 | `validation`        | `valid_python`, `passed_all`, resultado por validador (`validator`, `success`, `blocking`, `messages`), `warnings` |
-| raiz                | `completed_steps`, `errors` (`step`, `error_type`, `message`), `warnings`                          |
+| raiz                | `completed_steps` (repete `generation`/`validation` a cada retentativa), `errors` (`step`, `error_type`, `message`), `warnings` |
 
 ### Status
 
 | status    | quando                                                                              |
 |-----------|-------------------------------------------------------------------------------------|
-| `running` | gravado **antes** do pipeline (se o processo morrer, a execução fica visível)        |
+| `running` | gravado pelo nó `record_start`, **antes** do LLM (se o processo morrer, a execução fica visível) |
 | `success` | código gerado e todos os validadores passaram                                        |
 | `partial` | código gerado e sintaticamente válido, mas Ruff reportou algo, ou a validação não rodou |
 | `failure` | nenhum código utilizável: falha em parsing/análise/geração ou Python inválido (`ast.parse`) |
@@ -319,6 +357,8 @@ Centralizada em `app/config/settings.py` (`pydantic-settings`; lê env vars e `.
 | `LLM_TIMEOUT_SECONDS`   | `120`                                                         |                                            |
 | `LLM_MAX_RETRIES`       | `2`                                                           | retries do SDK                             |
 | `LLM_REASONING_EFFORT`  | — (não enviado)                                               | `minimal`\|`low`\|`medium`\|`high`, só para modelos de raciocínio (ver AD-04) |
+| `GENERATION_MAX_ATTEMPTS` | `2`                                                         | tentativas de geração (1 = sem loop de reparo) |
+| `GENERATION_RETRY_BUDGET_SECONDS` | `90`                                                | nenhuma retentativa começa depois disso (limita a espera síncrona) |
 | `RUFF_TIMEOUT_SECONDS`  | `20`                                                          |                                            |
 | `LOG_LEVEL`             | `INFO`                                                        |                                            |
 | `TEST_DATABASE_URL`     | —                                                             | só testes de integração                    |
@@ -363,11 +403,13 @@ TEST_DATABASE_URL=postgresql+asyncpg://modernizer:modernizer@localhost:5432/mode
 uv run ruff check . && uv run ruff format --check .
 ```
 
-- **Unitários (59)**: parser (`pglast`), análise semântica (inclusive sobre IR montado à mão, sem
+- **Unitários (64)**: parser (`pglast`), análise semântica (inclusive sobre IR montado à mão, sem
   parser), `CodeGenerationService` com `FakeLLMProvider` (verifica que o prompt carrega parsing +
-  análise), validadores (AST, Ruff, composite), `ModernizationService` com LangGraph real + UoW em
-  memória (sucesso, falha do LLM, falha de parsing, Python inválido, lint → partial, crash
-  inesperado), API (`/health`, `/modernize`, `/modernizations/{id}`), factory de providers e
+  análise; resposta truncada; `strategy` ausente), validadores (AST, Ruff, composite),
+  `ModernizationService` com LangGraph real + UoW em memória (sucesso, falha do LLM, falha de
+  parsing, Python inválido, lint → partial, crash inesperado), graph (loop de reparo com feedback,
+  limite de tentativas, orçamento de tempo, retentativa que falha mantém a anterior, run iniciada
+  direto no graph — caminho do servidor LangGraph — é persistida), API (`/health`, `/modernize`, `/modernizations/{id}`), factory de providers e
   **regras de dependência entre camadas** (análise de imports via `ast`).
 - **Integração (5)**: Postgres real migrado com Alembic (subprocess), round-trip do repository,
   JSONB, rollback sem commit, e persistência de sucesso **e** falha ponta a ponta.
@@ -415,6 +457,148 @@ scripts/run_examples.py       # roda os anexos pelo ModernizationService e grava
 tests/{unit,integration,fixtures/procedures}
 docker/postgres/init/         # cria o banco de testes
 ```
+
+---
+
+## Decisões de tradução por anexo
+
+Cada anexo exige decisões diferentes. Abaixo: o que o pipeline decidiu (análise determinística +
+LLM, registrado em `report.generation.architectural_decisions`), por quê, e o que aconteceu quando o
+código gerado foi **executado**.
+
+**Como foi verificado.** A validação do pipeline é estática (AST + Ruff). Para esta seção, o
+código de [`examples/results/`](examples/results/SUMMARY.md) foi executado manualmente num banco
+descartável com o schema do Anexo A, as cinco rotinas originais instaladas e dados que exercitam
+os casos de borda (duas tarifas na mesma conta, valor que expõe arredondamento). Original e
+Python rodam com as mesmas entradas, cada um numa transação revertida ao final, e o estado das
+tabelas é comparado.
+
+| anexo | estratégia (recomendada → LLM) | validação estática | execução vs original |
+|---|---|---|---|
+| B `fn_saldo_cliente` | `database_delegated` → `database_delegated` | success | ✅ mesmo valor (mas `float`, não `Decimal`) |
+| C `sp_atualizar_status_contas_inativas` | `hybrid` → `hybrid` | success (2ª tentativa) | ❌ erro de runtime: bind param sem tipo |
+| D `sp_transferir_entre_contas` | `hybrid` → `hybrid` | success | ❌ `begin_nested()` sem `await`: falha em toda chamada |
+| E `sp_processar_lote_taxas` | `hybrid` → `database_delegated` | success | ❌ roda, mas cobra errado (tarifa perdida + arredondamento) |
+| F `sp_relatorio_mensal_cliente` | `hybrid` → `hybrid` | success | ❌ query principal falha; fallback falha em seguida |
+
+**Validação estática 5/5, equivalência comportamental 1/5.** É o achado mais importante desta
+entrega: `ast.parse` + Ruff provam que o código é Python bem formado, não que ele funciona. Os
+erros encontrados se repetem em classes (tipos de bind no asyncpg, transações async, semântica de
+`NUMERIC`), então viram regras de prompt e, principalmente, um validador que executa o código
+contra um banco de teste — a "evolução desejada" do desafio (ver [Evolução futura](#evolução-futura)).
+
+### B · `fn_saldo_cliente` — função escalar
+
+- **SQL vs Python:** delegado ao SGBD. Uma agregação filtrada é trabalho do banco (usa
+  `idx_contas_cliente`); reescrever em Python seria trazer linhas para somar no cliente.
+- **Forma:** `async def fn_saldo_cliente(conn: AsyncConnection, p_cliente_id: int)`, SQL em
+  `text()` com bind param, transação do chamador. `text()` em vez de SQLAlchemy Core: para uma
+  query, o SQL fica lado a lado com o original e é auditável.
+- **Verificação:** ✅ mesmo resultado (1500,00). Ressalva: o retorno é `float`; em domínio bancário
+  `NUMERIC(18,2)` deve virar `Decimal` (o próprio LLM avisou nos `warnings`). Regra a adicionar
+  no prompt.
+
+### C · `sp_atualizar_status_contas_inativas` — IN/OUT, UPDATE em massa, GET DIAGNOSTICS
+
+- **Parâmetro OUT:** vira o retorno, como `@dataclass(frozen=True) ResultadoInativacao(afetadas)`.
+  Tupla não tem nome; `dict` não tem tipo; a dataclass é nomeada, imutável e ganha campos sem
+  quebrar quem chama.
+- **`GET DIAGNOSTICS ROW_COUNT` → `result.rowcount`.** A análise marca `DIAGNOSTICS_SEMANTICS`
+  porque a equivalência depende do driver (asyncpg reporta linhas afetadas pelo `UPDATE`).
+- **`RAISE EXCEPTION` → `ParametroInvalidoError(ValueError)`**, validado em Python antes de ir ao
+  banco (sem round trip para rejeitar entrada inválida). ✅ Mesma mensagem, mesmo estado.
+- **UPDATE com `NOT EXISTS`:** permanece set-based em SQL.
+- **Verificação:** ❌ para evitar a concatenação `(p_dias || ' days')::INTERVAL`, o LLM usou
+  `make_interval(days => :p_dias)`. A intenção é boa, mas o asyncpg usa *prepared statements* e
+  o PostgreSQL não infere o tipo desse parâmetro: `could not determine data type of parameter $1`.
+  Correção: `make_interval(days => CAST(:p_dias AS int))`. **Lição geral:** com asyncpg, todo bind
+  param em posição polimórfica precisa de `CAST` explícito.
+
+### D · `sp_transferir_entre_contas` — transação, `FOR UPDATE`, `EXCEPTION`
+
+- **Transação (a decisão que o anexo pede):** das três opções, o pipeline escolheu a híbrida:
+  - validações de entrada (valor, contas iguais) ficam em Python, sem round trip;
+  - `SELECT … FOR UPDATE` e as escritas rodam em SQL **na mesma conexão/transação**, o que a
+    análise exige pelo risco `ROW_LOCKING`: o lock só vale dentro da transação;
+  - a transação é do chamador;
+  - um `SAVEPOINT` (`begin_nested`) reproduz a subtransação implícita do bloco `EXCEPTION`.
+- **Semântica sutil do original:** o `INSERT` de `TRANSFERENCIA_ERRO` no handler é seguido de
+  `RAISE`, que aborta a transação de quem chamou. Ou seja, **no original o log de erro nunca
+  persiste**, a menos que o chamador use savepoint. O LLM identificou e preservou esse
+  comportamento (está nos `warnings`). Se o objetivo de negócio é auditar falhas, o correto é
+  gravar numa transação separada. Essa é uma decisão de produto, não de tradução, e por isso não
+  foi tomada automaticamente.
+- **Herdado:** a ordem de lock origem→destino permite deadlock entre A→B e B→A simultâneas. A
+  correção seria travar por ordem de `id`.
+- **Verificação:** ❌ `nested = conn.begin_nested()` sem `await`: no SQLAlchemy async isso cria um
+  objeto não iniciado, e o `commit()` lança `AsyncContextNotStarted`. **Toda** transferência
+  falha antes de escrever qualquer coisa. AST e Ruff não pegam: o código é válido. Correção:
+  `async with conn.begin_nested():`.
+
+### E · `sp_processar_lote_taxas` — cursor, LOOP, CASE, JSONB
+
+- **A decisão central:** o cursor faz 4 SQLs por linha, e a análise marca `N_PLUS_ONE` nos
+  quatro. O LLM **divergiu** da recomendação (`hybrid`) e escolheu `database_delegated`: um único
+  statement com *data-modifying CTEs* (`UPDATE`/`INSERT … SELECT`) e `LEFT JOIN LATERAL` para a
+  taxa vigente. N+1 vira 1 round trip, atômico. A divergência e a justificativa estão no
+  relatório (`strategy` ≠ `recommended_strategy`).
+- **Alternativas consideradas:**
+
+  | abordagem | round trips | regra de negócio | risco |
+  |---|---|---|---|
+  | ingênua (loop Python, SQL por linha) | O(n) | visível em Python | performance |
+  | *bulk fetch* (1 SELECT transações + 1 taxas, cálculo em Python com `Decimal`, escrita em lote) | 2–4, constante | visível e testável unitariamente | pouco |
+  | set-based puro (escolhida pelo LLM) | 1 | escondida no SQL | semântica sutil, como a verificação mostrou |
+
+- **Verificação:** ❌ roda sem erro e **cobra errado**, com duas divergências que passaram na
+  validação estática com `success`:
+  1. **Tarifa perdida:** `UPDATE contas … FROM base` com duas tarifas para a mesma conta atualiza
+     a linha **uma vez só**. No PostgreSQL, quando o `FROM` casa várias linhas com o mesmo alvo,
+     só uma é aplicada. Conta 10: original 995,80, gerado 998,00. A tarifa de 2,20 é registrada
+     em `transacoes`, mas não é debitada. Correção: agregar antes,
+     `FROM (SELECT conta_origem_id, SUM(taxa) … GROUP BY 1)`.
+  2. **Arredondamento:** no original, `v_taxa` é `NUMERIC(18,2)`, então arredonda depois do
+     `GREATEST` e de novo depois do multiplicador do `CASE`. O gerado multiplica sem arredondar no
+     meio. DEPOSITO de 10,10: original 0,03, gerado 0,02. Total do lote 4,23 vs 4,22, e o JSONB
+     grava `0.022725`. Correção: `ROUND(ROUND(GREATEST(…), 2) * mult, 2)`.
+- **Recomendação para produção:** *bulk fetch* com cálculo em Python (`Decimal`, arredondamento
+  explícito, regra testável sem banco), ou o set-based com as duas correções **e** teste de
+  equivalência obrigatório.
+- **Herdado (avisado pelo LLM):** nenhum lock ou idempotência, então rodar o lote duas vezes para
+  a mesma data cobra em dobro. `DATE(data_transacao) = :d` não usa índice; um intervalo de
+  timestamps seria equivalente e usaria o índice.
+
+### F · `sp_relatorio_mensal_cliente` — CTE recursiva, função aninhada, SETOF, fallback
+
+- **CTE recursiva:** mantida em SQL (risco `RECURSIVE_CTE`). Gerar os meses em Python é trivial,
+  mas `meses LEFT JOIN movimento` é uma unidade relacional; separar exigiria fazer o merge no
+  cliente.
+- **Função aninhada:** `SELECT fn_saldo_cliente(:id)` continua chamando a função do banco (risco
+  `EXTERNAL_ROUTINE_DEPENDENCY`), em vez de importar a tradução do Anexo B. O pipeline processa uma
+  rotina por vez e não sabe o que já foi migrado. Evolução: um catálogo de rotinas migradas no
+  contexto do prompt, para gerar `from … import fn_saldo_cliente`.
+- **SETOF / `RETURN QUERY`** → `list[LinhaRelatorioMensal]` (dataclass frozen). Para volumes
+  grandes, `AsyncIterator` com `stream_results`.
+- **`RAISE NOTICE`/`WARNING`** → `logger.info`/`logger.warning`.
+- **Fallback** (`WHEN OTHERS` → linha degradada) → `except Exception` que executa o `SELECT` de
+  fallback.
+- **Verificação:** ❌ três problemas:
+  1. `DATE_TRUNC('month', :p_data_inicio)` com bind param sem tipo resulta em
+     `function date_trunc(unknown, unknown) is not unique`: a query principal **sempre** falha. É
+     a mesma classe de erro do C; correção: `CAST(:p_data_inicio AS date)`.
+  2. O fallback roda na mesma transação, já abortada pelo erro anterior, e lança
+     `current transaction is aborted`. No original funciona porque o bloco `EXCEPTION` do
+     PL/pgSQL é um savepoint implícito. Correção: `async with conn.begin_nested():` em volta da
+     query principal. O próprio LLM levantou essa dúvida nos `warnings`, mas não aplicou.
+  3. **Mudança de comportamento assumida pelo LLM:** período inválido. No original, o
+     `RAISE EXCEPTION` está dentro do bloco com `WHEN OTHERS`, então é **capturado** e a função
+     devolve a linha de fallback com um `WARNING` (confirmado executando). O gerado lança
+     `RelatorioError`. O LLM registrou isso como decisão ("falha intencional"), então aparece no
+     relatório, mas a justificativa está errada. Também por leitura do código: `v_saldo_atual`
+     não é inicializado antes do `try`, então uma falha em `fn_saldo_cliente` viraria
+     `UnboundLocalError` no fallback.
+- A análise determinística não marcou `SWALLOWED_EXCEPTION` aqui: bug conhecido, porque
+  `RAISE WARNING` é contado como re-raise.
 
 ---
 
@@ -499,10 +683,13 @@ Windows, usado pelo `langgraph dev`, não suporta subprocess async). `CompositeC
 os validadores em paralelo e transforma "validador não conseguiu rodar" em resultado não bloqueante,
 sem esconder os demais.
 
-### AD-07 · Toda execução é persistida (duas transações curtas)
+### AD-07 · Toda execução é persistida (duas transações curtas, dentro do graph)
 
-`ModernizationService`: (1) grava `running` e **commita antes** da chamada ao LLM; (2) roda o
-pipeline (que nunca lança); (3) grava o estado final. Transação longa segurando conexão durante uma
+Nós `record_start` e `record_result`: (1) grava `running` e **commita antes** da chamada ao LLM;
+(2) os passos rodam (falhas viram erros do relatório, nunca exceções); (3) grava o estado final.
+A persistência fica **no graph, não no service**, porque o graph tem mais de uma porta de entrada:
+`POST /modernize` e a API/Studio do servidor LangGraph (`make_graph`) — com a persistência no
+service, runs disparadas pelo LangGraph não eram registradas. Transação longa segurando conexão durante uma
 chamada de LLM de dezenas de segundos seria pior, e um crash no meio deixaria nada gravado. Optei
 por `running` em vez de "registrar como `partial`" para não misturar "em andamento" com "concluído
 com ressalvas"; um `running` antigo é detectável como execução abortada.
@@ -519,6 +706,8 @@ do domínio (`save`, `update`, `find_by_id`), não um CRUD genérico.
 
 O caso de uso depende de um Protocol, não de LangGraph. O graph (`app/graph`) é um adapter que
 implementa esse port. Isso mantém o service testável e o framework de orquestração trocável.
+O contrato do port inclui registrar a run (AD-07): qualquer implementação deve persistir
+`running` antes e o resultado final depois, e só lança se a persistência falhar.
 
 ### AD-10 · Pydantic no domínio
 
@@ -532,6 +721,8 @@ de serialização.
 `app/bootstrap.py` monta tudo por construtor (sem container de DI, sem singletons globais, sem
 service locator). A API guarda o `Container` em `app.state` no lifespan e o injeta via `Depends`.
 Testes substituem o container inteiro por `create_app(container_factory=...)`.
+Exceção consciente: `make_graph()` (factory do `langgraph.json`) é `@cache` — o servidor LangGraph
+não tem lifespan para o graph, então o engine (pool de conexões) vive um por processo.
 
 ### AD-12 · Docker
 
@@ -539,6 +730,37 @@ Imagem `python:3.14-slim` + `uv sync --frozen --no-dev` (lockfile), usuário nã
 rodam num serviço one-shot (`migrate`), e o `app` depende de
 `service_completed_successfully` — a app nunca sobe com schema desatualizado, e múltiplas réplicas
 não competem pela migration.
+
+**Servidor: `langgraph dev`, não `uvicorn` nem `langgraph up`.** O desafio pede o pipeline exposto
+por um servidor local do LangGraph CLI. O `langgraph dev` (runtime em memória) serve o graph, a API
+nativa (`/runs`, `/threads`), o Studio e, via `http.app`, as rotas `/health` e `/modernize` num
+processo só. O `langgraph up`/`langgraph build` gera a imagem de produção, mas exige Redis +
+Postgres próprios do runtime e uma chave LangSmith/licença — dependência externa que prejudica a
+reprodutibilidade de um teste local. Trade-offs do `dev` aceitos aqui: fila e checkpoints em memória
+(se perdem no restart — o que importa, `modernization_history`, está no nosso Postgres) e um
+worker. Em produção: imagem do `langgraph build` com Redis/Postgres, ou as rotas FastAPI em
+`uvicorn`/`gunicorn` com N réplicas (o graph é o mesmo). Sem a diretiva `# syntax=` no Dockerfile:
+o frontend embutido já suporta `RUN --mount=type=cache`, e a imagem externa do frontend falhou de
+forma intermitente (`frontend grpc server closed unexpectedly`).
+
+### AD-13 · Loop de reparo limitado (`validation → generation`)
+
+Quando a validação reprova (AST bloqueante **ou** Ruff), a geração roda de novo com
+`RepairFeedback` (código anterior + lista de problemas) no prompt. Observado nos anexos: em execuções
+diferentes, C e D foram reprovados na 1ª tentativa (Ruff) e aprovados na 2ª — ver
+`examples/results/SUMMARY.md`, coluna "tentativas". Limites, porque o `POST /modernize` é
+síncrono e cada tentativa é outra chamada ao LLM:
+
+- `GENERATION_MAX_ATTEMPTS=2` (uma retentativa): cobre os erros pontuais observados; pior caso
+  ≈ 2× a latência de geração.
+- `GENERATION_RETRY_BUDGET_SECONDS=90`: não inicia retentativa em run que já passou do orçamento
+  (uma chamada lenta de 140 s ao provider não vira 280 s de espera).
+- Retentativa que falha na geração (ex.: JSON inválido) não apaga a anterior: o relatório mantém o
+  código da tentativa anterior (`partial` em vez de `failure` se ele era Python válido).
+
+Trade-off: retentar também por lint (não bloqueante) custa uma chamada a mais em troca de código
+limpo; `GENERATION_MAX_ATTEMPTS=1` desliga o loop. Para requests que não podem esperar, o caminho é
+assíncrono (ver Evolução futura).
 
 ---
 
@@ -553,9 +775,12 @@ não competem pela migration.
 - **Builtins vs routines do usuário** é heurística (lista de funções conhecidas + `pg_catalog.`);
   sem acesso ao banco não dá para ter certeza.
 - **SQL dinâmico** (`EXECUTE`) não é analisável estaticamente: vira risco `DYNAMIC_SQL`.
-- **Validação é estática**: `ast.parse` + Ruff não provam equivalência semântica. O código gerado
-  não é executado contra um banco.
-- `POST /modernize` é síncrono (a request espera o LLM).
+- **Validação é estática**: `ast.parse` + Ruff não provam equivalência semântica, e o pipeline não
+  executa o código gerado contra um banco. Medido nos anexos: 5/5 passam na validação estática,
+  mas só 1/5 se comporta como o original quando executado (ver
+  [Decisões de tradução por anexo](#decisões-de-tradução-por-anexo)). O status `success` significa
+  "Python válido e sem lint", **não** "tradução correta".
+- `POST /modernize` é síncrono (a request espera o LLM, incluindo a eventual retentativa — AD-13).
 - O `FakeLLMProvider` devolve um módulo placeholder — serve para exercitar o pipeline, não traduz.
 
 ## Trade-offs
@@ -575,9 +800,14 @@ não competem pela migration.
 
 - `AnthropicProvider`/`GeminiProvider` nativos (implementam `LLMProvider`); fallback/roteamento entre providers.
 - Tabela `llm_calls` (prompt, resposta, tokens, custo) e `evaluation_results` — via `UnitOfWork`.
-- Loop de auto-correção no graph: `validation → generation` com os erros do Ruff/AST (limite de tentativas).
-- Validação dinâmica: executar o código gerado contra um Postgres efêmero com o schema informado e
-  comparar resultados com a procedure original (testes de equivalência).
+- **Validação dinâmica (prioridade 1):** um validador que roda o código gerado contra um Postgres
+  efêmero com o schema informado e compara o estado final com a procedure original instalada no
+  mesmo banco (é o procedimento usado, à mão, na seção por anexo). Os erros comportamentais entram
+  no mesmo loop de reparo do AD-13.
+- **Regras de prompt para as classes de erro observadas:** `CAST` explícito em bind params
+  (asyncpg), `async with conn.begin_nested()` (nunca sem `await`), `NUMERIC` → `Decimal`,
+  preservar o arredondamento de variáveis `NUMERIC(p,s)` intermediárias, `UPDATE … FROM` só com
+  fonte agregada por chave, `EXCEPTION` do PL/pgSQL → savepoint em volta do bloco protegido.
 - Resolver `%TYPE`/`%ROWTYPE` e builtins consultando o catálogo quando houver conexão disponível.
 - Métricas de avaliação por modelo (taxa de sucesso, lint, custo, latência) para comparar LLMs.
 - Execução assíncrona (`202 Accepted` + polling em `/modernizations/{id}`) ou via runs do servidor LangGraph.

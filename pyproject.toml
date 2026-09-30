@@ -9,6 +9,7 @@ dependencies = [
     "asyncpg>=0.31",
     "fastapi>=0.142",
     "langgraph>=1.2.12",
+    "langgraph-cli[inmem]>=0.4.32",  # serves the graph + the FastAPI routes (langgraph.json)
     "openai>=3.22",
     "pglast>=8.4",
     "pydantic>=2.13",
@@ -21,7 +22,6 @@ dependencies = [
 [dependency-groups]
 dev = [
     "httpx>=0.28",
-    "langgraph-cli[inmem]>=0.4.32",
     "pytest>=9.1",
     "pytest-asyncio>=1.4",
 ]

@@ -1,11 +1,12 @@
 """Builds the generation prompt from the deterministic analysis (not just the raw source)."""
 
 from app.domain.enums import GenerationStrategy
+from app.domain.models.generation import RepairFeedback
 from app.domain.models.parsing import ParsedProcedure, Statement
 from app.domain.models.semantic_analysis import SemanticAnalysis
 from app.domain.models.value_object import ValueObject
 
-PROMPT_VERSION = "generation-v1"
+PROMPT_VERSION = "generation-v2"
 
 SYSTEM_PROMPT = f"""\
 You are a senior backend engineer modernizing PostgreSQL PL/pgSQL routines into Python 3.14.
@@ -62,6 +63,7 @@ class GenerationPromptBuilder:
         analysis: SemanticAnalysis,
         source_code: str,
         schema_context: str | None,
+        feedback: RepairFeedback | None = None,
     ) -> GenerationPrompt:
         sections = [
             _signature_section(procedure),
@@ -74,11 +76,24 @@ class GenerationPromptBuilder:
             "## Original source (reference only; the analysis above is authoritative)\n"
             f"```sql\n{source_code.strip()}\n```",
         ]
+        if feedback is not None:
+            sections.append(_feedback_section(feedback))
         return GenerationPrompt(
             system=SYSTEM_PROMPT,
             user="\n\n".join(sections),
             version=PROMPT_VERSION,
         )
+
+
+def _feedback_section(feedback: RepairFeedback) -> str:
+    issues = "\n".join(f"- {issue}" for issue in feedback.issues) or "- (none reported)"
+    return (
+        f"## Attempt {feedback.attempt}: the previous answer was rejected by validation\n"
+        "Fix every issue below and answer again with the complete module (same JSON shape). "
+        "Keep what was correct; do not change behaviour to silence a check.\n"
+        f"{issues}\n\n"
+        f"Previous python_code:\n```python\n{feedback.previous_code.strip()}\n```"
+    )
 
 
 def _signature_section(procedure: ParsedProcedure) -> str:

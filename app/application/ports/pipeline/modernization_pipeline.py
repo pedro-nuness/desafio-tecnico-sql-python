@@ -1,21 +1,15 @@
 from typing import Protocol
-from uuid import UUID
 
-from app.domain.models.modernization import PipelineOutcome
+from app.domain.models.modernization import Modernization
 
 
 class ModernizationPipeline(Protocol):
-    """Runs parsing -> semantic analysis -> generation -> validation.
+    """Runs parsing -> semantic analysis -> generation -> validation and records the run.
 
     Keeps the use case independent of the orchestration framework (LangGraph lives
-    in app.graph). Implementations must never raise: failures are reported in the
-    outcome together with every step that completed before them.
+    in app.graph). Contract: the run is persisted as RUNNING before any step and with
+    its final state at the end; step failures are reported in the returned aggregate,
+    never raised. Only persistence failures raise.
     """
 
-    async def run(
-        self,
-        *,
-        execution_id: UUID,
-        source_code: str,
-        schema_context: str | None,
-    ) -> PipelineOutcome: ...
+    async def run(self, *, source_code: str, schema_context: str | None) -> Modernization: ...

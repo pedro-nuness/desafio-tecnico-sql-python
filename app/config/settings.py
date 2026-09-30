@@ -34,6 +34,11 @@ class Settings(BaseSettings):
     llm_reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
     """Reasoning models only; unset = provider default (not sent)."""
 
+    generation_max_attempts: int = Field(default=2, ge=1)
+    """Total generation attempts; >1 regenerates with the validation issues as feedback."""
+    generation_retry_budget_seconds: float = Field(default=90.0, gt=0)
+    """No retry starts once the run is older than this (bounds the synchronous request)."""
+
     ruff_timeout_seconds: float = Field(default=20.0, gt=0)
 
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"

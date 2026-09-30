@@ -1,9 +1,9 @@
 """FastAPI application.
 
 Served two ways, same code:
-- `uvicorn app.api.main:app` (Docker Compose / production-like);
-- mounted by the LangGraph server through `http.app` in langgraph.json (`langgraph dev`),
-  next to the LangGraph API and Studio. The server merges this app's lifespan.
+- mounted by the LangGraph server through `http.app` in langgraph.json (`langgraph dev`,
+  Docker Compose), next to the LangGraph API and Studio. The server merges this app's lifespan;
+- standalone: `uvicorn app.api.main:app` (only these routes, no LangGraph API/Studio).
 """
 
 import logging

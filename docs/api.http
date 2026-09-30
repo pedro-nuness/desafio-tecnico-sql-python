@@ -1,0 +1,173 @@
+# =============================================================================
+# PL/pgSQL Modernizer — requisições para a extensão REST Client (VS Code)
+#   https://marketplace.visualstudio.com/items?itemName=humao.rest-client
+#
+# Pré-requisito: `docker compose up --build` (ou `uv run langgraph dev --allow-blocking`).
+# Uso: clique em "Send Request" acima de cada bloco (ou Ctrl+Alt+R).
+#
+# - 127.0.0.1 em vez de localhost: no Windows outro serviço pode ocupar [::1]:8000.
+# - A geração chama o LLM: anexos maiores levam de segundos a ~2 min. Se o REST Client
+#   cortar a resposta, aumente `rest-client.timeoutinmilliseconds` (0 = sem limite).
+# - Requisições com `# @name` podem ser referenciadas depois, ex.:
+#   {{anexoB.response.body.$.execution_id}} — rode a de origem primeiro.
+# - Corpos dos anexos = examples/schema.sql e examples/procedures/*.sql, escapados para JSON.
+# =============================================================================
+
+@baseUrl = http://127.0.0.1:8000
+
+# Schema do Anexo A, contexto opcional da geração. Em UMA linha e sem sequências de escape:
+# o REST Client desescapa variáveis (quebra de linha real dentro do JSON = corpo inválido).
+@schema = CREATE TABLE clientes ( id BIGSERIAL PRIMARY KEY, nome VARCHAR(200) NOT NULL, cpf CHAR(11) NOT NULL UNIQUE, data_cadastro TIMESTAMP NOT NULL DEFAULT NOW(), status VARCHAR(20) NOT NULL DEFAULT 'ATIVO' CHECK (status IN ('ATIVO','INATIVO','BLOQUEADO')) ); CREATE TABLE contas ( id BIGSERIAL PRIMARY KEY, cliente_id BIGINT NOT NULL REFERENCES clientes(id), agencia VARCHAR(10) NOT NULL, numero VARCHAR(20) NOT NULL, tipo VARCHAR(20) NOT NULL CHECK (tipo IN ('CORRENTE','POUPANCA','SALARIO')), saldo NUMERIC(18,2) NOT NULL DEFAULT 0, status VARCHAR(20) NOT NULL DEFAULT 'ATIVA' CHECK (status IN ('ATIVA','INATIVA','ENCERRADA')), data_abertura TIMESTAMP NOT NULL DEFAULT NOW(), UNIQUE (agencia, numero) ); CREATE TABLE transacoes ( id BIGSERIAL PRIMARY KEY, conta_origem_id BIGINT REFERENCES contas(id), conta_destino_id BIGINT REFERENCES contas(id), tipo VARCHAR(20) NOT NULL CHECK (tipo IN ('DEPOSITO','SAQUE','TRANSFERENCIA','TARIFA')), valor NUMERIC(18,2) NOT NULL CHECK (valor > 0), data_transacao TIMESTAMP NOT NULL DEFAULT NOW(), status VARCHAR(20) NOT NULL DEFAULT 'EFETIVADA' CHECK (status IN ('EFETIVADA','CANCELADA','ESTORNADA')) ); CREATE TABLE taxas ( id BIGSERIAL PRIMARY KEY, tipo_operacao VARCHAR(20) NOT NULL, percentual NUMERIC(7,4) NOT NULL DEFAULT 0, valor_minimo NUMERIC(18,2) NOT NULL DEFAULT 0, vigente_de DATE NOT NULL, vigente_ate DATE ); CREATE TABLE log_auditoria ( id BIGSERIAL PRIMARY KEY, entidade VARCHAR(50) NOT NULL, entidade_id BIGINT, acao VARCHAR(50) NOT NULL, detalhes JSONB, criado_em TIMESTAMP NOT NULL DEFAULT NOW() ); CREATE INDEX idx_contas_cliente ON contas(cliente_id); CREATE INDEX idx_transacoes_origem ON transacoes(conta_origem_id, data_transacao); CREATE INDEX idx_transacoes_destino ON transacoes(conta_destino_id, data_transacao); CREATE INDEX idx_log_entidade ON log_auditoria(entidade, entidade_id);
+
+
+# =============================================================================
+# Saúde
+# =============================================================================
+
+### Health do pipeline (rota própria)
+GET {{baseUrl}}/health
+
+### Health do servidor LangGraph
+GET {{baseUrl}}/ok
+
+
+# =============================================================================
+# POST /modernize — rota do desafio
+# Resposta: execution_id, status (success|partial|failure), generated_code e report
+# (parsing, semantic_analysis, generation, validation, completed_steps, errors, warnings).
+# =============================================================================
+
+### Exemplo mínimo (sem schema)
+# @name minimo
+POST {{baseUrl}}/modernize
+Content-Type: application/json
+
+{
+  "source_code": "CREATE FUNCTION add_one(p int) RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETURN p + 1; END $$;"
+}
+
+### Anexo B · fn_saldo_cliente (baixa): função escalar, agregação
+# @name anexoB
+POST {{baseUrl}}/modernize
+Content-Type: application/json
+
+{
+  "source_code": "CREATE OR REPLACE FUNCTION fn_saldo_cliente(p_cliente_id BIGINT)\nRETURNS NUMERIC(18,2)\nLANGUAGE plpgsql\nAS $$\nDECLARE\n    v_total NUMERIC(18,2);\nBEGIN\n    SELECT COALESCE(SUM(saldo), 0)\n      INTO v_total\n      FROM contas\n     WHERE cliente_id = p_cliente_id\n       AND status = 'ATIVA';\n\n    RETURN v_total;\nEND;\n$$;\n",
+  "schema": "{{schema}}"
+}
+
+### Anexo C · sp_atualizar_status_contas_inativas (baixa-média): IN/OUT, UPDATE em massa, GET DIAGNOSTICS
+# @name anexoC
+POST {{baseUrl}}/modernize
+Content-Type: application/json
+
+{
+  "source_code": "CREATE OR REPLACE PROCEDURE sp_atualizar_status_contas_inativas(\n    IN  p_dias       INT,\n    OUT p_afetadas   INT\n)\nLANGUAGE plpgsql\nAS $$\nBEGIN\n    IF p_dias IS NULL OR p_dias <= 0 THEN\n        RAISE EXCEPTION 'Parametro p_dias deve ser positivo, recebido: %', p_dias;\n    END IF;\n\n    UPDATE contas c\n       SET status = 'INATIVA'\n     WHERE c.status = 'ATIVA'\n       AND NOT EXISTS (\n            SELECT 1\n              FROM transacoes t\n             WHERE (t.conta_origem_id = c.id OR t.conta_destino_id = c.id)\n               AND t.data_transacao >= NOW() - (p_dias || ' days')::INTERVAL\n       );\n\n    GET DIAGNOSTICS p_afetadas = ROW_COUNT;\n\n    INSERT INTO log_auditoria (entidade, acao, detalhes)\n    VALUES (\n        'contas',\n        'INATIVACAO_LOTE',\n        jsonb_build_object('dias', p_dias, 'afetadas', p_afetadas)\n    );\nEND;\n$$;\n",
+  "schema": "{{schema}}"
+}
+
+### Anexo D · sp_transferir_entre_contas (média): transação, FOR UPDATE, EXCEPTION/RAISE
+# @name anexoD
+POST {{baseUrl}}/modernize
+Content-Type: application/json
+
+{
+  "source_code": "CREATE OR REPLACE PROCEDURE sp_transferir_entre_contas(\n    IN p_conta_origem   BIGINT,\n    IN p_conta_destino  BIGINT,\n    IN p_valor          NUMERIC(18,2)\n)\nLANGUAGE plpgsql\nAS $$\nDECLARE\n    v_saldo_origem    NUMERIC(18,2);\n    v_status_origem   VARCHAR(20);\n    v_status_destino  VARCHAR(20);\nBEGIN\n    IF p_valor IS NULL OR p_valor <= 0 THEN\n        RAISE EXCEPTION 'Valor invalido para transferencia: %', p_valor;\n    END IF;\n\n    IF p_conta_origem = p_conta_destino THEN\n        RAISE EXCEPTION 'Conta de origem e destino nao podem ser iguais';\n    END IF;\n\n    SELECT saldo, status INTO v_saldo_origem, v_status_origem\n      FROM contas WHERE id = p_conta_origem FOR UPDATE;\n\n    SELECT status INTO v_status_destino\n      FROM contas WHERE id = p_conta_destino FOR UPDATE;\n\n    IF v_saldo_origem IS NULL THEN\n        RAISE EXCEPTION 'Conta de origem % nao encontrada', p_conta_origem;\n    END IF;\n\n    IF v_status_origem <> 'ATIVA' OR v_status_destino <> 'ATIVA' THEN\n        RAISE EXCEPTION 'Ambas as contas precisam estar ATIVAS';\n    END IF;\n\n    IF v_saldo_origem < p_valor THEN\n        RAISE EXCEPTION 'Saldo insuficiente: saldo=% valor=%', v_saldo_origem, p_valor;\n    END IF;\n\n    UPDATE contas SET saldo = saldo - p_valor WHERE id = p_conta_origem;\n    UPDATE contas SET saldo = saldo + p_valor WHERE id = p_conta_destino;\n\n    INSERT INTO transacoes (conta_origem_id, conta_destino_id, tipo, valor)\n    VALUES (p_conta_origem, p_conta_destino, 'TRANSFERENCIA', p_valor);\n\n    INSERT INTO log_auditoria (entidade, entidade_id, acao, detalhes)\n    VALUES (\n        'transacoes',\n        NULL,\n        'TRANSFERENCIA_OK',\n        jsonb_build_object(\n            'origem',  p_conta_origem,\n            'destino', p_conta_destino,\n            'valor',   p_valor\n        )\n    );\n\nEXCEPTION\n    WHEN OTHERS THEN\n        INSERT INTO log_auditoria (entidade, acao, detalhes)\n        VALUES (\n            'transacoes',\n            'TRANSFERENCIA_ERRO',\n            jsonb_build_object(\n                'origem',  p_conta_origem,\n                'destino', p_conta_destino,\n                'valor',   p_valor,\n                'erro',    SQLERRM\n            )\n        );\n        RAISE;\nEND;\n$$;\n",
+  "schema": "{{schema}}"
+}
+
+### Anexo E · sp_processar_lote_taxas (alta): cursor, LOOP, CASE, JSONB
+# @name anexoE
+POST {{baseUrl}}/modernize
+Content-Type: application/json
+
+{
+  "source_code": "CREATE OR REPLACE PROCEDURE sp_processar_lote_taxas(\n    IN p_data_referencia DATE\n)\nLANGUAGE plpgsql\nAS $$\nDECLARE\n    cur_transacoes CURSOR FOR\n        SELECT id, conta_origem_id, tipo, valor\n          FROM transacoes\n         WHERE DATE(data_transacao) = p_data_referencia\n           AND status = 'EFETIVADA'\n           AND tipo  <> 'TARIFA';\n\n    v_id           BIGINT;\n    v_origem       BIGINT;\n    v_tipo         VARCHAR(20);\n    v_valor        NUMERIC(18,2);\n    v_taxa         NUMERIC(18,2);\n    v_percentual   NUMERIC(7,4);\n    v_minimo       NUMERIC(18,2);\n    v_total_taxas  NUMERIC(18,2) := 0;\n    v_count        INT := 0;\nBEGIN\n    OPEN cur_transacoes;\n\n    LOOP\n        FETCH cur_transacoes INTO v_id, v_origem, v_tipo, v_valor;\n        EXIT WHEN NOT FOUND;\n\n        SELECT percentual, valor_minimo\n          INTO v_percentual, v_minimo\n          FROM taxas\n         WHERE tipo_operacao = v_tipo\n           AND vigente_de <= p_data_referencia\n           AND (vigente_ate IS NULL OR vigente_ate >= p_data_referencia)\n         ORDER BY vigente_de DESC\n         LIMIT 1;\n\n        IF v_percentual IS NULL THEN\n            CONTINUE;\n        END IF;\n\n        v_taxa := GREATEST(v_valor * v_percentual / 100.0, v_minimo);\n\n        CASE v_tipo\n            WHEN 'TRANSFERENCIA' THEN v_taxa := v_taxa;\n            WHEN 'SAQUE'         THEN v_taxa := v_taxa * 1.10;\n            ELSE                      v_taxa := v_taxa * 0.90;\n        END CASE;\n\n        IF v_origem IS NOT NULL THEN\n            UPDATE contas SET saldo = saldo - v_taxa WHERE id = v_origem;\n\n            INSERT INTO transacoes (conta_origem_id, tipo, valor, status)\n            VALUES (v_origem, 'TARIFA', v_taxa, 'EFETIVADA');\n\n            INSERT INTO log_auditoria (entidade, entidade_id, acao, detalhes)\n            VALUES (\n                'transacoes', v_id, 'TARIFA_APLICADA',\n                jsonb_build_object(\n                    'transacao_origem', v_id,\n                    'tipo_origem',      v_tipo,\n                    'valor_origem',     v_valor,\n                    'percentual',       v_percentual,\n                    'taxa_aplicada',    v_taxa\n                )\n            );\n\n            v_total_taxas := v_total_taxas + v_taxa;\n            v_count       := v_count + 1;\n        END IF;\n    END LOOP;\n\n    CLOSE cur_transacoes;\n\n    INSERT INTO log_auditoria (entidade, acao, detalhes)\n    VALUES (\n        'lote_taxas', 'LOTE_PROCESSADO',\n        jsonb_build_object(\n            'data_referencia', p_data_referencia,\n            'transacoes',      v_count,\n            'total_taxas',     v_total_taxas\n        )\n    );\nEND;\n$$;\n",
+  "schema": "{{schema}}"
+}
+
+### Anexo F · sp_relatorio_mensal_cliente (muito alta): CTE recursiva, função aninhada, SETOF, fallback
+# @name anexoF
+POST {{baseUrl}}/modernize
+Content-Type: application/json
+
+{
+  "source_code": "CREATE OR REPLACE FUNCTION sp_relatorio_mensal_cliente(\n    p_cliente_id  BIGINT,\n    p_data_inicio DATE,\n    p_data_fim    DATE\n)\nRETURNS TABLE (\n    mes_referencia    DATE,\n    total_creditos    NUMERIC(18,2),\n    total_debitos     NUMERIC(18,2),\n    saldo_consolidado NUMERIC(18,2),\n    qtd_transacoes    INT\n)\nLANGUAGE plpgsql\nAS $$\nDECLARE\n    v_saldo_atual NUMERIC(18,2);\nBEGIN\n    IF p_data_inicio > p_data_fim THEN\n        RAISE EXCEPTION 'Periodo invalido: inicio % > fim %', p_data_inicio, p_data_fim;\n    END IF;\n\n    v_saldo_atual := fn_saldo_cliente(p_cliente_id);\n    RAISE NOTICE 'Saldo atual do cliente %: %', p_cliente_id, v_saldo_atual;\n\n    RETURN QUERY\n    WITH RECURSIVE meses AS (\n        SELECT DATE_TRUNC('month', p_data_inicio)::DATE AS mes\n        UNION ALL\n        SELECT (mes + INTERVAL '1 month')::DATE\n          FROM meses\n         WHERE mes < DATE_TRUNC('month', p_data_fim)\n    ),\n    movimento AS (\n        SELECT\n            DATE_TRUNC('month', t.data_transacao)::DATE AS mes,\n            SUM(CASE WHEN t.conta_destino_id IN (\n                    SELECT id FROM contas WHERE cliente_id = p_cliente_id\n                ) THEN t.valor ELSE 0 END) AS creditos,\n            SUM(CASE WHEN t.conta_origem_id IN (\n                    SELECT id FROM contas WHERE cliente_id = p_cliente_id\n                ) THEN t.valor ELSE 0 END) AS debitos,\n            COUNT(*) AS qtd\n          FROM transacoes t\n         WHERE t.status = 'EFETIVADA'\n           AND t.data_transacao >= p_data_inicio\n           AND t.data_transacao <  p_data_fim + INTERVAL '1 day'\n           AND (\n               t.conta_origem_id  IN (SELECT id FROM contas WHERE cliente_id = p_cliente_id)\n            OR t.conta_destino_id IN (SELECT id FROM contas WHERE cliente_id = p_cliente_id)\n           )\n         GROUP BY 1\n    )\n    SELECT\n        m.mes                                       AS mes_referencia,\n        COALESCE(mv.creditos, 0)                    AS total_creditos,\n        COALESCE(mv.debitos,  0)                    AS total_debitos,\n        v_saldo_atual + COALESCE(mv.creditos, 0)\n                      - COALESCE(mv.debitos,  0)    AS saldo_consolidado,\n        COALESCE(mv.qtd, 0)::INT                    AS qtd_transacoes\n      FROM meses m\n      LEFT JOIN movimento mv ON mv.mes = m.mes\n      ORDER BY m.mes;\n\nEXCEPTION\n    WHEN OTHERS THEN\n        RAISE WARNING 'Falha ao gerar relatorio: %. Retornando linha de fallback.', SQLERRM;\n\n        RETURN QUERY\n        SELECT\n            DATE_TRUNC('month', p_data_inicio)::DATE,\n            0::NUMERIC(18,2),\n            0::NUMERIC(18,2),\n            COALESCE(v_saldo_atual, 0),\n            0::INT;\nEND;\n$$;\n",
+  "schema": "{{schema}}"
+}
+
+
+# =============================================================================
+# Consulta de execuções persistidas (modernization_history)
+# =============================================================================
+
+### Execução do Anexo B (rode "Anexo B" antes)
+GET {{baseUrl}}/modernizations/{{anexoB.response.body.$.execution_id}}
+
+### Execução do exemplo mínimo (rode "Exemplo mínimo" antes)
+GET {{baseUrl}}/modernizations/{{minimo.response.body.$.execution_id}}
+
+
+# =============================================================================
+# Casos de erro
+# =============================================================================
+
+### SQL inválido -> 200 com status "failure" e erro no passo "parsing" (execução gravada)
+POST {{baseUrl}}/modernize
+Content-Type: application/json
+
+{
+  "source_code": "CREATE FUNCTION broken( AS $$ nope $$;"
+}
+
+### source_code vazio -> 422 (validação da API)
+POST {{baseUrl}}/modernize
+Content-Type: application/json
+
+{
+  "source_code": ""
+}
+
+### Execução inexistente -> 404
+GET {{baseUrl}}/modernizations/00000000-0000-0000-0000-000000000000
+
+
+# =============================================================================
+# API nativa do LangGraph (mesmo graph; execuções também gravadas em modernization_history)
+# Input do graph: {"source_code": "...", "schema_context": "..."}
+# =============================================================================
+
+### Graphs registrados
+POST {{baseUrl}}/assistants/search
+Content-Type: application/json
+
+{
+  "graph_id": "modernization"
+}
+
+### Run síncrona (stateless) — devolve o estado final do graph
+# @name run
+POST {{baseUrl}}/runs/wait
+Content-Type: application/json
+
+{
+  "assistant_id": "modernization",
+  "input": {
+    "source_code": "CREATE FUNCTION add_one(p int) RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETURN p + 1; END $$;"
+  }
+}
+
+### Execução gravada pela run acima (rode "Run síncrona" antes)
+GET {{baseUrl}}/modernizations/{{run.response.body.$.execution_id}}
+
+### Run com streaming (SSE) — um evento por nó: record_start, parsing, ..., record_result
+POST {{baseUrl}}/runs/stream
+Content-Type: application/json
+
+{
+  "assistant_id": "modernization",
+  "input": {
+    "source_code": "CREATE FUNCTION add_one(p int) RETURNS int LANGUAGE plpgsql AS $$ BEGIN RETURN p + 1; END $$;"
+  },
+  "stream_mode": "updates"
+}

@@ -28,5 +28,17 @@ class ValidationResult(ValueObject):
     def passed_all(self) -> bool:
         return all(result.success for result in self.results)
 
+    def issues(self) -> tuple[str, ...]:
+        """Every message of every failed validator, one line each."""
+        return tuple(
+            f"[{result.validator}] "
+            + (f"L{message.line}: " if message.line else "")
+            + (f"{message.code} " if message.code else "")
+            + message.message
+            for result in self.results
+            if not result.success
+            for message in result.messages
+        )
+
     def merge(self, other: ValidationResult) -> ValidationResult:
         return ValidationResult(results=self.results + other.results)

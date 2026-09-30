@@ -1,7 +1,7 @@
 {
-  "execution_id": "01a0f424-a44e-704b-bbf0-a982ef7c8bb0",
+  "execution_id": "01a0f43f-305e-750f-a669-33bf1b98dd74",
   "status": "success",
-  "created_at": "2026-09-30T21:07:17.198428+00:00",
+  "created_at": "2026-09-30T21:36:16.990561+00:00",
   "report": {
     "parsing": {
       "success": true,
@@ -178,43 +178,34 @@
       "recommended_strategy": "hybrid",
       "provider": "openrouter",
       "model": "z-ai/glm-5.3-flash",
-      "prompt_version": "generation-v1",
+      "prompt_version": "generation-v2",
       "input_tokens": 3461,
-      "output_tokens": 3100,
-      "latency_ms": 16716.88,
+      "output_tokens": 3357,
+      "latency_ms": 15208.8,
       "finish_reason": "stop",
+      "attempt": 1,
       "architectural_decisions": [
         {
-          "topic": "N+1 elimination",
-          "decision": "Collapsed the cursor loop (fee lookup, account debit, TARIFA insert, audit log per row) into a single statement with data-modifying CTEs (calculadas -> atualizadas/tarifas_inseridas/log_por_transacao/log_lote).",
-          "rationale": "All logic is pure relational computation; set-based SQL preserves semantics while removing four round-trips per transaction."
+          "topic": "Cursor row-a-row -> statement set-based",
+          "decision": "Todo o loop (busca de taxa, multiplicador por tipo, UPDATE de saldo, INSERT de TARIFA, INSERT de log por transacao e log consolidado) foi colapsado em um unico statement com CTEs de dados (base/upd/ins_tx/ins_log/tot).",
+          "rationale": "Elimina os 4 pontos de N+1 identificados; a semantica por linha (LEFT JOIN LATERAL na taxa vigente mais recente, GREATEST, CASE por tipo, filtro conta_origem_id IS NOT NULL e percentual IS NOT NULL) e preservada integralmente no SQL."
         },
         {
-          "topic": "Cumulative account debit",
-          "decision": "The UPDATE debits each account once using SUM(taxa) grouped by conta_origem_id instead of one UPDATE per transaction.",
-          "rationale": "A plain UPDATE ... FROM with multiple matching rows per account would apply only one (nondeterministic) fee; aggregating reproduces the cumulative effect of the original sequential loop."
+          "topic": "Transacao",
+          "decision": "Nenhum commit/rollback no modulo; o chamador controla a transacao via AsyncConnection.",
+          "rationale": "A procedure original nao gerenciava transacoes explicitamente; o statement unico tambem garante atomicidade de todo o lote."
         },
         {
-          "topic": "Transaction ownership",
-          "decision": "No commit/rollback in the function; everything runs on the caller's connection/transaction.",
-          "rationale": "The original procedure ran inside the caller's transaction; atomicity of the whole batch is preserved."
-        },
-        {
-          "topic": "Missing fee rows",
-          "decision": "LEFT JOIN LATERAL with WHERE percentual IS NOT NULL reproduces the original CONTINUE when no vigent fee row exists.",
-          "rationale": "SELECT INTO leaves NULLs when no row is found, and the original skips those transactions."
-        },
-        {
-          "topic": "Typed error",
-          "decision": "Introduced LoteTaxasError; the original had no RAISE, so it is only raised on unexpected execution failure.",
-          "rationale": "Rule 5 requires typed exceptions; normal-path behaviour (no exceptions raised) is unchanged."
+          "topic": "Retorno",
+          "decision": "A funcao retorna um LoteTaxasResumo (frozen dataclass) com contagem e total de taxas, extraido do RETURNING do log consolidado.",
+          "rationale": "A procedure original nao retornava valor, mas o resumo ja e calculado para o log; expor nao altera o comportamento no banco e facilita observabilidade no chamador."
         }
       ],
       "warnings": [
-        "The original CASE kept TRANSFERENCIA fees unchanged and applied 1.10/0.90 multipliers; the multiplier is now computed in SQL with identical semantics.",
-        "The original loop debited accounts sequentially; the set-based version debits each account once with the summed fees. Net saldo result is identical, but any row-level triggers on contas fire once per account instead of once per transaction.",
-        "The final SELECT returns summary counts for logging only; the procedure still returns nothing to the caller, preserving the original contract.",
-        "DATE(data_transacao) is not sargable; consider indexing an expression or a generated date column if performance becomes an issue (same behaviour as legacy)."
+        "Sem concorrencia controlada, execucoes simultaneas para a mesma data podem cobrar tarifas em dobro: o cursor original nao usava FOR UPDATE e a versao set-based mantem esse comportamento (nenhum lock de linha adicionado).",
+        "O filtro DATE(data_transacao) = :ref nao e sargable (impede uso de indice em data_transacao); mantido por fidelidade ao original. Considere um indice funcional ou range de timestamps como follow-up.",
+        "A ordem de insercao das transacoes TARIFA dentro do lote nao e deterministica (era sequencial no cursor); nao afeta saldos ou totais.",
+        "O ramo defensivo sem linhas de retorno so ocorreria em condicoes anormais; com zero transacoes elegiveis o CTE tot ainda gera o log LOTE_PROCESSADO com transacoes=0, igual ao original."
       ]
     },
     "validation": {

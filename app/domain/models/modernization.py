@@ -111,6 +111,7 @@ class GenerationReport(ValueObject):
     output_tokens: int | None = None
     latency_ms: float | None = None
     finish_reason: str | None = None
+    attempt: int | None = None
     architectural_decisions: tuple[ArchitecturalDecision, ...] = ()
     warnings: tuple[str, ...] = ()
 
@@ -128,6 +129,7 @@ class GenerationReport(ValueObject):
             output_tokens=metadata.output_tokens,
             latency_ms=metadata.latency_ms,
             finish_reason=metadata.finish_reason,
+            attempt=metadata.attempt,
             architectural_decisions=result.architectural_decisions,
             warnings=result.warnings,
         )

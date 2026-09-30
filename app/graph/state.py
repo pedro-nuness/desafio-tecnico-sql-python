@@ -1,26 +1,38 @@
 import operator
-from typing import Annotated, TypedDict
+from datetime import datetime
+from typing import Annotated, NotRequired, TypedDict
 from uuid import UUID
 
 from app.domain.enums import ModernizationStatus, PipelineStep
 from app.domain.models.generation import GenerationResult
-from app.domain.models.modernization import PipelineError
+from app.domain.models.modernization import Modernization, PipelineError, PipelineOutcome
 from app.domain.models.parsing import ParsedProcedure
 from app.domain.models.semantic_analysis import SemanticAnalysis
 from app.domain.models.validation import ValidationResult
 
 
-class ModernizationState(TypedDict):
-    execution_id: UUID
+class ModernizationInput(TypedDict):
+    """What a caller sends: POST /modernize, the LangGraph API (/runs) or Studio."""
+
     source_code: str
-    schema_context: str | None
+    schema_context: NotRequired[str | None]
+
+
+class ModernizationState(TypedDict):
+    source_code: str
+    schema_context: NotRequired[str | None]
+
+    # Set by record_start: every run has a persisted row from its first step.
+    execution_id: UUID
+    started_at: datetime
 
     parsed_procedure: ParsedProcedure | None
     semantic_analysis: SemanticAnalysis | None
 
     generated_code: str | None
     generation: GenerationResult | None
-    """Code + strategy + architectural decisions + GenerationMetadata."""
+    """Code + strategy + architectural decisions + GenerationMetadata (latest attempt)."""
+    generation_attempts: int
 
     validation_result: ValidationResult | None
 
@@ -30,43 +42,44 @@ class ModernizationState(TypedDict):
     errors: Annotated[list[PipelineError], operator.add]
 
     status: ModernizationStatus
+    """Routing flag while running (FAILURE short-circuits); final status after record_result."""
+
+    modernization: Modernization
+    """The persisted aggregate, set by record_result (the run's output)."""
 
 
 class StateUpdate(TypedDict, total=False):
     """Partial update returned by a node (LangGraph merges it into the state)."""
 
+    execution_id: UUID
+    started_at: datetime
     parsed_procedure: ParsedProcedure
     semantic_analysis: SemanticAnalysis
     generated_code: str
     generation: GenerationResult
+    generation_attempts: int
     validation_result: ValidationResult
     completed_steps: list[PipelineStep]
     warnings: list[str]
     errors: list[PipelineError]
     status: ModernizationStatus
-
-
-def initial_state(
-    *, execution_id: UUID, source_code: str, schema_context: str | None
-) -> ModernizationState:
-    return ModernizationState(
-        execution_id=execution_id,
-        source_code=source_code,
-        schema_context=schema_context,
-        parsed_procedure=None,
-        semantic_analysis=None,
-        generated_code=None,
-        generation=None,
-        validation_result=None,
-        completed_steps=[],
-        warnings=[],
-        errors=[],
-        status=ModernizationStatus.RUNNING,
-    )
+    modernization: Modernization
 
 
 def failed(step: PipelineStep, exc: Exception) -> StateUpdate:
     return StateUpdate(
         errors=[PipelineError(step=step, error_type=type(exc).__name__, message=str(exc))],
         status=ModernizationStatus.FAILURE,
+    )
+
+
+def to_outcome(state: ModernizationState) -> PipelineOutcome:
+    return PipelineOutcome(
+        parsed_procedure=state.get("parsed_procedure"),
+        semantic_analysis=state.get("semantic_analysis"),
+        generation=state.get("generation"),
+        validation=state.get("validation_result"),
+        completed_steps=tuple(state.get("completed_steps", [])),
+        errors=tuple(state.get("errors", [])),
+        warnings=tuple(state.get("warnings", [])),
     )

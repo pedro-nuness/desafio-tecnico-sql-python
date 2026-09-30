@@ -1213,6 +1213,7 @@ dependencies = [
     { name = "asyncpg" },
     { name = "fastapi" },
     { name = "langgraph" },
+    { name = "langgraph-cli", extra = ["inmem"] },
     { name = "openai" },
     { name = "pglast" },
     { name = "pydantic" },
@@ -1225,7 +1226,6 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "httpx" },
-    { name = "langgraph-cli", extra = ["inmem"] },
     { name = "pytest" },
     { name = "pytest-asyncio" },
 ]
@@ -1236,6 +1236,7 @@ requires-dist = [
     { name = "asyncpg", specifier = ">=0.31" },
     { name = "fastapi", specifier = ">=0.142" },
     { name = "langgraph", specifier = ">=1.2.12" },
+    { name = "langgraph-cli", extras = ["inmem"], specifier = ">=0.4.32" },
     { name = "openai", specifier = ">=3.22" },
     { name = "pglast", specifier = ">=8.4" },
     { name = "pydantic", specifier = ">=2.13" },
@@ -1248,7 +1249,6 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "httpx", specifier = ">=0.28" },
-    { name = "langgraph-cli", extras = ["inmem"], specifier = ">=0.4.32" },
     { name = "pytest", specifier = ">=9.1" },
     { name = "pytest-asyncio", specifier = ">=1.4" },
 ]
