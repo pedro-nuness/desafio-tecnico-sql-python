@@ -1,11 +1,10 @@
 from uuid import UUID
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter
 
 from app.api.dependencies import ModernizationServiceDep
 from app.api.schemas.modernization_request import ModernizationRequest
 from app.api.schemas.modernization_response import ModernizationResponse
-from app.domain.exceptions import ModernizationNotFoundError
 
 router = APIRouter(tags=["modernization"])
 
@@ -24,8 +23,5 @@ async def modernize(
 async def get_modernization(
     execution_id: UUID, service: ModernizationServiceDep
 ) -> ModernizationResponse:
-    try:
-        modernization = await service.get(execution_id)
-    except ModernizationNotFoundError as exc:
-        raise HTTPException(status.HTTP_404_NOT_FOUND, str(exc)) from exc
+    modernization = await service.get(execution_id)
     return ModernizationResponse.from_domain(modernization)

@@ -89,3 +89,45 @@ async def test_unknown_execution_returns_404(client: AsyncClient) -> None:
     response = await client.get(f"/modernizations/{uuid4()}")
 
     assert response.status_code == 404
+    assert "not found" in response.json()["detail"].lower()
+
+
+async def test_global_interceptor_handles_http_client_errors(
+    api: FastAPI, client: AsyncClient
+) -> None:
+    from app.shared.client import HttpConnectionError, HttpResponseError, HttpTimeoutError
+
+    @api.get("/test-timeout")
+    async def route_timeout() -> None:
+        raise HttpTimeoutError("External service timeout")
+
+    @api.get("/test-connection")
+    async def route_connection() -> None:
+        raise HttpConnectionError("Failed to connect")
+
+    @api.get("/test-upstream-500")
+    async def route_upstream() -> None:
+        raise HttpResponseError(status_code=500, message="Service unavailable")
+
+    @api.get("/test-unhandled")
+    async def route_unhandled() -> None:
+        raise RuntimeError("Unexpected failure")
+
+    timeout_resp = await client.get("/test-timeout")
+    assert timeout_resp.status_code == 504
+    assert timeout_resp.json() == {"detail": "Gateway Timeout: upstream service timed out"}
+
+    conn_resp = await client.get("/test-connection")
+    assert conn_resp.status_code == 502
+    assert conn_resp.json() == {"detail": "Bad Gateway: failed to connect to upstream service"}
+
+    upstream_resp = await client.get("/test-upstream-500")
+    assert upstream_resp.status_code == 502
+    assert "upstream service error (500)" in upstream_resp.json()["detail"]
+
+    async with AsyncClient(
+        transport=ASGITransport(app=api, raise_app_exceptions=False), base_url="http://test"
+    ) as unhandled_client:
+        unhandled_resp = await unhandled_client.get("/test-unhandled")
+        assert unhandled_resp.status_code == 500
+        assert unhandled_resp.json() == {"detail": "Internal Server Error"}

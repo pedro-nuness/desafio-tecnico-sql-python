@@ -12,6 +12,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI
 
+from app.api.exception_handlers import register_exception_handlers
 from app.api.routes import health, modernization
 from app.bootstrap import Container, default_container
 
@@ -33,6 +34,7 @@ def create_app(container_factory: ContainerFactory = default_container) -> FastA
             await container.aclose()
 
     app = FastAPI(title="PL/pgSQL Modernizer", version="0.1.0", lifespan=lifespan)
+    register_exception_handlers(app)
     app.include_router(health.router)
     app.include_router(modernization.router)
     return app
