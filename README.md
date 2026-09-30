@@ -106,8 +106,8 @@ uv run langgraph dev --allow-blocking
 
 ### Servidor LangGraph (`langgraph dev` + Studio)
 
-É o mesmo servidor do container `app`. O `langgraph.json` registra o graph `modernization` (factory `app/bootstrap.py:make_graph`) e monta
-a própria API FastAPI via `http.app`, então o mesmo servidor expõe:
+É o mesmo servidor do container `app`. O `langgraph.json` registra o graph `modernization` (factory `app.bootstrap:make_graph`) e monta
+a própria API FastAPI via `http.app` (`app.api.main:app`), então o mesmo servidor expõe:
 
 - API do LangGraph (`/assistants`, `/threads`, `/runs/...`) e o Studio — runs disparadas por aqui
   (input `{"source_code": "...", "schema_context": "..."}`) também são gravadas em
@@ -450,7 +450,7 @@ app/
 │       └── mappers/          # ORM <-> domínio
 ├── prompts/generation_prompt.py
 ├── config/settings.py
-└── bootstrap.py              # composition root + make_graph() para o langgraph.json
+└── bootstrap.py              # composition root: build_container, default_container, make_graph() para o langgraph.json
 migrations/                   # Alembic (env async + versions/)
 examples/                     # Anexo A (schema.sql), Anexos B–F (procedures/) e results/
 scripts/run_examples.py       # roda os anexos pelo ModernizationService e grava results/
@@ -718,11 +718,21 @@ de serialização.
 
 ### AD-11 · Composition root explícito
 
-`app/bootstrap.py` monta tudo por construtor (sem container de DI, sem singletons globais, sem
-service locator). A API guarda o `Container` em `app.state` no lifespan e o injeta via `Depends`.
-Testes substituem o container inteiro por `create_app(container_factory=...)`.
-Exceção consciente: `make_graph()` (factory do `langgraph.json`) é `@cache` — o servidor LangGraph
-não tem lifespan para o graph, então o engine (pool de conexões) vive um por processo.
+`app/bootstrap.py` é o único módulo que importa adapters concretos e monta tudo por construtor
+(sem framework de DI, sem service locator). `build_container(settings)` monta engine, graph e
+service uma vez; `default_container()` (`@cache`) guarda esse container **por processo**.
+
+O `langgraph dev` serve dois pontos de entrada no mesmo processo — o lifespan da API FastAPI e a
+factory `make_graph()` do `langgraph.json` — e ambos usam `default_container()`: um engine (pool de
+conexões), um graph, uma leitura de `Settings`. Verificado no container: após uma execução por
+`/modernize` e outra por `/runs/wait`, o app mantém **1** conexão no Postgres (eram 2 pools).
+Detalhe necessário: o `langgraph.json` referencia módulos (`app.bootstrap:make_graph`), não
+arquivos (`./app/bootstrap.py:...`) — por arquivo, o servidor executa o módulo de novo com outro
+nome, e o cache (e o engine) duplicaria.
+
+A entrega é que varia por ponto de entrada: `Depends` nas rotas (via `app.state`), factory no
+`langgraph.json`, construtor nos services/nodes. Testes e scripts chamam `build_container` ou
+injetam o próprio container por `create_app(container_factory=...)`.
 
 ### AD-12 · Docker
 

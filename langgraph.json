@@ -3,10 +3,10 @@
   "python_version": "3.14",
   "dependencies": ["."],
   "graphs": {
-    "modernization": "./app/bootstrap.py:make_graph"
+    "modernization": "app.bootstrap:make_graph"
   },
   "http": {
-    "app": "./app/api/main.py:app"
+    "app": "app.api.main:app"
   },
   "env": ".env"
 }

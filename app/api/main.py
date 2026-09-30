@@ -13,22 +13,19 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 
 from app.api.routes import health, modernization
-from app.bootstrap import Container, build_container
-from app.config.settings import Settings
+from app.bootstrap import Container, default_container
 
-type ContainerFactory = Callable[[Settings], Container]
+type ContainerFactory = Callable[[], Container]
 
 
-def create_app(
-    settings: Settings | None = None,
-    container_factory: ContainerFactory = build_container,
-) -> FastAPI:
-    resolved = settings or Settings()
+def create_app(container_factory: ContainerFactory = default_container) -> FastAPI:
+    """`default_container` is shared with the LangGraph server (`make_graph`); tests inject
+    their own factory."""
 
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
-        logging.basicConfig(level=resolved.log_level)
-        container = container_factory(resolved)
+        container = container_factory()
+        logging.basicConfig(level=container.settings.log_level)
         app.state.container = container
         try:
             yield

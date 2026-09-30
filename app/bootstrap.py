@@ -1,7 +1,9 @@
 """Composition root: the only place that knows every concrete adapter.
 
-Explicit constructor wiring (no DI container, no global singletons): each entry point
-(FastAPI lifespan, LangGraph CLI, tests) builds exactly what it needs.
+Explicit constructor wiring (no DI framework). `build_container` assembles everything once;
+`default_container` caches that per process so both entry points served by `langgraph dev`
+(the FastAPI lifespan and the LangGraph server via `make_graph`) share one engine and one
+graph. Tests and scripts call `build_container` directly (or inject their own Container).
 """
 
 from dataclasses import dataclass
@@ -29,6 +31,8 @@ from app.prompts.generation_prompt import GenerationPromptBuilder
 
 @dataclass(frozen=True, slots=True)
 class Container:
+    settings: Settings
+    graph: ModernizationGraph
     modernization_service: ModernizationService
     engine: AsyncEngine | None = None
 
@@ -68,20 +72,22 @@ def _uow_factory(engine: AsyncEngine) -> UnitOfWorkFactory:
 def build_container(settings: Settings) -> Container:
     engine = create_engine(str(settings.database_url), echo=settings.database_echo)
     uow_factory = _uow_factory(engine)
+    graph = build_graph(settings, uow_factory)
     service = ModernizationService(
-        pipeline=LangGraphModernizationPipeline(build_graph(settings, uow_factory)),
-        uow_factory=uow_factory,
+        pipeline=LangGraphModernizationPipeline(graph), uow_factory=uow_factory
     )
-    return Container(modernization_service=service, engine=engine)
+    return Container(settings=settings, graph=graph, modernization_service=service, engine=engine)
 
 
 @cache
+def default_container() -> Container:
+    """The process-wide container: one engine (connection pool), one graph, one Settings."""
+    return build_container(Settings())
+
+
 def make_graph() -> ModernizationGraph:
     """Graph factory referenced by langgraph.json (LangGraph API / Studio).
 
-    Runs started there are persisted too (the graph records them). Cached: one engine
-    (connection pool) per server process, living as long as the server.
+    Same graph the FastAPI routes use, so runs started there are persisted the same way.
     """
-    settings = Settings()
-    engine = create_engine(str(settings.database_url), echo=settings.database_echo)
-    return build_graph(settings, _uow_factory(engine))
+    return default_container().graph

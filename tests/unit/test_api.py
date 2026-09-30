@@ -6,15 +6,25 @@ from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
 from app.api.main import create_app
+from app.application.services.modernization_service import ModernizationService
 from app.bootstrap import Container
 from app.config.settings import Settings
-from tests.conftest import ServiceFactory
+from app.graph.pipeline import LangGraphModernizationPipeline
+from tests.conftest import GraphFactory
+from tests.fakes import InMemoryStore
 
 
 @pytest.fixture
-def api(make_service: ServiceFactory) -> FastAPI:
-    service = make_service()
-    return create_app(Settings(), container_factory=lambda _: Container(service))
+def api(make_graph: GraphFactory, store: InMemoryStore) -> FastAPI:
+    graph = make_graph()
+    container = Container(
+        settings=Settings(_env_file=None),  # type: ignore[call-arg]
+        graph=graph,
+        modernization_service=ModernizationService(
+            LangGraphModernizationPipeline(graph), store.uow
+        ),
+    )
+    return create_app(container_factory=lambda: container)
 
 
 @pytest.fixture
