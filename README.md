@@ -189,7 +189,7 @@ flowchart TB
 
     subgraph Driven["Driven adapters (app/features/modernization/infrastructure, graph)"]
         A1["PglastParser"]
-        A2["OpenAIProvider (openai / openrouter)"]
+        A2["OpenAIProvider / OpenRouterProvider (SDKs oficiais)"]
         A3["PythonASTValidator · RuffValidator<br/>CompositeCodeValidator"]
         A4["SqlAlchemyUnitOfWork<br/>SqlAlchemyModernizationRepository"]
         A5["LangGraphModernizationPipeline"]
@@ -228,7 +228,7 @@ app/core/bootstrap.py = composition root (único lugar que conhece todos os adap
 
 | Eixo                 | Port                                   | Adapters hoje                                         |
 |----------------------|----------------------------------------|-------------------------------------------------------|
-| LLM provider/modelo  | `LLMProvider`                          | `OpenAIProvider` (OpenAI e OpenRouter)                |
+| LLM provider/modelo  | `LLMProvider`                          | `OpenAIProvider` / `OpenRouterProvider` (SDKs oficiais) |
 | Parser SQL           | `SQLParser`                            | `PglastParser`                                        |
 | Validadores          | `CodeValidator`                        | `PythonASTValidator`, `RuffValidator`, `CompositeCodeValidator` |
 | Persistência         | `UnitOfWork` + `ModernizationRepository` | `SqlAlchemyUnitOfWork`, `SqlAlchemyModernizationRepository` |
@@ -356,8 +356,10 @@ Centralizada em `app/core/config/settings.py` (`pydantic-settings`; lê env vars
 | `LLM_TEMPERATURE`       | `0.0`                                                         |                                            |
 | `LLM_MAX_OUTPUT_TOKENS` | `8192`                                                        |                                            |
 | `LLM_TIMEOUT_SECONDS`   | `120`                                                         |                                            |
-| `LLM_MAX_RETRIES`       | `2`                                                           | retries do SDK                             |
+| `LLM_MAX_RETRIES`       | `2`                                                           | tentativas adicionais: SDK OpenAI / adapter OpenRouter |
 | `LLM_REASONING_EFFORT`  | — (não enviado)                                               | `minimal`\|`low`\|`medium`\|`high`, só para modelos de raciocínio (ver AD-04) |
+| `LLM_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `5`                                           | falhas consecutivas (após retries) que abrem o circuito |
+| `LLM_CIRCUIT_BREAKER_RESET_SECONDS` | `60`                                              | tempo em fail-fast antes de uma chamada de teste (half-open) |
 | `GENERATION_MAX_ATTEMPTS` | `2`                                                         | tentativas de geração (1 = sem loop de reparo) |
 | `GENERATION_RETRY_BUDGET_SECONDS` | `90`                                                | nenhuma retentativa começa depois disso (limita a espera síncrona) |
 | `RUFF_TIMEOUT_SECONDS`  | `20`                                                          |                                            |
@@ -439,7 +441,13 @@ app/
 │   └── server.py             # Setup da aplicação FastAPI e lifespan
 ├── shared/                   # Código utilitário compartilhado entre múltiplos contextos
 │   ├── client.py             # HTTP client base reutilizável
-│   └── domain/value_object.py# Base ValueObject imutável (Pydantic frozen)
+│   ├── domain/value_object.py# Base ValueObject imutável (Pydantic frozen)
+│   ├── resilience/           # CircuitBreaker genérico (async, sem dependência de vendor)
+│   └── integrations/llm/     # Port LLMProvider, LLMConfig, factory e adapters reutilizáveis
+│       ├── llm_provider.py   # LLMProvider (Protocol), LLMRequest/LLMResponse
+│       ├── factory.py        # create_llm_provider (match + circuit breaker)
+│       ├── openai/           # OpenAIProvider (Chat Completions, qualquer endpoint compatível)
+│       └── openrouter/       # OpenRouterProvider (SDK oficial, chat.send_async)
 └── features/                 # Módulos verticais autocontidos por capacidade de negócio
     ├── health/               # Feature de monitoramento e liveness check
     │   ├── routes.py
@@ -455,15 +463,14 @@ app/
         │   ├── models/       # IR de parsing, análise semântica, geração e validação
         │   └── services/     # Analisador semântico determinístico
         ├── application/      # Casos de uso e portas abstratas (Protocols)
-        │   ├── ports/        # LLM, parsing, validação, repositórios e pipeline
+        │   ├── ports/        # Parsing, validação, repositórios e pipeline (LLM vem de shared)
         │   └── services/     # ModernizationService e CodeGenerationService
         ├── graph/            # Workflow LangGraph (pipeline, state, builder e nodes finos)
         │   ├── builder.py
         │   ├── pipeline.py
         │   ├── state.py
         │   └── nodes/
-        ├── infrastructure/   # Driven adapters (LLM, parsing pglast, Ruff/AST, persistência UoW/Repo)
-        │   ├── llm/          # OpenAIProvider e provider_factory
+        ├── infrastructure/   # Driven adapters (parsing pglast, Ruff/AST, persistência UoW/Repo)
         │   ├── parsing/      # PglastParser
         │   ├── persistence/  # SqlAlchemyUnitOfWork, repositórios, mappers e models ORM
         │   └── validation/   # PythonASTValidator, RuffValidator e CompositeCodeValidator
@@ -663,15 +670,30 @@ guarda **as duas** (`recommended_strategy` e `strategy`). Regras no prompt: join
 DML em massa e locking permanecem como SQL parametrizado (`sqlalchemy.text()` + bind params);
 Python coordena validação, fluxo, erros e composição; a transação pertence ao chamador.
 
-### AD-04 · LLM atrás de `LLMProvider`; OpenRouter via adapter OpenAI-compatible
+### AD-04 · LLM atrás de `LLMProvider`; SDK oficial de cada provider
 
 `LLMRequest`/`LLMResponse` são modelos próprios (provider, model, tokens, latência,
-`finish_reason`). `OpenAIProvider` fala Chat Completions e aceita `base_url`, então serve OpenAI,
-**OpenRouter** (uma chave → Claude, Gemini, GPT, Llama só trocando `LLM_MODEL`) e endpoints
-self-hosted. Erros do SDK viram `LLMProviderError`. A seleção acontece em
-`app/features/modernization/infrastructure/llm/provider_factory.py` (um `match`), chamada só pelo composition root.
-Adicionar `AnthropicProvider`/`GeminiProvider` = um arquivo novo + um `case`; nodes e services
-não mudam.
+`finish_reason`). `OpenAIProvider` usa o SDK OpenAI e aceita `base_url` para endpoints
+compatíveis. `OpenRouterProvider` é independente e usa o [SDK oficial OpenRouter](https://openrouter.ai/docs/client-sdks/python/overview),
+com `chat.send_async` (uma chave → Claude, Gemini, GPT, Llama só trocando `LLM_MODEL`). Tudo vive em
+`app/shared/integrations/llm/` para ser reutilizado por qualquer feature. Erros do SDK viram
+`IntegrationError` (`app/shared/integrations/exceptions.py`); a feature traduz para o seu
+`LLMProviderError` em `CodeGenerationService`.
+A seleção acontece em `app/shared/integrations/llm/factory.py` (um `match`), chamada só pelo
+composition root com `Settings.llm_config()`. Adicionar `AnthropicProvider`/`GeminiProvider` =
+um pacote novo + um `case`; nodes e services não mudam.
+
+Todo provider sai da factory com um `CircuitBreaker` injetado (breaker genérico em
+`app/shared/resilience/`): após N falhas consecutivas (cada uma já com os retries
+esgotados) o circuito abre e as chamadas falham na hora com `CircuitOpenError`, uma
+`IntegrationError`, em vez de esperar timeout × retries por requisição; depois do reset,
+uma única chamada de teste decide se fecha ou reabre.
+
+OpenAI faz retries pelo SDK. O SDK OpenRouter limita retries por tempo, sem limite de
+tentativas; por isso o adapter desativa os retries internos e preserva `LLM_MAX_RETRIES`
+com tentativas adicionais para falhas de transporte, HTTP 408/409/429 e 5xx. O circuito
+conta uma falha somente após essas tentativas se esgotarem. URL, título do app e timeout
+são configurados no SDK OpenRouter (`server_url`, `x_open_router_title`, `timeout_ms`).
 
 Modelos de raciocínio contam os tokens de "pensamento" dentro de `max_completion_tokens`. Medido
 com `z-ai/glm-5.3-flash` no Anexo F: sem limite, gastou >32k tokens pensando e devolveu conteúdo
@@ -814,7 +836,7 @@ assíncrono (ver Evolução futura).
 | escolha                                   | ganho                                   | custo                                      |
 |-------------------------------------------|-----------------------------------------|--------------------------------------------|
 | LLM gera, validadores determinísticos checam | tradução de casos que regras não cobrem | não determinismo; exige relatório/validação |
-| OpenRouter via adapter OpenAI             | um adapter, muitos modelos              | hop extra, markup; `json_object` depende do modelo |
+| OpenRouter via SDK oficial                | muitos modelos, contrato próprio do SDK | hop extra, markup; `json_object` depende do modelo |
 | Duas transações por execução              | rastreabilidade mesmo com crash         | estado `running` intermediário visível     |
 | Pydantic no domínio                       | serialização/validação grátis           | dependência de lib no núcleo               |
 | Ruff como subprocess                      | isolamento, mesma versão do projeto     | custo de processo por validação (~ms)      |

@@ -21,10 +21,6 @@ class ValidationExecutionError(ModernizationError):
     """A validator could not run (as opposed to the code being invalid)."""
 
 
-class ConfigurationError(ModernizationError):
-    """Invalid application configuration detected at composition time."""
-
-
 class ModernizationNotFoundError(ModernizationError):
     def __init__(self, modernization_id: UUID) -> None:
         super().__init__(f"Modernization {modernization_id} not found")

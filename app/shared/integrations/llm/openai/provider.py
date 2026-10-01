@@ -1,7 +1,7 @@
 """LLMProvider adapter for the OpenAI Chat Completions API.
 
-Also serves any OpenAI-compatible endpoint (OpenRouter, vLLM, Ollama...) through
-`base_url`; `provider_name` is what ends up in the report.
+Also serves any OpenAI-compatible endpoint (vLLM, Ollama...) through `base_url`;
+`provider_name` is what ends up in the report.
 """
 
 import time
@@ -11,15 +11,17 @@ from openai import APIError, AsyncOpenAI, omit
 from openai.types.chat import ChatCompletionMessageParam
 from openai.types.shared import ReasoningEffort
 
-from app.features.modernization.application.ports.llm.llm_provider import (
+from app.shared.integrations.exceptions import IntegrationError
+from app.shared.integrations.llm.llm_provider import (
+    LLMProvider,
     LLMRequest,
     LLMResponse,
     ResponseFormat,
 )
-from app.features.modernization.domain.exceptions import LLMProviderError
+from app.shared.resilience.circuit_breaker import CircuitBreaker
 
 
-class OpenAIProvider:
+class OpenAIProvider(LLMProvider):
     def __init__(
         self,
         *,
@@ -31,10 +33,12 @@ class OpenAIProvider:
         timeout_seconds: float = 120.0,
         max_retries: int = 2,
         reasoning_effort: ReasoningEffort | None = None,
+        breaker: CircuitBreaker | None = None,
     ) -> None:
         self._model = model
         self._provider_name = provider_name
         self._reasoning_effort = reasoning_effort
+        self._breaker = breaker
         self._client = AsyncOpenAI(
             api_key=api_key,
             base_url=base_url,
@@ -44,6 +48,12 @@ class OpenAIProvider:
         )
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
+        # Count one failure only after the SDK exhausts its retries.
+        if self._breaker is not None:
+            return await self._breaker.call(lambda: self._generate(request))
+        return await self._generate(request)
+
+    async def _generate(self, request: LLMRequest) -> LLMResponse:
         messages: list[ChatCompletionMessageParam] = [
             {"role": "system", "content": request.system_prompt},
             {"role": "user", "content": request.user_prompt},
@@ -65,11 +75,11 @@ class OpenAIProvider:
                 ),
             )
         except APIError as exc:
-            raise LLMProviderError(f"{self._provider_name} request failed: {exc}") from exc
+            raise IntegrationError(f"{self._provider_name} request failed: {exc}") from exc
         latency_ms = (time.perf_counter() - started) * 1000
 
         if not completion.choices:
-            raise LLMProviderError(f"{self._provider_name} returned no choices")
+            raise IntegrationError(f"{self._provider_name} returned no choices")
         choice = completion.choices[0]
         usage = completion.usage
         return LLMResponse(

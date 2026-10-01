@@ -7,13 +7,34 @@ import pytest
 
 APP = Path(__file__).parents[2] / "app"
 
-VENDORS = {"openai", "anthropic", "google", "sqlalchemy", "asyncpg", "pglast", "ruff", "alembic"}
+VENDORS = {
+    "openai",
+    "openrouter",
+    "anthropic",
+    "google",
+    "sqlalchemy",
+    "asyncpg",
+    "pglast",
+    "ruff",
+    "alembic",
+}
+
+# Features depend on the LLMProvider port only; adapters are wired by the composition root.
+LLM_ADAPTERS = {
+    "app.shared.integrations.llm.factory",
+    "app.shared.integrations.llm.openai",
+    "app.shared.integrations.llm.openrouter",
+}
 
 FORBIDDEN: dict[str, set[str]] = {
-    "shared": VENDORS | {"fastapi", "langgraph", "app.core", "app.features"},
+    # shared/integrations holds vendor adapters; the rest of shared stays vendor-free.
+    "shared": {"fastapi", "langgraph", "app.core", "app.features"},
+    "shared/domain": VENDORS,
+    "shared/resilience": VENDORS,
     "core/config": VENDORS | {"fastapi", "langgraph", "app.features"},
     "core/database": {"fastapi", "langgraph", "app.features", "openai", "pglast", "ruff"},
     "features/modernization/domain": VENDORS
+    | LLM_ADAPTERS
     | {
         "langgraph",
         "fastapi",
@@ -24,6 +45,7 @@ FORBIDDEN: dict[str, set[str]] = {
         "app.features.modernization.api",
     },
     "features/modernization/application": VENDORS
+    | LLM_ADAPTERS
     | {
         "langgraph",
         "fastapi",
@@ -33,6 +55,7 @@ FORBIDDEN: dict[str, set[str]] = {
         "app.features.modernization.api",
     },
     "features/modernization/prompts": VENDORS
+    | LLM_ADAPTERS
     | {
         "langgraph",
         "fastapi",
@@ -42,6 +65,7 @@ FORBIDDEN: dict[str, set[str]] = {
         "app.features.modernization.api",
     },
     "features/modernization/graph": VENDORS
+    | LLM_ADAPTERS
     | {
         "fastapi",
         "app.core.bootstrap",
@@ -78,13 +102,14 @@ def test_package_by_feature_respects_dependency_rule(target: str) -> None:
     assert _violations(target) == []
 
 
-def test_only_the_llm_adapters_import_openai() -> None:
+@pytest.mark.parametrize("vendor", ["openai", "openrouter"])
+def test_only_the_vendor_adapter_imports_its_sdk(vendor: str) -> None:
     offenders = [
         str(path.relative_to(APP)).replace("\\", "/")
         for path in APP.rglob("*.py")
-        if any(i == "openai" or i.startswith("openai.") for i in _imports(path))
+        if any(i == vendor or i.startswith(vendor + ".") for i in _imports(path))
     ]
-    assert offenders == ["features/modernization/infrastructure/llm/openai_provider.py"]
+    assert offenders == [f"shared/integrations/llm/{vendor}/provider.py"]
 
 
 def test_only_the_parsing_adapter_imports_pglast() -> None:

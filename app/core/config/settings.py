@@ -1,13 +1,9 @@
-from enum import StrEnum
 from typing import Literal
 
 from pydantic import Field, PostgresDsn, SecretStr, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-
-class LLMProviderName(StrEnum):
-    OPENAI = "openai"
-    OPENROUTER = "openrouter"
+from app.shared.integrations.llm.config import LLMConfig, LLMProviderName, ReasoningEffort
 
 
 class Settings(BaseSettings):
@@ -30,8 +26,12 @@ class Settings(BaseSettings):
     llm_max_output_tokens: int = Field(default=8192, gt=0)
     llm_timeout_seconds: float = Field(default=120.0, gt=0)
     llm_max_retries: int = Field(default=2, ge=0)
-    llm_reasoning_effort: Literal["minimal", "low", "medium", "high"] | None = None
+    llm_reasoning_effort: ReasoningEffort | None = None
     """Reasoning models only; unset = provider default (not sent)."""
+    llm_circuit_breaker_failure_threshold: int = Field(default=5, ge=1)
+    """Consecutive LLM failures (after retries) that open the circuit."""
+    llm_circuit_breaker_reset_seconds: float = Field(default=60.0, gt=0)
+    """How long an open circuit fails fast before letting one trial call through."""
 
     generation_max_attempts: int = Field(default=2, ge=1)
     """Total generation attempts; >1 regenerates with the validation issues as feedback."""
@@ -47,3 +47,17 @@ class Settings(BaseSettings):
     def _blank_is_unset(cls, value: object) -> object:
         # Docker Compose passes unset variables as empty strings.
         return None if value == "" else value
+
+    def llm_config(self) -> LLMConfig:
+        return LLMConfig(
+            provider=self.llm_provider,
+            model=self.llm_model,
+            api_key=self.llm_api_key,
+            base_url=self.llm_base_url,
+            app_name=self.app_name,
+            timeout_seconds=self.llm_timeout_seconds,
+            max_retries=self.llm_max_retries,
+            reasoning_effort=self.llm_reasoning_effort,
+            circuit_breaker_failure_threshold=self.llm_circuit_breaker_failure_threshold,
+            circuit_breaker_reset_seconds=self.llm_circuit_breaker_reset_seconds,
+        )

@@ -30,9 +30,6 @@ from app.features.modernization.graph.builder import (
     build_modernization_graph,
 )
 from app.features.modernization.graph.pipeline import LangGraphModernizationPipeline
-from app.features.modernization.infrastructure.llm.provider_factory import (
-    create_llm_provider,
-)
 from app.features.modernization.infrastructure.parsing.pglast_parser import PglastParser
 from app.features.modernization.infrastructure.persistence.unit_of_work import (
     SqlAlchemyUnitOfWork,
@@ -49,6 +46,7 @@ from app.features.modernization.infrastructure.validation.ruff_validator import 
 from app.features.modernization.prompts.generation_prompt import (
     GenerationPromptBuilder,
 )
+from app.shared.integrations.llm.factory import create_llm_provider
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,7 +63,7 @@ class Container:
 
 def build_graph(settings: Settings, uow_factory: UnitOfWorkFactory) -> ModernizationGraph:
     generation_service = CodeGenerationService(
-        create_llm_provider(settings),
+        create_llm_provider(settings.llm_config()),
         GenerationPromptBuilder(),
         temperature=settings.llm_temperature,
         max_output_tokens=settings.llm_max_output_tokens,

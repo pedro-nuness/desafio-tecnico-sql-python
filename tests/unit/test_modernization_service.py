@@ -3,11 +3,10 @@ from collections.abc import Callable
 import pytest
 
 from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
-from app.features.modernization.domain.exceptions import (
-    LLMProviderError,
-    ModernizationNotFoundError,
-)
+from app.features.modernization.domain.exceptions import ModernizationNotFoundError
 from app.features.modernization.domain.models.validation import ValidationResult
+from app.shared.integrations.exceptions import IntegrationError
+from app.shared.resilience.circuit_breaker import CircuitOpenError
 from tests.conftest import ServiceFactory, llm_payload
 from tests.fakes import FakeLLMProvider, InMemoryStore
 
@@ -35,10 +34,16 @@ async def test_success_runs_all_four_nodes_and_persists_twice(
     assert store.rows[result.id] == result
 
 
+@pytest.mark.parametrize(
+    "error", [IntegrationError("provider unavailable"), CircuitOpenError("llm", 30)]
+)
 async def test_llm_failure_is_persisted_with_completed_steps(
-    make_service: ServiceFactory, store: InMemoryStore, load_procedure: Callable[[str], str]
+    make_service: ServiceFactory,
+    store: InMemoryStore,
+    load_procedure: Callable[[str], str],
+    error: IntegrationError,
 ) -> None:
-    llm = FakeLLMProvider(error=LLMProviderError("provider unavailable"))
+    llm = FakeLLMProvider(error=error)
 
     result = await make_service(llm=llm).modernize(load_procedure("process_orders"))
 

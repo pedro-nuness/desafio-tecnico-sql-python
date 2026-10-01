@@ -32,8 +32,8 @@ class LLMResponse(ValueObject):
 class LLMProvider(Protocol):
     """Vendor-neutral text generation.
 
-    Adapters must raise app.features.modernization.domain.exceptions.LLMProviderError
-    for any vendor failure, so callers never see SDK-specific exceptions.
+    Adapters must raise app.shared.integrations.exceptions.IntegrationError for any vendor
+    failure, so callers never see SDK-specific exceptions.
     """
 
     async def generate(self, request: LLMRequest) -> LLMResponse: ...

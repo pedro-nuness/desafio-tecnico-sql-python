@@ -2,11 +2,6 @@ from collections.abc import Callable
 
 import pytest
 
-from app.features.modernization.application.ports.llm.llm_provider import (
-    LLMRequest,
-    LLMResponse,
-    ResponseFormat,
-)
 from app.features.modernization.application.services.code_generation_service import (
     CodeGenerationService,
 )
@@ -21,6 +16,9 @@ from app.features.modernization.prompts.generation_prompt import (
     PROMPT_VERSION,
     GenerationPromptBuilder,
 )
+from app.shared.integrations.exceptions import IntegrationError
+from app.shared.integrations.llm.llm_provider import LLMRequest, LLMResponse, ResponseFormat
+from app.shared.resilience.circuit_breaker import CircuitOpenError
 from tests.conftest import VALID_CODE, llm_payload
 from tests.fakes import FakeLLMProvider
 
@@ -115,8 +113,13 @@ async def test_truncated_answer_reports_token_limit(analyzed: Analyzed) -> None:
         await _generate(TruncatingLLM(), analyzed)
 
 
-async def test_provider_errors_propagate_as_domain_errors(analyzed: Analyzed) -> None:
-    llm = FakeLLMProvider(error=LLMProviderError("rate limited"))
+@pytest.mark.parametrize("error", [IntegrationError("rate limited"), CircuitOpenError("llm", 30)])
+async def test_provider_errors_propagate_as_domain_errors(
+    analyzed: Analyzed, error: IntegrationError
+) -> None:
+    llm = FakeLLMProvider(error=error)
 
-    with pytest.raises(LLMProviderError, match="rate limited"):
+    with pytest.raises(LLMProviderError) as exc_info:
         await _generate(llm, analyzed)
+    assert str(exc_info.value) == str(error)
+    assert exc_info.value.__cause__ is error

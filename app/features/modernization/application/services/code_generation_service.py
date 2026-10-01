@@ -2,14 +2,8 @@ import json
 
 from pydantic import BaseModel, ValidationError
 
-from app.features.modernization.application.ports.llm.llm_provider import (
-    LLMProvider,
-    LLMRequest,
-    LLMResponse,
-    ResponseFormat,
-)
 from app.features.modernization.domain.enums import GenerationStrategy
-from app.features.modernization.domain.exceptions import GenerationError
+from app.features.modernization.domain.exceptions import GenerationError, LLMProviderError
 from app.features.modernization.domain.models.generation import (
     ArchitecturalDecision,
     GenerationMetadata,
@@ -19,6 +13,13 @@ from app.features.modernization.domain.models.generation import (
 from app.features.modernization.domain.models.parsing import ParsedProcedure
 from app.features.modernization.domain.models.semantic_analysis import SemanticAnalysis
 from app.features.modernization.prompts.generation_prompt import GenerationPromptBuilder
+from app.shared.integrations.exceptions import IntegrationError
+from app.shared.integrations.llm.llm_provider import (
+    LLMProvider,
+    LLMRequest,
+    LLMResponse,
+    ResponseFormat,
+)
 
 
 class _DecisionPayload(BaseModel):
@@ -67,15 +68,18 @@ class CodeGenerationService:
             schema_context=schema_context,
             feedback=feedback,
         )
-        response = await self._llm.generate(
-            LLMRequest(
-                system_prompt=prompt.system,
-                user_prompt=prompt.user,
-                temperature=self._temperature,
-                max_output_tokens=self._max_output_tokens,
-                response_format=ResponseFormat.JSON,
+        try:
+            response = await self._llm.generate(
+                LLMRequest(
+                    system_prompt=prompt.system,
+                    user_prompt=prompt.user,
+                    temperature=self._temperature,
+                    max_output_tokens=self._max_output_tokens,
+                    response_format=ResponseFormat.JSON,
+                )
             )
-        )
+        except IntegrationError as exc:
+            raise LLMProviderError(str(exc)) from exc
         try:
             payload = parse_generation_payload(response)
         except GenerationError as exc:

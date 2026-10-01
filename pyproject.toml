@@ -12,6 +12,7 @@ dependencies = [
     "langgraph>=1.2.12",
     "langgraph-cli[inmem]>=0.4.32",  # serves the graph + the FastAPI routes (langgraph.json)
     "openai>=3.22",
+    "openrouter>=0.10.8",
     "pglast>=8.4",
     "pydantic>=2.13",
     "pydantic-settings>=2.15",
