@@ -1,7 +1,7 @@
 {
-  "execution_id": "01a0f7c7-975a-7180-bd38-b51eae736b34",
+  "execution_id": "01a0f7dd-5fae-729f-b27f-16fb5d7d59cb",
   "status": "success",
-  "created_at": "2026-10-01T14:04:07.898729+00:00",
+  "created_at": "2026-10-01T14:27:55.438604+00:00",
   "report": {
     "parsing": {
       "procedure_name": "sp_transferir_entre_contas",
@@ -170,42 +170,40 @@
       "recommended_strategy": "hybrid",
       "architectural_decisions": [
         {
-          "topic": "Exception block as savepoint",
-          "decision": "The entire procedure body (including Python-side validations) runs inside `async with conn.begin_nested():`; the WHEN OTHERS handler runs after that savepoint was rolled back, inserts the TRANSFERENCIA_ERRO audit row inside its own savepoint, and re-raises.",
-          "rationale": "In PL/pgSQL the EXCEPTION block is a savepoint covering the whole body, so even a validation RAISE rolls back partial work before the error-log insert. Without begin_nested the transaction would stay aborted and the audit insert would fail."
+          "topic": "Transaction ownership",
+          "decision": "The function receives an open AsyncConnection and never commits/rolls back the outer transaction.",
+          "rationale": "The caller owns the transaction; FOR UPDATE locks and the dependent writes must share the same transaction."
         },
         {
-          "topic": "Caller owns transaction",
-          "decision": "No commit/rollback of the outer transaction; only savepoints are used.",
-          "rationale": "The original procedure does not manage transactions; the caller decides whether the transfer (including the error-log row) is committed or rolled back."
+          "topic": "EXCEPTION WHEN OTHERS block",
+          "decision": "Protected statements run inside `async with conn.begin_nested():`; the error-log insert runs in the except handler after the savepoint rollback.",
+          "rationale": "A PL/pgSQL BEGIN...EXCEPTION block is a savepoint; without it the transaction would be aborted and the audit insert would fail."
         },
         {
-          "topic": "Row locking",
-          "decision": "Both FOR UPDATE selects and all subsequent writes run on the same AsyncConnection/transaction, in the original order (origem first, then destino).",
-          "rationale": "Locks only exist inside one transaction; preserving order also keeps the original deadlock characteristics."
+          "topic": "RAISE EXCEPTION mapping",
+          "decision": "Each RAISE EXCEPTION maps to a typed exception subclassing TransferenciaError; WHEN OTHERS re-raise is reproduced by re-raising after logging.",
+          "rationale": "Typed exceptions preserve the original error semantics for callers."
         },
         {
-          "topic": "Typed exceptions",
-          "decision": "Each RAISE EXCEPTION message maps to a dedicated exception subclass of TransferenciaError; the handler re-raises the original exception after logging.",
-          "rationale": "Preserves the original error surface while giving callers typed handling."
+          "topic": "Bind parameter typing",
+          "decision": "All polymorphic positions (jsonb_build_object values, arithmetic with :p_valor) use CAST(:name AS type).",
+          "rationale": "asyncpg cannot infer types in polymorphic positions; CAST is used instead of :: so SQLAlchemy still recognises the binds."
         }
       ],
       "warnings": [
-        "The WHEN OTHERS handler catches ALL exceptions, including the validation errors raised before any SQL, and writes a TRANSFERENCIA_ERRO audit row for them — this matches the original PL/pgSQL semantics and is intentionally preserved.",
-        "SQLERRM is approximated by str(exc); the message text is equivalent but may not be byte-identical to PostgreSQL's SQLERRM formatting (e.g. no 'FEHLER:'/'ERROR:' prefix).",
-        "All bind parameters used in polymorphic positions (jsonb_build_object values, arithmetic, comparisons) are explicitly CAST(...) AS BIGINT/NUMERIC(18,2)/TEXT because asyncpg cannot infer them; ':x::type' syntax was avoided.",
-        "p_valor must be a decimal.Decimal (never float) to keep NUMERIC(18,2) semantics end to end; the caller is responsible for passing Decimal values.",
-        "If the error-log insert itself fails inside the handler, that error propagates and masks the original exception, exactly as in the original procedure.",
-        "The `Any` import is aliased out via `_ = Any` only to satisfy the no-unused-imports rule; it can be removed together with the typing import if the module is edited."
+        "The original WHEN OTHERS also catches the validation RAISEs inside the block; this translation preserves that: validation errors raised inside the savepoint also produce a TRANSFERENCIA_ERRO audit entry before re-raising.",
+        "SQLERRM is approximated with str(exc); messages match the original format strings but the exact PostgreSQL error text for unexpected DB errors may differ.",
+        "The error audit insert itself can still fail (e.g. connection lost); in the original it would also propagate — behaviour is equivalent.",
+        "p_valor is expected as decimal.Decimal; passing float would lose exactness — NUMERIC(18,2) semantics are preserved end to end with Decimal."
       ],
       "provider": "openrouter",
       "model": "z-ai/glm-5.3-flash",
       "prompt_version": "generation-v4",
-      "input_tokens": 3655,
-      "output_tokens": 3070,
-      "latency_ms": 20202.82,
+      "input_tokens": 5397,
+      "output_tokens": 2432,
+      "latency_ms": 44352.41,
       "finish_reason": "stop",
-      "attempt": 1
+      "attempt": 2
     },
     "validation": {
       "results": [
@@ -236,9 +234,13 @@
       "parsing",
       "semantic_analysis",
       "generation",
+      "validation",
+      "generation",
       "validation"
     ],
     "errors": [],
-    "warnings": []
+    "warnings": [
+      "generation attempt 2: regenerated after 1 validation issue(s) in the previous attempt"
+    ]
   }
 }

@@ -10,30 +10,23 @@ logger = logging.getLogger(__name__)
 
 
 class ParametroInvalidoError(Exception):
-    """Equivalente ao RAISE EXCEPTION da rotina original."""
+    """RAISE EXCEPTION equivalente para p_dias invalido."""
 
 
 @dataclass(frozen=True)
-class ResultadoInativacao:
-    """Representa o OUT p_afetadas da procedure original."""
+class ResultadoAtualizacaoStatus:
+    """OUT parameters, in order."""
 
     p_afetadas: int
-
-    def __repr__(self) -> str:
-        return str(self.p_afetadas)
 
 
 async def sp_atualizar_status_contas_inativas(
     conn: AsyncConnection,
-    p_dias: int,
-) -> ResultadoInativacao:
-    """Porta de sp_atualizar_status_contas_inativas.
+    p_dias: int | None,
+) -> ResultadoAtualizacaoStatus:
+    """Marca contas ATIVA sem movimentacao recente como INATIVA.
 
-    Marca como INATIVA toda conta ATIVA sem movimentacao nos ultimos
-    ``p_dias`` dias e registra a operacao em log_auditoria.
-
-    A transacao e controlada pelo chamador (a procedure original nao
-    gerencia COMMIT/ROLLBACK explicitamente).
+    O caller owns the transaction: nenhuma commit/rollback aqui.
     """
     if p_dias is None or p_dias <= 0:
         raise ParametroInvalidoError(
@@ -56,7 +49,7 @@ async def sp_atualizar_status_contas_inativas(
         ),
         {"p_dias": p_dias},
     )
-    p_afetadas: int = result.rowcount
+    p_afetadas = result.rowcount
 
     await conn.execute(
         text(
@@ -75,4 +68,4 @@ async def sp_atualizar_status_contas_inativas(
         {"p_dias": p_dias, "p_afetadas": p_afetadas},
     )
 
-    return ResultadoInativacao(p_afetadas)
+    return ResultadoAtualizacaoStatus(p_afetadas=p_afetadas)

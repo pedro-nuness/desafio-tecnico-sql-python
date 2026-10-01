@@ -1,7 +1,7 @@
 {
-  "execution_id": "01a0f7c7-975d-7097-b914-37112dc13895",
+  "execution_id": "01a0f7dd-5fb2-722a-91ff-8364758b096f",
   "status": "success",
-  "created_at": "2026-10-01T14:04:07.901610+00:00",
+  "created_at": "2026-10-01T14:27:55.442146+00:00",
   "report": {
     "parsing": {
       "procedure_name": "sp_relatorio_mensal_cliente",
@@ -227,45 +227,51 @@
       "recommended_strategy": "hybrid",
       "architectural_decisions": [
         {
-          "topic": "Set-based SQL preserved",
-          "decision": "The recursive CTE, LEFT JOIN and aggregations stay as one parameterized SQL statement executed via SQLAlchemy text().",
-          "rationale": "Joins, aggregates and recursive CTEs belong in the database; rewriting them in Python would be slower and risk semantic drift."
+          "topic": "CTE recursiva e agregacao",
+          "decision": "Mantidas em SQL parametrizado (text()) executado pelo Python",
+          "rationale": "Joins, agregados e CTE recursiva pertencem ao banco; reescrever em Python seria custoso e arriscado"
         },
         {
-          "topic": "External routine dependency",
-          "decision": "fn_saldo_cliente is still called in SQL (SELECT fn_saldo_cliente(CAST(:cliente_id AS BIGINT))).",
-          "rationale": "The function encapsulates balance logic in the database; the result is assigned to v_saldo_atual exactly once, as in the original."
+          "topic": "fn_saldo_cliente",
+          "decision": "Chamada via SELECT fn_saldo_cliente(:p_cliente_id) na mesma conexao/transacao",
+          "rationale": "Rotina externa do banco; manter no SQL evita reimplementar logica de saldo e preserva semantica"
         },
         {
-          "topic": "Exception block as savepoint",
-          "decision": "The protected statements run inside `async with conn.begin_nested():` and the WHEN OTHERS handling happens outside it.",
-          "rationale": "A PL/pgSQL BEGIN...EXCEPTION block is a savepoint; without begin_nested the transaction would stay aborted and the fallback query would fail too."
+          "topic": "EXCEPTION WHEN OTHERS",
+          "decision": "Bloco protegido em async with conn.begin_nested(); excecao capturada FORA do savepoint, logada como WARNING e degradada para a linha de fallback, sem re-raise",
+          "rationale": "Reproduz o controle de fluxo original: o handler engole o erro (incluindo o RAISE EXCEPTION de validacao, que no PL/pgSQL e capturado pelo proprio handler) e retorna fallback; o savepoint evita transacao abortada"
         },
         {
-          "topic": "Swallowed exceptions",
-          "decision": "The WHEN OTHERS handler is preserved: any failure (including the period validation RAISE, which sits inside the protected block in the original) logs a WARNING and returns the degraded fallback row instead of propagating.",
-          "rationale": "Faithful behaviour preservation; the swallowed-error risk is reported in warnings."
+          "topic": "RAISE EXCEPTION de validacao",
+          "decision": "Mapeada para PeriodoInvalidoError, lancada dentro do bloco protegido",
+          "rationale": "Regra 14: a validacao esta dentro do bloco com handler, portanto e capturada e resulta na linha de fallback, nao numa excecao propagada"
         },
         {
-          "topic": "Result await bug fixed",
-          "decision": "`conn.execute(...)` is awaited first and `.first()` is called on the resulting Result object (previously `.first()` was chained onto the un-awaited coroutine, raising AttributeError before any SQL ran).",
-          "rationale": "In SQLAlchemy 2.x async, execute() returns a coroutine; attribute access on it fails immediately, which silently pushed every run into the fallback path."
+          "topic": "Transacao",
+          "decision": "Nenhum commit/rollback explicito (apenas o savepoint do handler)",
+          "rationale": "O caller possui a transacao; a rotina original nao controla transacoes"
+        },
+        {
+          "topic": "NUMERIC(18,2)",
+          "decision": "v_saldo_atual e cada coluna de saida quantizados com Decimal quantize(0.01, ROUND_HALF_UP) nos mesmos pontos do original",
+          "rationale": "Reproduz o arredondamento por atribuicao/cast para NUMERIC(18,2) do PL/pgSQL"
         }
       ],
       "warnings": [
-        "SWALLOWED_EXCEPTION: the original WHEN OTHERS does not re-raise; any failure (including an invalid period) degrades to a single fallback row with zeros and the current balance. Preserved as-is.",
-        "Depends on the database routine fn_saldo_cliente; it must exist in the target schema.",
-        "The fallback row's saldo_consolidado uses COALESCE(v_saldo_atual, 0): if fn_saldo_cliente returns NULL the fallback reports 0, matching the original.",
-        "NUMERIC(18,2) rounding is reproduced in Python with quantize(0.01, ROUND_HALF_UP) on each assignment point (saldo fetch and each output column)."
+        "O handler WHEN OTHERS original engole erros (SWALLOWED_EXCEPTION): periodo invalido NAO propaga PeriodoInvalidoError; retorna a linha de fallback com saldo 0 (v_saldo_atual ainda NULL), fiel ao PL/pgSQL",
+        "fn_saldo_cliente nao foi fornecida; presume-se que retorna NUMERIC e nao altera dados. Se ela tiver efeitos colaterais, eles permanecem dentro do savepoint e serao revertidos em caso de falha posterior",
+        "O fallback usa v_saldo_atual possivelmente NULL; COALESCE(v_saldo_atual, 0) reproduzido no SQL",
+        "Se a falha ocorrer na query principal, o savepoint e revertido; a leitura do fallback roda na mesma transacao do caller, como no original",
+        "qtd_transacoes usa COUNT(*) sobre transacoes que podem ser contadas duas vezes (origem e destino do mesmo cliente em transferencias internas), comportamento identico ao SQL original, preservado sem alteracao"
       ],
       "provider": "openrouter",
       "model": "z-ai/glm-5.3-flash",
       "prompt_version": "generation-v4",
-      "input_tokens": 6026,
-      "output_tokens": 7101,
-      "latency_ms": 78120.92,
+      "input_tokens": 4067,
+      "output_tokens": 2994,
+      "latency_ms": 61867.01,
       "finish_reason": "stop",
-      "attempt": 2
+      "attempt": 1
     },
     "validation": {
       "results": [
@@ -296,13 +302,9 @@
       "parsing",
       "semantic_analysis",
       "generation",
-      "validation",
-      "generation",
       "validation"
     ],
     "errors": [],
-    "warnings": [
-      "generation attempt 2: regenerated after 1 validation issue(s) in the previous attempt"
-    ]
+    "warnings": []
   }
 }

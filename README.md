@@ -14,8 +14,8 @@ partir do parsing e da análise (não da procedure bruta), e a validação checa
 estaticamente (AST, Ruff) e por comportamento (executa original e gerado num banco descartável).
 Toda execução é gravada em `modernization_history`, qualquer que seja o desfecho.
 
-**Resultado atual sobre os Anexos B–F:** 4/5 rotinas equivalentes, 20/21 casos; nos casos *holdout*
-(nunca mostrados ao LLM), 8/9. Linha de base sem a validação por comportamento: 1/5 rotinas, 8/19
+**Resultado atual sobre os Anexos B–F:** 5/5 rotinas equivalentes, 21/21 casos; nos casos *holdout*
+(nunca mostrados ao LLM), 9/9. Linha de base sem a validação por comportamento: 1/5 rotinas, 8/19
 casos. Detalhes em [Métrica de evaluation](#métrica-de-evaluation).
 
 ## Sumário
@@ -46,11 +46,13 @@ Copie `.env.example` para `.env` e preencha `LLM_API_KEY` (o modelo usado nos re
 docker compose up --build
 ```
 
-| serviço    | papel                                                                    |
-|------------|--------------------------------------------------------------------------|
-| `postgres` | PostgreSQL 17; o init cria também `modernizer_test` e `modernizer_eval`  |
-| `migrate`  | `alembic upgrade head`, uma vez, depois que o Postgres fica healthy      |
+
+| serviço    | papel                                                                                 |
+| ---------- | ------------------------------------------------------------------------------------- |
+| `postgres` | PostgreSQL 17; o init cria também `modernizer_test` e `modernizer_eval`               |
+| `migrate`  | `alembic upgrade head`, uma vez, depois que o Postgres fica healthy                   |
 | `app`      | `langgraph dev` em `:8000`: grafo, API nativa do LangGraph, Studio e as rotas FastAPI |
+
 
 ```bash
 curl localhost:8000/health
@@ -68,7 +70,7 @@ curl -X POST localhost:8000/runs/wait -H "content-type: application/json" -d '{"
 
 Studio: `https://smith.langchain.com/studio/?baseUrl=http://127.0.0.1:8000`. OpenAPI:
 `http://localhost:8000/docs`. Requisições prontas (os cinco anexos com schema, erros, API do
-LangGraph) em [`docs/api.http`](docs/api.http).
+LangGraph) em `[docs/api.http](docs/api.http)`.
 
 > Windows: se `localhost` não responder, use `127.0.0.1` (o relay do WSL pode ocupar `[::1]:5432`).
 
@@ -104,7 +106,7 @@ uv run python -m scripts.run_examples
 ```
 
 Saída em `examples/results/`: `<anexo>/generated.py`, `report.json`, `evaluation.json` e
-[`SUMMARY.md`](examples/results/SUMMARY.md). Os arquivos versionados são uma rodada real, sem
+`[SUMMARY.md](examples/results/SUMMARY.md)`. Os arquivos versionados são uma rodada real, sem
 curadoria: falhas ficam como saíram.
 
 ---
@@ -123,25 +125,29 @@ flowchart LR
     record_result --> END((END))
 ```
 
-| nó | o que faz | implementação |
-|---|---|---|
-| `record_start` | grava a execução como `running` antes do LLM | `ExecutionLog.start` |
-| `parsing` | PL/pgSQL → IR `ParsedProcedure` (parâmetros, declarações, árvore de statements, SQL embutido com tabelas/funções/locks) | `PglastParser` |
-| `semantic_analysis` | features, riscos (N+1, `FOR UPDATE`, exceção engolida, SQL dinâmico…), dependências e estratégia recomendada | `SemanticAnalyzer` |
-| `generation` | prompt montado a partir das duas etapas anteriores → LLM → contrato JSON | `GenerateCode` |
-| `validation` | `ast.parse` (bloqueante), Ruff e comportamento contra a rotina original (não bloqueantes) | `ValidateCode` |
-| `record_result` | calcula o status e grava código e relatório | `ExecutionLog.complete` |
+
+
+
+| nó                  | o que faz                                                                                                               | implementação           |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------- |
+| `record_start`      | grava a execução como `running` antes do LLM                                                                            | `ExecutionLog.start`    |
+| `parsing`           | PL/pgSQL → IR `ParsedProcedure` (parâmetros, declarações, árvore de statements, SQL embutido com tabelas/funções/locks) | `PglastParser`          |
+| `semantic_analysis` | features, riscos (N+1, `FOR UPDATE`, exceção engolida, SQL dinâmico…), dependências e estratégia recomendada            | `SemanticAnalyzer`      |
+| `generation`        | prompt montado a partir das duas etapas anteriores → LLM → contrato JSON                                                | `GenerateCode`          |
+| `validation`        | `ast.parse` (bloqueante), Ruff e comportamento contra a rotina original (não bloqueantes)                               | `ValidateCode`          |
+| `record_result`     | calcula o status e grava código e relatório                                                                             | `ExecutionLog.complete` |
+
 
 - **Estado tipado** (`graph/state.py`): `ModernizationState` é um `TypedDict` com os modelos de
-  domínio de cada etapa e três canais append-only (`completed_steps`, `warnings`, `errors`).
+domínio de cada etapa e três canais append-only (`completed_steps`, `warnings`, `errors`).
 - **Nós finos** (`graph/nodes.py`): leem o estado, chamam um colaborador e devolvem um
-  `StateUpdate`. Nenhuma regra de negócio mora no grafo.
+`StateUpdate`. Nenhuma regra de negócio mora no grafo.
 - **Falha em qualquer etapa**: um wrapper em volta de cada nó grava `failure` com tudo o que já foi
-  produzido e relança a exceção, que vira resposta HTTP no handler global. Funciona igual pelo
-  `POST /modernize`, pela API do LangGraph e pelo Studio, porque a gravação está no próprio grafo.
+produzido e relança a exceção, que vira resposta HTTP no handler global. Funciona igual pelo
+`POST /modernize`, pela API do LangGraph e pelo Studio, porque a gravação está no próprio grafo.
 - **Loop de reparo** (`validation → generation`): se algum check reprova, a geração roda de novo
-  com o código anterior e a lista de problemas no prompt. Limites: `GENERATION_MAX_ATTEMPTS`
-  (padrão 2) e `GENERATION_RETRY_BUDGET_SECONDS` (padrão 90 s), porque a request é síncrona.
+com o código anterior e a lista de problemas no prompt. Limites: `GENERATION_MAX_ATTEMPTS`
+(padrão 2) e `GENERATION_RETRY_BUDGET_SECONDS` (padrão 90 s), porque a request é síncrona.
 
 ---
 
@@ -183,13 +189,15 @@ migrations/  scripts/run_examples.py  examples/  tests/{unit,integration}  docke
 
 **Abstração só onde há variação real:**
 
-| eixo | contrato | implementações | nos testes |
-|---|---|---|---|
-| LLM | `LLM` (port) | `LLMGateway` → `OpenRouterProvider`, `OpenAIProvider` | `FakeLLM` |
-| Persistência | `ModernizationRepository`, `EvaluationRepository` | SQLAlchemy | em memória |
-| Dialeto de origem | `SQLParser` (strategy) | `PglastParser` | parser real |
-| Checks do código | `CodeCheck` + `Rule(check, blocking)` | AST, Ruff, comportamento | checks reais |
-| Métrica | `EquivalenceMetric` | `BehavioralEquivalence` | `FakeMetric` |
+
+| eixo              | contrato                                          | implementações                                        | nos testes   |
+| ----------------- | ------------------------------------------------- | ----------------------------------------------------- | ------------ |
+| LLM               | `LLM` (port)                                      | `LLMGateway` → `OpenRouterProvider`, `OpenAIProvider` | `FakeLLM`    |
+| Persistência      | `ModernizationRepository`, `EvaluationRepository` | SQLAlchemy                                            | em memória   |
+| Dialeto de origem | `SQLParser` (strategy)                            | `PglastParser`                                        | parser real  |
+| Checks do código  | `CodeCheck` + `Rule(check, blocking)`             | AST, Ruff, comportamento                              | checks reais |
+| Métrica           | `EquivalenceMetric`                               | `BehavioralEquivalence`                               | `FakeMetric` |
+
 
 O grafo não fica atrás de interface: só existe um orquestrador, e os testes rodam o grafo real com
 fakes nas bordas (LLM e banco). `tests/unit/test_architecture.py` fixa as regras de dependência:
@@ -203,10 +211,12 @@ infraestrutura e as features não importam o composition root.
 
 Schema criado só por Alembic (`migrations/versions/`, `env.py` async lendo a URL do `Settings`):
 
-| tabela | colunas |
-|---|---|
+
+| tabela                  | colunas                                                                                                                                                                                              |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `modernization_history` | `id` UUIDv7, `source_code`, `schema_context`, `generated_code`, `report` JSONB, `status` (CHECK: `running`/`success`/`partial`/`failure`), `created_at`, `updated_at`; índice `(status, created_at)` |
-| `evaluation_results` | FK para a execução, rotina, métrica, prompt/modelo, validade estática, conclusão, casos aprovados/totais, score, casos em JSONB, data; índice `(procedure_name, created_at)` |
+| `evaluation_results`    | FK para a execução, rotina, métrica, prompt/modelo, validade estática, conclusão, casos aprovados/totais, score, casos em JSONB, data; índice `(procedure_name, created_at)`                         |
+
 
 **Toda execução é persistida.** O `ExecutionLog` grava `running` no início e o desfecho no fim,
 cada um com commit próprio: a linha existe antes da chamada ao LLM (se o processo morrer, a
@@ -225,13 +235,15 @@ docker compose exec postgres psql -U modernizer -d postgres -c "CREATE DATABASE 
 
 ## Endpoints e relatório
 
-| método | rota | descrição |
-|---|---|---|
-| GET | `/health` | `{"status": "ok"}` |
-| POST | `/modernize` | roda o pipeline e devolve código + relatório |
-| GET | `/modernizations/{id}` | uma execução gravada (404 se não existe) |
-| POST | `/modernizations/{id}/evaluation` | roda a métrica sobre uma execução e grava o resultado |
-| GET | `/evaluations` | última avaliação de cada rotina e as taxas agregadas |
+
+| método | rota                              | descrição                                             |
+| ------ | --------------------------------- | ----------------------------------------------------- |
+| GET    | `/health`                         | `{"status": "ok"}`                                    |
+| POST   | `/modernize`                      | roda o pipeline e devolve código + relatório          |
+| GET    | `/modernizations/{id}`            | uma execução gravada (404 se não existe)              |
+| POST   | `/modernizations/{id}/evaluation` | roda a métrica sobre uma execução e grava o resultado |
+| GET    | `/evaluations`                    | última avaliação de cada rotina e as taxas agregadas  |
+
 
 ```json
 { "source_code": "CREATE OR REPLACE FUNCTION ...", "schema": "CREATE TABLE contas (...);" }
@@ -239,20 +251,24 @@ docker compose exec postgres psql -U modernizer -d postgres -c "CREATE DATABASE 
 
 `schema` é opcional. A resposta traz `execution_id`, `status`, `generated_code` e `report`:
 
-| seção | conteúdo |
-|---|---|
-| `parsing` | nome, tipo, parâmetros e modos, retorno, nº de statements, tabelas, funções chamadas |
-| `semantic_analysis` | features (com linhas), riscos (`code`, `severity`, `message`, `line`), dependências, estratégia recomendada |
-| `generation` | estratégia escolhida e recomendada, decisões arquiteturais, provider, modelo, `prompt_version`, tokens, latência, tentativa |
-| `validation` | resultado por check (`validator`, `success`, `blocking`, `messages`, `skipped`) |
-| raiz | `completed_steps` (repete geração/validação a cada tentativa), `errors`, `warnings` |
 
-| status | quando |
-|---|---|
-| `running` | gravado antes do LLM |
-| `success` | código gerado e todos os checks passaram |
-| `partial` | Python válido, mas Ruff acusou algo ou o comportamento divergiu em algum caso |
+| seção               | conteúdo                                                                                                                    |
+| ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| `parsing`           | nome, tipo, parâmetros e modos, retorno, nº de statements, tabelas, funções chamadas                                        |
+| `semantic_analysis` | features (com linhas), riscos (`code`, `severity`, `message`, `line`), dependências, estratégia recomendada                 |
+| `generation`        | estratégia escolhida e recomendada, decisões arquiteturais, provider, modelo, `prompt_version`, tokens, latência, tentativa |
+| `validation`        | resultado por check (`validator`, `success`, `blocking`, `messages`, `skipped`)                                             |
+| raiz                | `completed_steps` (repete geração/validação a cada tentativa), `errors`, `warnings`                                         |
+
+
+
+| status    | quando                                                                          |
+| --------- | ------------------------------------------------------------------------------- |
+| `running` | gravado antes do LLM                                                            |
+| `success` | código gerado e todos os checks passaram                                        |
+| `partial` | Python válido, mas Ruff acusou algo ou o comportamento divergiu em algum caso   |
 | `failure` | exceção numa etapa (progresso preservado) ou Python inválido depois dos reparos |
+
 
 A regra fica em `ModernizationReport.status()` (domínio). Erros viram HTTP pela classe:
 `DomainError` → 400 (SQL inválido, linguagem não suportada), `NotFoundError` → 404,
@@ -264,7 +280,7 @@ A regra fica em `ModernizationReport.status()` (domínio). Erros viram HTTP pela
 ## Métrica de evaluation
 
 **Métrica: equivalência comportamental.** Para cada caso do dataset
-([`examples/evaluation/scenarios.yml`](examples/evaluation/scenarios.yml)), o harness cria um
+(`[examples/evaluation/scenarios.yml](examples/evaluation/scenarios.yml)`), o harness cria um
 schema descartável em `modernizer_eval` com o Anexo A, um seed e a rotina original; executa a
 original (SQL) e o módulo gerado (Python, num subprocesso), cada um numa transação revertida; e
 compara o resultado e o estado final das cinco tabelas. Se os dois lados lançam erro, o Python
@@ -302,47 +318,58 @@ ramos do PL/pgSQL, executar o código gerado em container sem rede e com papel d
 Mesmo modelo, Anexo A como schema, temperatura 0. A [linha de base v2](examples/evaluation/baseline-v2.json)
 é anterior ao prompt com armadilhas de runtime e ao check de comportamento.
 
-| rodada | pipeline | rotinas | casos | holdout | o que falhou ou custou tentativa |
-|---|---|---|---|---|---|
-| v2 | AST + Ruff | 1/5 | 8/19 | — | C, D, E, F |
-| v3 #1–#3 | AST + Ruff | 4/5, 5/5, 4/5 | 14, 19, 16 de 19 | — | D: bind sem tipo; F: `INTERVAL` como `str` |
-| v3 #4 | + comportamento no loop | 4/5 | 14/21 | 6/9 | D: retentativa voltou com cerca Markdown |
-| v3 #5 | idem | 5/5 | 21/21 | 9/9 | D e F corrigidos na 2ª tentativa |
-| v4 #1 | + cerca removida, contrato tolerante | 5/5 | 21/21 | 9/9 | F corrigido na 2ª tentativa |
-| **v4 #2** (em `examples/results/`) | idem | **4/5** | **20/21** | **8/9** | D: falha num caso holdout |
 
-A v4 #2 mostra para que serve o holdout. O D passou nos quatro casos dev, que o loop de reparo
+| rodada                             | pipeline                             | rotinas       | casos            | holdout | o que falhou ou custou tentativa                          |
+| ---------------------------------- | ------------------------------------ | ------------- | ---------------- | ------- | --------------------------------------------------------- |
+| v2                                 | AST + Ruff                           | 1/5           | 8/19             | —       | C, D, E, F                                                |
+| v3 #1–#3                           | AST + Ruff                           | 4/5, 5/5, 4/5 | 14, 19, 16 de 19 | —       | D: bind sem tipo; F: `INTERVAL` como `str`                |
+| v3 #4                              | + comportamento no loop              | 4/5           | 14/21            | 6/9     | D: retentativa voltou com cerca Markdown                  |
+| v3 #5                              | idem                                 | 5/5           | 21/21            | 9/9     | D e F corrigidos na 2ª tentativa                          |
+| v4 #1                              | + cerca removida, contrato tolerante | 5/5           | 21/21            | 9/9     | F corrigido na 2ª tentativa                               |
+| v4 #2                              | idem                                 | 4/5           | 20/21            | 8/9     | D: falha num caso holdout                                 |
+| **v4 #3** (em `examples/results/`) | idem                                 | **5/5**       | **21/21**        | **9/9** | C e D: import não usado (Ruff), corrigido na 2ª tentativa |
+
+
+A mesma versão do pipeline oscila entre rodadas (temperatura 0 não torna o provider
+determinístico); por isso todas ficam registradas. A v4 #2 mostra para que serve o holdout. O D passou nos quatro casos dev, que o loop de reparo
 viu, e falhou no holdout "origem inexistente". O código busca a conta com `.one()`, que lança
 `NoResultFound` quando não há linha; o original faz `SELECT … INTO`, recebe `NULL` e lança a
 própria exceção. Sem o holdout, a rodada contaria como 5/5.
 
-### Decisões de tradução por anexo (rodada v4 #2)
+### Decisões de tradução por anexo (rodada v4 #3)
 
-| anexo | estratégia | tentativas | casos (dev · holdout) |
-|---|---|---|---|
-| B `fn_saldo_cliente` | `database_delegated` | 1 | 2/2 · 1/1 |
-| C `sp_atualizar_status_contas_inativas` | `hybrid` | 2 | 2/2 · 2/2 |
-| D `sp_transferir_entre_contas` | `hybrid` | 1 | 4/4 · 2/3 |
-| E `sp_processar_lote_taxas` | `hybrid` | 1 | 2/2 · 1/1 |
-| F `sp_relatorio_mensal_cliente` | `hybrid` | 2 | 2/2 · 2/2 |
+
+| anexo                                   | estratégia           | tentativas | casos (dev · holdout) |
+| --------------------------------------- | -------------------- | ---------- | --------------------- |
+| B `fn_saldo_cliente`                    | `database_delegated` | 1          | 2/2 · 1/1             |
+| C `sp_atualizar_status_contas_inativas` | `hybrid`             | 2          | 2/2 · 2/2             |
+| D `sp_transferir_entre_contas`          | `hybrid`             | 2          | 4/4 · 3/3             |
+| E `sp_processar_lote_taxas`             | `hybrid`             | 1          | 2/2 · 1/1             |
+| F `sp_relatorio_mensal_cliente`         | `hybrid`             | 1          | 2/2 · 2/2             |
+
 
 - **B:** uma consulta agregada, toda em SQL, com `CAST(… AS NUMERIC(18,2))` e retorno `Decimal`.
+O módulo declara uma exceção que não usa (o original não tem `RAISE`); Ruff não acusa classe
+não usada.
 - **C:** valida `p_dias` em Python com exceção própria; o `UPDATE … NOT EXISTS` fica no banco;
-  `GET DIAGNOSTICS` vira `result.rowcount`; o OUT vira uma dataclass. A 1ª tentativa tinha
-  imports não usados (Ruff) e devolvia uma classe comum em vez de dataclass (comportamento); as
-  duas coisas voltaram como feedback.
+`GET DIAGNOSTICS` vira `result.rowcount`; o OUT vira uma dataclass. A 1ª tentativa tinha um
+import não usado (Ruff).
 - **D:** o corpo inteiro roda num savepoint (`async with conn.begin_nested()`), porque o
-  `EXCEPTION WHEN OTHERS` original cobre também os `RAISE` de validação. `FOR UPDATE` e escritas
-  na mesma conexão, valores `Decimal`, todos os binds com `CAST`, uma exceção por `RAISE`. No
-  handler, grava a auditoria de erro e relança. Falha só no caso de origem inexistente (acima).
+`EXCEPTION WHEN OTHERS` original cobre também os `RAISE` de validação. `FOR UPDATE` e escritas
+na mesma conexão, valores `Decimal`, uma exceção por `RAISE`. As buscas usam `.first()` e tratam
+a conta ausente como o `SELECT … INTO` original (o defeito da v4 #2). No handler, grava a
+auditoria de erro e relança; um erro que não é de validação sai embrulhado em
+`TransferenciaError`, enquanto o original relança o erro em si. A métrica aceita, porque não
+compara o tipo exato do erro (ver "O que fica de fora"). A 1ª tentativa tinha um import não
+usado (Ruff).
 - **E:** o loop cursor-a-cursor (N+1) virou **um único statement**: taxa vigente por
-  `LEFT JOIN LATERAL`, arredondamentos `NUMERIC(18,2)` intermediários, débito agregado por conta
-  antes do `UPDATE … FROM` (duas tarifas na mesma conta), inserts de tarifa e auditoria como CTEs
-  de escrita e o log do lote no mesmo statement.
+`LEFT JOIN LATERAL`, os dois arredondamentos `NUMERIC(18,2)` intermediários, débito agregado por
+conta antes do `UPDATE … FROM` (duas tarifas na mesma conta) e os inserts de tarifa e de
+auditoria como CTEs de escrita. O log do lote é um segundo statement com os totais. O
+`logger.info` é um acréscimo do LLM (o original não tem NOTICE).
 - **F:** CTE recursiva, agregações e a chamada a `fn_saldo_cliente` ficam em SQL. A validação de
-  período roda **dentro** do savepoint, como no original: o `WHEN OTHERS` captura o período
-  invertido e devolve a linha degradada. A 1ª tentativa devolvia a linha de fallback também no
-  caso normal (o erro era engolido); o check de comportamento mostrou a divergência.
+período roda **dentro** do savepoint, como no original: o `WHEN OTHERS` captura o período
+invertido e devolve a linha degradada, montada por uma consulta com aliases explícitos.
 
 ---
 
@@ -365,7 +392,7 @@ loop de reparo), via o callback nativo do LangChain/LangGraph; e a chamada ao LL
 filha do nó `generation` (`TracedLLM`), com prompt, resposta, modelo, tokens e latência. Custo
 aparece quando o modelo tem preço cadastrado no Langfuse.
 
-<!-- Capturas de tela dos traces: adicionar em docs/langfuse/ e linkar aqui. -->
+![Trace do Anexo D no Langfuse](docs/langfuse/langfuse_screenshot_1.png)
 
 ---
 
@@ -387,15 +414,15 @@ TEST_DATABASE_URL=postgresql+asyncpg://modernizer:modernizer@127.0.0.1:5432/mode
 
 - **232 testes** (222 unitários, 10 de integração); nenhum chama um LLM real.
 - **Cobertura 96%** com integração (branches incluídos, subprocesso da avaliação medido);
-  `fail_under = 95`. Só com unitários fica em 91%, porque o harness precisa de Postgres.
+`fail_under = 95`. Só com unitários fica em 91%, porque o harness precisa de Postgres.
 - **Unitários:** parser e análise semântica (inclusive regressões medidas nos anexos), prompt e
-  contrato do LLM (cercas Markdown, resposta truncada, decisões fora do contrato), checks e
-  política de bloqueio, loop de reparo (feedback, limite de tentativas, orçamento de tempo),
-  persistência de sucesso e falha, API, gateway de LLM (failover, circuit breaker) e regras de
-  arquitetura.
+contrato do LLM (cercas Markdown, resposta truncada, decisões fora do contrato), checks e
+política de bloqueio, loop de reparo (feedback, limite de tentativas, orçamento de tempo),
+persistência de sucesso e falha, API, gateway de LLM (failover, circuit breaker) e regras de
+arquitetura.
 - **Integração:** Postgres migrado por Alembic, repositórios, JSONB, equivalência contra o
-  PL/pgSQL real e o ciclo completo do loop de reparo com o harness (um B errado é corrigido pelo
-  feedback dos casos dev e nenhum nome de caso holdout aparece no prompt).
+PL/pgSQL real e o ciclo completo do loop de reparo com o harness (um B errado é corrigido pelo
+feedback dos casos dev e nenhum nome de caso holdout aparece no prompt).
 
 ---
 
@@ -414,11 +441,13 @@ dialeto novo é outra implementação de `SQLParser` produzindo o mesmo IR.
 
 `SemanticAnalyzer` é domínio puro sobre o IR: detecta features e riscos e recomenda a estratégia.
 
-| condição | estratégia |
-|---|---|
-| sem SQL embutido | `python_reimplementation` |
-| só SQL set-based | `database_delegated` |
-| SQL + controle procedural | `hybrid` |
+
+| condição                  | estratégia                |
+| ------------------------- | ------------------------- |
+| sem SQL embutido          | `python_reimplementation` |
+| só SQL set-based          | `database_delegated`      |
+| SQL + controle procedural | `hybrid`                  |
+
 
 Princípio: **lógica relacional fica perto do banco**. Joins, agregações, CTEs, DML em massa e locks
 continuam como SQL parametrizado (`sqlalchemy.text()` com binds); Python coordena validação, fluxo,
@@ -486,14 +515,16 @@ rotas FastAPI (via `http.app`) num processo, sem dependências externas. `langgr
 exige Redis, Postgres do runtime e licença; ficou como caminho de produção. Migrations rodam num
 serviço one-shot antes da app.
 
-| escolha | ganho | custo |
-|---|---|---|
-| LLM gera, regras checam | traduz o que regras não cobririam | não determinismo; exige validação e relatório |
-| Validação por execução | pega os defeitos que AST/Ruff não veem | precisa de dataset e de um banco descartável |
-| Holdout fora do loop | a métrica continua medindo generalização | menos feedback para o reparo |
-| Dois commits por execução | rastreabilidade mesmo se o processo morre | estado `running` intermediário visível |
-| Pydantic no domínio | serialização para JSONB e validação de graça | dependência de lib no núcleo |
-| API síncrona | simples de usar e testar | request longa (ver Escalabilidade) |
+
+| escolha                   | ganho                                        | custo                                         |
+| ------------------------- | -------------------------------------------- | --------------------------------------------- |
+| LLM gera, regras checam   | traduz o que regras não cobririam            | não determinismo; exige validação e relatório |
+| Validação por execução    | pega os defeitos que AST/Ruff não veem       | precisa de dataset e de um banco descartável  |
+| Holdout fora do loop      | a métrica continua medindo generalização     | menos feedback para o reparo                  |
+| Dois commits por execução | rastreabilidade mesmo se o processo morre    | estado `running` intermediário visível        |
+| Pydantic no domínio       | serialização para JSONB e validação de graça | dependência de lib no núcleo                  |
+| API síncrona              | simples de usar e testar                     | request longa (ver Escalabilidade)            |
+
 
 ---
 
@@ -531,22 +562,24 @@ por réplica.
 
 `app/core/config/settings.py` (pydantic-settings, lê env e `.env`). Principais variáveis:
 
-| variável | padrão | descrição |
-|---|---|---|
-| `DATABASE_URL` | `postgresql+asyncpg://modernizer:modernizer@localhost:5432/modernizer` | driver async |
-| `LLM_PROVIDER` / `LLM_MODEL` | `openrouter` / `anthropic/claude-sonnet-4.5` | uma rota; `openai` aceita `LLM_BASE_URL` |
-| `LLM_API_KEY` | — | obrigatória (o boot falha sem ela) |
-| `LLM_REASONING_EFFORT` | não enviado | `low` para modelos de raciocínio (decisão 4) |
-| `LLM_CONFIG_FILE` | — | YAML com várias rotas e providers ([exemplo](config/llm.example.yml)) |
-| `LLM_TEMPERATURE` / `LLM_MAX_OUTPUT_TOKENS` | `0` / `8192` | |
-| `LLM_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` | `120` / `2` | |
-| `LLM_CIRCUIT_BREAKER_*` | `5` falhas / `60` s | abre e fecha o circuito |
-| `GENERATION_MAX_ATTEMPTS` | `2` | tentativas de geração (1 desliga o reparo) |
-| `GENERATION_RETRY_BUDGET_SECONDS` | `90` | nenhuma retentativa começa depois disso |
-| `EVALUATION_DATABASE_URL` | — | banco descartável da avaliação; sem ele o check de comportamento é pulado |
-| `EVALUATION_DATASET_FILE` | `examples/evaluation/scenarios.yml` | |
-| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` | — / — / `http://localhost:3000` | as duas chaves ligam o tracing |
-| `TEST_DATABASE_URL` | — | só testes de integração |
+
+| variável                                                            | padrão                                                                 | descrição                                                                 |
+| ------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------- |
+| `DATABASE_URL`                                                      | `postgresql+asyncpg://modernizer:modernizer@localhost:5432/modernizer` | driver async                                                              |
+| `LLM_PROVIDER` / `LLM_MODEL`                                        | `openrouter` / `anthropic/claude-sonnet-4.5`                           | uma rota; `openai` aceita `LLM_BASE_URL`                                  |
+| `LLM_API_KEY`                                                       | —                                                                      | obrigatória (o boot falha sem ela)                                        |
+| `LLM_REASONING_EFFORT`                                              | não enviado                                                            | `low` para modelos de raciocínio (decisão 4)                              |
+| `LLM_CONFIG_FILE`                                                   | —                                                                      | YAML com várias rotas e providers ([exemplo](config/llm.example.yml))     |
+| `LLM_TEMPERATURE` / `LLM_MAX_OUTPUT_TOKENS`                         | `0` / `8192`                                                           |                                                                           |
+| `LLM_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES`                           | `120` / `2`                                                            |                                                                           |
+| `LLM_CIRCUIT_BREAKER_*`                                             | `5` falhas / `60` s                                                    | abre e fecha o circuito                                                   |
+| `GENERATION_MAX_ATTEMPTS`                                           | `2`                                                                    | tentativas de geração (1 desliga o reparo)                                |
+| `GENERATION_RETRY_BUDGET_SECONDS`                                   | `90`                                                                   | nenhuma retentativa começa depois disso                                   |
+| `EVALUATION_DATABASE_URL`                                           | —                                                                      | banco descartável da avaliação; sem ele o check de comportamento é pulado |
+| `EVALUATION_DATASET_FILE`                                           | `examples/evaluation/scenarios.yml`                                    |                                                                           |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` | — / — / `http://localhost:3000`                                        | as duas chaves ligam o tracing                                            |
+| `TEST_DATABASE_URL`                                                 | —                                                                      | só testes de integração                                                   |
+
 
 ---
 
@@ -556,22 +589,23 @@ por réplica.
 
 - Só `LANGUAGE plpgsql`; o primeiro `CREATE FUNCTION/PROCEDURE` do arquivo.
 - Sem catálogo: `%TYPE`/`%ROWTYPE` não são resolvidos (viram placeholder com warning), e builtin ×
-  rotina do usuário é heurística.
+rotina do usuário é heurística.
 - `EXECUTE` (SQL dinâmico) não é analisável: vira risco `DYNAMIC_SQL`.
 - Comportamento só é verificado onde há dataset (B–F). Para qualquer outra rotina a validação é
-  estática e o relatório diz isso.
+estática e o relatório diz isso.
 - `POST /modernize` é síncrono.
 
 **Com mais tempo:**
 
 - **Dataset de avaliação gerado automaticamente**, como um nó antes da geração: banco de teste a
-  partir do `schema_context`; seed e entradas derivados do IR (tipos, colunas, constantes de
-  `WHERE`/`IF` como valores de borda), por LLM ou fuzzing; a rotina original como oráculo (casos que
-  não exercitam nada são descartados); a mesma divisão dev/holdout. Riscos: cobertura de ramos
-  (medir com `plpgsql_check`), viés de usar o mesmo LLM para código e dados, rotinas com efeitos
-  externos.
+partir do `schema_context`; seed e entradas derivados do IR (tipos, colunas, constantes de
+`WHERE`/`IF` como valores de borda), por LLM ou fuzzing; a rotina original como oráculo (casos que
+não exercitam nada são descartados); a mesma divisão dev/holdout. Riscos: cobertura de ramos
+(medir com `plpgsql_check`), viés de usar o mesmo LLM para código e dados, rotinas com efeitos
+externos.
 - Modo assíncrono com fila, cache de resultado e backpressure por provider.
 - Executar o código gerado em container sem rede e com papel de banco restrito.
 - Resolver `%TYPE` e builtins consultando o catálogo quando houver conexão.
 - Novos dialetos (T-SQL, PL/SQL) implementando `SQLParser`.
 - Comparar modelos e prompts por rodada com a mesma métrica; providers nativos (Anthropic, Gemini).
+

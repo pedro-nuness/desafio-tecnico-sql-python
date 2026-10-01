@@ -1,7 +1,7 @@
 {
-  "execution_id": "01a0f7c7-9758-7763-9c9a-4d0af514e0a4",
+  "execution_id": "01a0f7dd-5fab-77a5-813e-d3d722cc58b1",
   "status": "success",
-  "created_at": "2026-10-01T14:04:07.896390+00:00",
+  "created_at": "2026-10-01T14:27:55.435256+00:00",
   "report": {
     "parsing": {
       "procedure_name": "sp_atualizar_status_contas_inativas",
@@ -140,38 +140,32 @@
       "recommended_strategy": "hybrid",
       "architectural_decisions": [
         {
-          "topic": "Set-based UPDATE mantido em SQL",
-          "decision": "O UPDATE com NOT EXISTS permanece como uma unica instrucao parametrizada via sqlalchemy.text().",
-          "rationale": "Regra de manter DML em massa/joins proximo ao banco; evita N+1."
+          "topic": "set-based DML",
+          "decision": "UPDATE ... NOT EXISTS kept as a single parameterized SQL statement; rowcount replaces GET DIAGNOSTICS ROW_COUNT.",
+          "rationale": "Bulk DML stays close to the database; rowcount is the driver equivalent of ROW_COUNT."
         },
         {
-          "topic": "OUT parameter como frozen dataclass",
-          "decision": "p_afetadas e retornado em ResultadoInativacao, dataclass imutavel com o campo p_afetadas; __repr__ devolve apenas o valor para compatibilidade com a saida escalar original.",
-          "rationale": "Regra 6 (OUT -> frozen dataclass) e compatibilidade com validacao que compara o resultado com o valor escalar original."
+          "topic": "validation",
+          "decision": "p_dias validation done in Python raising ParametroInvalidoError.",
+          "rationale": "RAISE EXCEPTION maps to a typed exception; failing fast avoids a useless round trip."
         },
         {
-          "topic": "Transacao",
-          "decision": "Nenhum commit/rollback no modulo.",
-          "rationale": "A procedure original nao controla transacao; o chamador e o dono da transacao."
-        },
-        {
-          "topic": "RAISE EXCEPTION",
-          "decision": "Validacao de p_dias em Python levanta ParametroInvalidoError antes de qualquer DML.",
-          "rationale": "Regra 5; falha antes do UPDATE evita efeitos parciais."
+          "topic": "transaction ownership",
+          "decision": "No commit/rollback in the module.",
+          "rationale": "The original procedure does not manage transactions; the caller owns the transaction."
         }
       ],
       "warnings": [
-        "GET DIAGNOSTICS ROW_COUNT mapeado para result.rowcount do SQLAlchemy (equivalente para UPDATE).",
-        "Intervalo calculado como CAST(:p_dias AS INT) * INTERVAL '1 day' para evitar ambiguidade de tipo do driver em aritmetica de data/intervalo; semanticamente identico a (p_dias || ' days')::INTERVAL.",
-        "Valores de jsonb_build_object tipados explicitamente com CAST(... AS INT) conforme pitfall de prepared statements do asyncpg.",
-        "__repr__ da dataclass foi ajustado para retornar apenas o valor de p_afetadas, mantendo compatibilidade com consumidores que esperavam o escalar da procedure original."
+        "Interval arithmetic rewritten as CAST(:p_dias AS INT) * INTERVAL '1 day' instead of (p_dias || ' days')::INTERVAL; semantically identical for integer days and avoids polymorphic bind inference issues.",
+        "jsonb_build_object values are explicitly CAST to INT so asyncpg can type the bind parameters.",
+        "rowcount for UPDATE ... returns the number of rows actually updated, matching GET DIAGNOSTICS ROW_COUNT semantics."
       ],
       "provider": "openrouter",
       "model": "z-ai/glm-5.3-flash",
       "prompt_version": "generation-v4",
-      "input_tokens": 3429,
-      "output_tokens": 1349,
-      "latency_ms": 6698.65,
+      "input_tokens": 3238,
+      "output_tokens": 885,
+      "latency_ms": 2805.85,
       "finish_reason": "stop",
       "attempt": 2
     },
@@ -210,7 +204,7 @@
     ],
     "errors": [],
     "warnings": [
-      "generation attempt 2: regenerated after 3 validation issue(s) in the previous attempt"
+      "generation attempt 2: regenerated after 1 validation issue(s) in the previous attempt"
     ]
   }
 }

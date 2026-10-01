@@ -1,6 +1,6 @@
 {
-  "id": "01a0f7c9-2b26-7058-b654-73c432fc6ca3",
-  "modernization_id": "01a0f7c7-9758-7763-9c9a-4d0af514e0a4",
+  "id": "01a0f7df-1026-756e-a59d-d5099018ee39",
+  "modernization_id": "01a0f7dd-5fab-77a5-813e-d3d722cc58b1",
   "procedure_name": "sp_atualizar_status_contas_inativas",
   "metric": "behavioral_equivalence",
   "prompt_version": "generation-v4",
@@ -41,5 +41,5 @@
       "holdout": true
     }
   ],
-  "created_at": "2026-10-01T14:05:51.270946Z"
+  "created_at": "2026-10-01T14:29:46.150199Z"
 }
