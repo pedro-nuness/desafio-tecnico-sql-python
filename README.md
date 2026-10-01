@@ -156,7 +156,7 @@ flowchart LR
     Analysis --> SemanticAnalyzer
     Generation --> CodeGenerationService
     CodeGenerationService --> GenerationPromptBuilder
-    CodeGenerationService --> LLMProvider
+    CodeGenerationService --> LLM
     Validation --> CodeValidator
 
     RecordStart --> UnitOfWork
@@ -180,7 +180,7 @@ flowchart TB
         DOM["Domain models · SemanticAnalyzer<br/>ModernizationReport · status rules"]
         subgraph Ports["Ports (typing.Protocol)"]
             P1["SQLParser"]
-            P2["LLMProvider"]
+            P2["LLM (perfil do LLMGateway)"]
             P3["CodeValidator"]
             P4["UnitOfWork / ModernizationRepository"]
             P5["ModernizationPipeline"]
@@ -189,7 +189,7 @@ flowchart TB
 
     subgraph Driven["Driven adapters (app/features/modernization/infrastructure, graph)"]
         A1["PglastParser"]
-        A2["OpenAIProvider / OpenRouterProvider (SDKs oficiais)"]
+        A2["LLMGateway → OpenAIProvider / OpenRouterProvider (SDKs oficiais)"]
         A3["PythonASTValidator · RuffValidator<br/>CompositeCodeValidator"]
         A4["SqlAlchemyUnitOfWork<br/>SqlAlchemyModernizationRepository"]
         A5["LangGraphModernizationPipeline"]
@@ -228,7 +228,7 @@ app/core/bootstrap.py = composition root (único lugar que conhece todos os adap
 
 | Eixo                 | Port                                   | Adapters hoje                                         |
 |----------------------|----------------------------------------|-------------------------------------------------------|
-| LLM provider/modelo  | `LLMProvider`                          | `OpenAIProvider` / `OpenRouterProvider` (SDKs oficiais) |
+| LLM provider/modelo  | `LLM`                                  | `LLMGateway` (routes em ordem → `OpenAIProvider` / `OpenRouterProvider`) |
 | Parser SQL           | `SQLParser`                            | `PglastParser`                                        |
 | Validadores          | `CodeValidator`                        | `PythonASTValidator`, `RuffValidator`, `CompositeCodeValidator` |
 | Persistência         | `UnitOfWork` + `ModernizationRepository` | `SqlAlchemyUnitOfWork`, `SqlAlchemyModernizationRepository` |
@@ -355,6 +355,7 @@ Centralizada em `app/core/config/settings.py` (`pydantic-settings`; lê env vars
 | variável                | default                                                       | descrição                                  |
 |-------------------------|---------------------------------------------------------------|--------------------------------------------|
 | `DATABASE_URL`          | `postgresql+asyncpg://modernizer:modernizer@localhost:5432/modernizer` | driver async obrigatório          |
+| `LLM_CONFIG_FILE`       | —                                                             | YAML com providers e routes (AD-04, `config/llm.example.yml`); quando definido, as `LLM_*` abaixo, exceto temperatura e tokens, são ignoradas |
 | `LLM_PROVIDER`          | `openrouter`                                                  | `openai` \| `openrouter`                   |
 | `LLM_MODEL`             | `anthropic/claude-sonnet-4.5`                                 | ex.: `anthropic/claude-sonnet-4.5` (OpenRouter), `gpt-...` (OpenAI) |
 | `LLM_API_KEY`           | —                                                             | obrigatório para `openai`/`openrouter` (falha no startup se ausente) |
@@ -452,9 +453,11 @@ app/
 │   └── integrations/
 │       ├── errors.py         # IntegrationError (transient, timeout, retry_after)
 │       ├── integration.py    # Integration: tradução de erros de SDK + retries + breaker
-│       └── llm/              # Port LLMProvider, LLMConfig, factory e adapters reutilizáveis
-│           ├── llm_provider.py # LLMProvider (Protocol), LLMRequest/LLMResponse
-│           ├── factory.py    # create_llm_provider (match + um Integration por provider)
+│       └── llm/              # Port LLM + gateway com providers declarados e routes
+│           ├── llm.py        # LLM (port das features), LLMRequest/LLMResponse
+│           ├── config.py     # LLMSettings: providers + routes (YAML ou env)
+│           ├── gateway.py    # LLMGateway: orquestrador (rotas em ordem, failover, orçamento)
+│           ├── registry.py   # tipo de provider -> adapter, um Integration por provider
 │           ├── openai/       # OpenAIProvider (Chat Completions, qualquer endpoint compatível)
 │           └── openrouter/   # OpenRouterProvider (SDK oficial, chat.send_async)
 └── features/                 # Módulos verticais autocontidos por capacidade de negócio
@@ -679,32 +682,53 @@ guarda **as duas** (`recommended_strategy` e `strategy`). Regras no prompt: join
 DML em massa e locking permanecem como SQL parametrizado (`sqlalchemy.text()` + bind params);
 Python coordena validação, fluxo, erros e composição; a transação pertence ao chamador.
 
-### AD-04 · LLM atrás de `LLMProvider`; SDK oficial de cada provider
+### AD-04 · LLM atrás de um gateway: providers declarados, rotas em ordem
+
+As features dependem só do port `LLM` (`generate(LLMRequest) -> LLMResponse`); o composition
+root entrega o `LLMGateway`, que o implementa. A configuração é única (nenhum nome de perfil
+espalhado pelo código), declarada em YAML (`LLM_CONFIG_FILE`, ver `config/llm.example.yml`):
+
+- **providers**: endpoints (OpenRouter, OpenAI ou qualquer API OpenAI-compatible), declarados
+  uma vez com credencial (`api_key_env`, nunca a chave no arquivo), timeout, retries e circuit
+  breaker. Todas as rotas de um provider compartilham o breaker: uma queda pula todas de uma vez.
+- **routes**: modelos num provider, com seus parâmetros (`reasoning_effort`), em ordem de
+  prioridade.
+- **budget_seconds**: nenhuma rota nova começa depois disso (o `POST /modernize` é síncrono).
+
+O gateway percorre as rotas: uma rota que falha com `IntegrationError` (provider fora, circuito
+aberto, timeout, request rejeitada) passa a vez para a próxima; bug propaga sem tentar outra;
+resposta fora do contrato é problema do chamador (loop de reparo, AD-13). Quem respondeu e quem
+falhou antes vão para o relatório (`report.generation.provider/model` e um warning por rota que
+falhou). Se todas falham, um único `IntegrationError` com `attempts` e `skipped_routes` no
+payload (503 + `Retry-After` quando todas estavam com circuito aberto). Sem `LLM_CONFIG_FILE`,
+as variáveis `LLM_*` descrevem uma única rota.
 
 `LLMRequest`/`LLMResponse` são modelos próprios (provider, model, tokens, latência,
-`finish_reason`). `OpenAIProvider` usa o SDK OpenAI e aceita `base_url` para endpoints
-compatíveis. `OpenRouterProvider` é independente e usa o [SDK oficial OpenRouter](https://openrouter.ai/docs/client-sdks/python/overview),
-com `chat.send_async` (uma chave → Claude, Gemini, GPT, Llama só trocando `LLM_MODEL`). Tudo vive em
-`app/shared/integrations/llm/` para ser reutilizado por qualquer feature. Cada provider recebe
-um `Integration` (AD-14), que traduz qualquer erro do SDK em `IntegrationError` com mensagem
+`finish_reason`, rotas que falharam). `OpenAIProvider` usa o SDK OpenAI e aceita `base_url`
+para endpoints compatíveis. `OpenRouterProvider` usa o [SDK oficial OpenRouter](https://openrouter.ai/docs/client-sdks/python/overview),
+com `chat.send_async` (uma chave → Claude, Gemini, GPT, Llama só trocando o modelo da rota).
+Tudo vive em `app/shared/integrations/llm/` para ser reutilizado por qualquer feature. Cada
+provider recebe um `Integration` (AD-14), que traduz qualquer erro do SDK em `IntegrationError` com mensagem
 própria (o texto do SDK fica só no `__cause__`/log). O breaker e os retries usam só o flag
 `transient` (transporte, timeout, HTTP 408/409/429 e 5xx); erros do chamador (400, 401, 422:
 prompt grande demais, chave inválida) não são retentados nem abrem o circuito. Resposta fora
 do contrato do LLM vira `IntegrationError` com a causa (e, se `finish_reason=length`, a dica
 de `LLM_MAX_OUTPUT_TOKENS`/`LLM_REASONING_EFFORT`).
-A seleção acontece em `app/shared/integrations/llm/factory.py` (um `match`), chamada só pelo
-composition root com `Settings.llm_config()`. Adicionar `AnthropicProvider`/`GeminiProvider` =
-um pacote novo + um `case`; nodes e services não mudam.
+Os providers são construídos por `app/shared/integrations/llm/registry.py` (tipo → adapter),
+chamado só pelo composition root; um provider usado sem chave derruba o startup. Adicionar
+`AnthropicProvider`/`GeminiProvider` = um pacote novo + uma entrada no registry; nodes e
+services não mudam. Outra estratégia de roteamento (peso, custo, latência) seria uma política
+plugada no gateway; hoje a ordem é a da lista.
 
-O `Integration` de cada provider tem um `CircuitBreaker` (genérico, em
+O `Integration` de cada provider declarado tem um `CircuitBreaker` (genérico, em
 `app/shared/resilience/`): após N falhas transitórias consecutivas (cada uma já com os retries
 esgotados) o circuito abre e as chamadas falham na hora com `IntegrationError(retry_after=…)`,
-que o handler global responde como HTTP 503 + `Retry-After`; depois do reset, uma única
-chamada de teste decide se fecha ou reabre.
+e o gateway passa para a próxima rota; depois do reset, uma única chamada de teste decide se
+fecha ou reabre.
 
 OpenAI faz retries pelo SDK (`Integration(retries=0)`). O SDK OpenRouter limita retries por
 tempo, sem limite de tentativas; por isso o adapter desativa os retries internos e o
-`Integration` faz `LLM_MAX_RETRIES` tentativas adicionais para falhas transitórias. O circuito
+`Integration` faz `max_retries` tentativas adicionais para falhas transitórias. O circuito
 conta uma falha somente após essas tentativas se esgotarem. URL, título do app e timeout
 são configurados no SDK OpenRouter (`server_url`, `x_open_router_title`, `timeout_ms`).
 
@@ -879,7 +903,7 @@ aplicação (que valida a resposta do LLM); `NotFoundError` nunca no domínio.
 
 ## Evolução futura
 
-- `AnthropicProvider`/`GeminiProvider` nativos (implementam `LLMProvider`); fallback/roteamento entre providers.
+- `AnthropicProvider`/`GeminiProvider` nativos (uma entrada no registry); políticas de roteamento por custo/latência no `LLMGateway`.
 - Tabela `llm_calls` (prompt, resposta, tokens, custo) e `evaluation_results` — via `UnitOfWork`.
 - **Validação dinâmica (prioridade 1):** um validador que roda o código gerado contra um Postgres
   efêmero com o schema informado e compara o estado final com a procedure original instalada no

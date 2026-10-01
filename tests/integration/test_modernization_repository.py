@@ -37,7 +37,7 @@ from app.features.modernization.prompts.generation_prompt import (
 from app.shared.errors import NotFoundError
 from app.shared.integrations.errors import IntegrationError
 from tests.conftest import llm_payload
-from tests.fakes import FakeLLMProvider
+from tests.fakes import FakeLLM
 
 pytestmark = pytest.mark.integration
 
@@ -108,7 +108,7 @@ async def test_update_of_unknown_aggregate_raises(session_factory: SessionFactor
             )
 
 
-def _service(session_factory: SessionFactory, llm: FakeLLMProvider) -> ModernizationService:
+def _service(session_factory: SessionFactory, llm: FakeLLM) -> ModernizationService:
     def uow_factory() -> SqlAlchemyUnitOfWork:
         return SqlAlchemyUnitOfWork(session_factory)
 
@@ -126,9 +126,9 @@ async def test_every_execution_is_persisted_including_failures(
     session_factory: SessionFactory, load_procedure: Callable[[str], str]
 ) -> None:
     source = load_procedure("process_orders")
-    ok = await _service(session_factory, FakeLLMProvider([llm_payload()])).modernize(source)
+    ok = await _service(session_factory, FakeLLM([llm_payload()])).modernize(source)
     error = IntegrationError("timeout")
-    service = _service(session_factory, FakeLLMProvider(error=error))
+    service = _service(session_factory, FakeLLM(error=error))
     progress = PipelineProgress()
     with pytest.raises(IntegrationError):
         await service.modernize(source, progress=progress)

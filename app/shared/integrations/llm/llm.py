@@ -1,3 +1,9 @@
+"""The port features depend on: vendor-neutral text generation.
+
+Features never see providers, models or routes: the composition root hands them the
+LLMGateway (see gateway.py), which implements this port.
+"""
+
 from enum import StrEnum
 from typing import Protocol
 
@@ -22,17 +28,20 @@ class LLMRequest(ValueObject):
 class LLMResponse(ValueObject):
     content: str
     provider: str
+    """Declared provider that answered (e.g. "openrouter")."""
     model: str
     input_tokens: int | None = None
     output_tokens: int | None = None
     latency_ms: float
     finish_reason: str | None = None
+    failed_routes: tuple[str, ...] = ()
+    """Routes tried before this one, as "provider/model: reason" (empty = first route)."""
 
 
-class LLMProvider(Protocol):
+class LLM(Protocol):
     """Vendor-neutral text generation.
 
-    SDK and response-validation exceptions propagate to the global HTTP handlers.
+    Failures are app.shared.integrations.errors.IntegrationError (every route failed).
     """
 
     async def generate(self, request: LLMRequest) -> LLMResponse: ...

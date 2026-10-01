@@ -8,7 +8,7 @@ from uuid import UUID
 
 from app.features.modernization.domain.models.modernization import Modernization
 from app.shared.errors import NotFoundError
-from app.shared.integrations.llm.llm_provider import LLMRequest, LLMResponse
+from app.shared.integrations.llm.llm import LLMRequest, LLMResponse
 
 
 class InMemoryModernizationRepository:
@@ -90,7 +90,7 @@ DEFAULT_TEST_RESPONSE = json.dumps(
 )
 
 
-class FakeLLMProvider:
+class FakeLLM:
     """Returns scripted responses in order (the last one repeats) or raises `error`.
 
     Every request is recorded in `requests` so tests can assert on the prompt.
@@ -105,7 +105,7 @@ class FakeLLMProvider:
         provider: str = "fake",
     ) -> None:
         if not responses:
-            raise ValueError("FakeLLMProvider needs at least one response")
+            raise ValueError("FakeLLM needs at least one response")
         self._responses = list(responses)
         self._error = error
         self._model = model

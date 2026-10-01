@@ -19,9 +19,12 @@ VENDORS = {
     "alembic",
 }
 
-# Features depend on the LLMProvider port only; adapters are wired by the composition root.
+# Features depend on the LLM port (llm.llm) only; the gateway, its configuration and the
+# providers are wired by the composition root.
 LLM_ADAPTERS = {
-    "app.shared.integrations.llm.factory",
+    "app.shared.integrations.llm.config",
+    "app.shared.integrations.llm.gateway",
+    "app.shared.integrations.llm.registry",
     "app.shared.integrations.llm.openai",
     "app.shared.integrations.llm.openrouter",
 }
@@ -129,14 +132,16 @@ def test_no_init_py_files_exist_in_app() -> None:
 
 # Errors are handled centrally (core/exception_handlers.py). `except` is allowed only where
 # the outcome must be observed locally: SDK error translation + retries (Integration),
-# breaker state, failure persistence, and native errors that carry domain meaning
-# (invalid SQL, syntax errors feeding the repair loop, an LLM answer off contract).
+# breaker state, route failover (LLMGateway), failure persistence, and native errors that
+# carry domain meaning (invalid SQL, syntax errors feeding the repair loop, an LLM answer
+# off contract).
 LOCAL_EXCEPT_ALLOWED = [
     "features/modernization/application/services/code_generation_service.py",
     "features/modernization/graph/builder.py",
     "features/modernization/infrastructure/parsing/pglast_parser.py",
     "features/modernization/infrastructure/validation/python_ast_validator.py",
     "shared/integrations/integration.py",
+    "shared/integrations/llm/gateway.py",
     "shared/resilience/circuit_breaker.py",
 ]
 

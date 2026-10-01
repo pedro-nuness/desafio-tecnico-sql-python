@@ -13,12 +13,7 @@ from app.features.modernization.domain.models.parsing import ParsedProcedure
 from app.features.modernization.domain.models.semantic_analysis import SemanticAnalysis
 from app.features.modernization.prompts.generation_prompt import GenerationPromptBuilder
 from app.shared.integrations.errors import IntegrationError
-from app.shared.integrations.llm.llm_provider import (
-    LLMProvider,
-    LLMRequest,
-    LLMResponse,
-    ResponseFormat,
-)
+from app.shared.integrations.llm.llm import LLM, LLMRequest, LLMResponse, ResponseFormat
 
 
 class _DecisionPayload(BaseModel):
@@ -40,7 +35,7 @@ class _GenerationPayload(BaseModel):
 class CodeGenerationService:
     def __init__(
         self,
-        llm: LLMProvider,
+        llm: LLM,
         prompt_builder: GenerationPromptBuilder,
         *,
         temperature: float = 0.0,
@@ -95,6 +90,10 @@ class CodeGenerationService:
             )
 
         warnings = list(payload.warnings)
+        warnings.extend(
+            f"LLM route {failure}; answered by {response.provider}/{response.model}"
+            for failure in response.failed_routes
+        )
         if response.finish_reason == "length":
             warnings.append("LLM output hit the token limit; the module may be truncated.")
         if payload.strategy is None:

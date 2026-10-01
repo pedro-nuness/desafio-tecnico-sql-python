@@ -16,7 +16,7 @@ from app.features.modernization.graph.pipeline import LangGraphModernizationPipe
 from app.shared.errors import AppError, DomainError, NotFoundError
 from app.shared.integrations.errors import IntegrationError
 from tests.conftest import GraphFactory
-from tests.fakes import FakeLLMProvider, InMemoryStore
+from tests.fakes import FakeLLM, InMemoryStore
 
 
 @pytest.fixture
@@ -154,7 +154,7 @@ async def test_global_handler_maps_failures_and_points_to_the_recorded_run(
     status_code: int,
 ) -> None:
     api.state.container.modernization_service._pipeline._graph = make_graph(
-        llm=FakeLLMProvider(error=error)
+        llm=FakeLLM(error=error)
     )
     async with AsyncClient(
         transport=ASGITransport(app=api, raise_app_exceptions=False), base_url="http://test"
@@ -194,7 +194,7 @@ async def test_invalid_llm_payload_reaches_the_handler(
     response_content: str,
 ) -> None:
     api.state.container.modernization_service._pipeline._graph = make_graph(
-        llm=FakeLLMProvider([response_content])
+        llm=FakeLLM([response_content])
     )
     response = await client.post(
         "/modernize", json={"source_code": load_procedure("process_orders")}
@@ -221,7 +221,7 @@ async def test_validation_exception_keeps_generated_code_before_http_response(
 
     code = "def broken(:\n"
     api.state.container.modernization_service._pipeline._graph = make_graph(
-        llm=FakeLLMProvider([json.dumps({"python_code": code})]),
+        llm=FakeLLM([json.dumps({"python_code": code})]),
         validator=CrashingValidator(),
     )
     async with AsyncClient(

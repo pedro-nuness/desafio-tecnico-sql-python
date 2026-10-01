@@ -9,10 +9,12 @@ from openrouter.errors import OpenRouterError
 
 from app.shared.integrations.errors import IntegrationError
 from app.shared.integrations.integration import Integration
-from app.shared.integrations.llm.config import ReasoningEffort
-from app.shared.integrations.llm.llm_provider import LLMRequest, ResponseFormat
+from app.shared.integrations.llm.config import ReasoningEffort, Route
+from app.shared.integrations.llm.llm import LLMRequest, ResponseFormat
 from app.shared.integrations.llm.openrouter.provider import OpenRouterProvider
 from app.shared.resilience.circuit_breaker import CircuitState
+
+ROUTE = Route(provider="openrouter", model="model")
 
 
 def _completion() -> dict:
@@ -68,22 +70,25 @@ async def test_official_sdk_request_and_response_mapping(
             partial(OpenRouter, async_client=http),
         )
         provider = OpenRouterProvider(
+            "openrouter",
             api_key="sk-test",
-            model="requested/model",
             app_name="my-app",
             base_url="https://example.com/custom/v1/",
             timeout_seconds=1.25,
-            reasoning_effort=reasoning_effort,
+        )
+        route = Route(
+            provider="openrouter", model="requested/model", reasoning_effort=reasoning_effort
         )
         with provider._client:
-            response = await provider.generate(
+            response = await provider.complete(
                 LLMRequest(
                     system_prompt="system",
                     user_prompt="user",
                     temperature=0.25,
                     max_output_tokens=777,
                     response_format=response_format,
-                )
+                ),
+                route,
             )
     assert response.content == "ok"
     assert response.provider == "openrouter"
@@ -116,11 +121,11 @@ async def test_integration_retries_and_counts_transient_sdk_failures(
             "app.shared.integrations.llm.openrouter.provider.OpenRouter",
             partial(OpenRouter, async_client=http),
         )
-        provider = OpenRouterProvider(api_key="sk-test", model="model", integration=integration)
+        provider = OpenRouterProvider("openrouter", api_key="sk-test", integration=integration)
         with provider._client:
             request = LLMRequest(system_prompt="s", user_prompt="u")
             with pytest.raises(IntegrationError) as exc_info:
-                await provider.generate(request)
+                await provider.complete(request, ROUTE)
             assert isinstance(exc_info.value.__cause__, (OpenRouterError, httpx.TransportError))
             assert "provider down" not in exc_info.value.message
             assert exc_info.value.timeout is (status in (408, "timeout"))
@@ -133,7 +138,7 @@ async def test_integration_retries_and_counts_transient_sdk_failures(
             assert integration.breaker._failures == 1
             assert integration.breaker.state is CircuitState.OPEN
             with pytest.raises(IntegrationError) as exc_info:
-                await provider.generate(request)
+                await provider.complete(request, ROUTE)
             assert exc_info.value.retry_after is not None
             assert attempts == 3
 
@@ -157,14 +162,14 @@ async def test_optional_response_fields_and_non_text_content(
             "app.shared.integrations.llm.openrouter.provider.OpenRouter",
             partial(OpenRouter, async_client=http),
         )
-        provider = OpenRouterProvider(api_key="sk-test", model="model")
+        provider = OpenRouterProvider("openrouter", api_key="sk-test")
         with provider._client:
             request = LLMRequest(system_prompt="s", user_prompt="u")
             if isinstance(content, list):
                 with pytest.raises(IntegrationError, match="non-text content"):
-                    await provider.generate(request)
+                    await provider.complete(request, ROUTE)
             else:
-                response = await provider.generate(request)
+                response = await provider.complete(request, ROUTE)
                 assert response.content == ""
                 assert response.input_tokens is None and response.output_tokens is None
                 assert response.finish_reason == "length"

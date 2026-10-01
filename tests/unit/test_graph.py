@@ -9,7 +9,7 @@ from app.features.modernization.domain.models.modernization import PipelineProgr
 from app.features.modernization.graph.builder import RetryPolicy
 from app.shared.integrations.errors import IntegrationError
 from tests.conftest import VALID_CODE, GraphFactory, ServiceFactory, llm_payload
-from tests.fakes import FakeLLMProvider, InMemoryStore
+from tests.fakes import FakeLLM, InMemoryStore
 
 LINT_ONLY = "import os\n\nvalue = 1\n"
 BROKEN = llm_payload(code="def broken(:\n")
@@ -18,7 +18,7 @@ BROKEN = llm_payload(code="def broken(:\n")
 async def test_rejected_code_is_regenerated_with_validation_feedback(
     make_service: ServiceFactory, load_procedure: Callable[[str], str]
 ) -> None:
-    llm = FakeLLMProvider([BROKEN, llm_payload()])
+    llm = FakeLLM([BROKEN, llm_payload()])
 
     result = await make_service(llm=llm).modernize(load_procedure("process_orders"))
 
@@ -37,7 +37,7 @@ async def test_rejected_code_is_regenerated_with_validation_feedback(
 async def test_retries_stop_at_max_attempts(
     make_service: ServiceFactory, load_procedure: Callable[[str], str]
 ) -> None:
-    llm = FakeLLMProvider([BROKEN])  # always broken
+    llm = FakeLLM([BROKEN])  # always broken
 
     service = make_service(llm=llm, retry=RetryPolicy(max_attempts=3))
     result = await service.modernize(load_procedure("process_orders"))
@@ -50,7 +50,7 @@ async def test_retries_stop_at_max_attempts(
 async def test_no_retry_once_the_time_budget_is_spent(
     make_service: ServiceFactory, load_procedure: Callable[[str], str]
 ) -> None:
-    llm = FakeLLMProvider([BROKEN, llm_payload()])
+    llm = FakeLLM([BROKEN, llm_payload()])
 
     service = make_service(llm=llm, retry=RetryPolicy(max_attempts=3, budget_seconds=0))
     result = await service.modernize(load_procedure("process_orders"))
@@ -62,7 +62,7 @@ async def test_no_retry_once_the_time_budget_is_spent(
 async def test_failed_retry_keeps_the_previous_attempt(
     make_service: ServiceFactory, store: InMemoryStore, load_procedure: Callable[[str], str]
 ) -> None:
-    llm = FakeLLMProvider([llm_payload(code=LINT_ONLY), "not json"])
+    llm = FakeLLM([llm_payload(code=LINT_ONLY), "not json"])
 
     progress = PipelineProgress()
     with pytest.raises(IntegrationError):
@@ -81,7 +81,7 @@ async def test_failing_runs_started_on_the_graph_are_recorded(
     make_graph: GraphFactory, store: InMemoryStore, load_procedure: Callable[[str], str]
 ) -> None:
     """LangGraph API / Studio path: no FastAPI handler around it, the graph records it."""
-    llm = FakeLLMProvider(error=RuntimeError("provider exploded"))
+    llm = FakeLLM(error=RuntimeError("provider exploded"))
 
     with pytest.raises(RuntimeError, match="provider exploded"):
         await make_graph(llm=llm).ainvoke({"source_code": load_procedure("process_orders")})

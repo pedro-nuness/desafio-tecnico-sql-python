@@ -16,9 +16,9 @@ from app.features.modernization.prompts.generation_prompt import (
     GenerationPromptBuilder,
 )
 from app.shared.integrations.errors import IntegrationError
-from app.shared.integrations.llm.llm_provider import LLMRequest, LLMResponse, ResponseFormat
+from app.shared.integrations.llm.llm import LLMRequest, LLMResponse, ResponseFormat
 from tests.conftest import VALID_CODE, llm_payload
-from tests.fakes import FakeLLMProvider
+from tests.fakes import FakeLLM
 
 type Analyzed = tuple[str, ParsedProcedure, SemanticAnalysis]
 
@@ -31,7 +31,7 @@ def analyzed(load_procedure: Callable[[str], str]) -> Analyzed:
 
 
 async def _generate(
-    llm: FakeLLMProvider, analyzed: Analyzed, schema: str | None = None
+    llm: FakeLLM, analyzed: Analyzed, schema: str | None = None
 ) -> GenerationResult:
     source, procedure, analysis = analyzed
     service = CodeGenerationService(llm, GenerationPromptBuilder())
@@ -41,7 +41,7 @@ async def _generate(
 
 
 async def test_generates_code_with_metadata(analyzed: Analyzed) -> None:
-    llm = FakeLLMProvider([llm_payload(strategy="database_delegated")])
+    llm = FakeLLM([llm_payload(strategy="database_delegated")])
 
     result = await _generate(llm, analyzed)
 
@@ -54,7 +54,7 @@ async def test_generates_code_with_metadata(analyzed: Analyzed) -> None:
 
 
 async def test_prompt_carries_parsing_and_semantic_analysis(analyzed: Analyzed) -> None:
-    llm = FakeLLMProvider([llm_payload()])
+    llm = FakeLLM([llm_payload()])
 
     await _generate(llm, analyzed, schema="CREATE TABLE orders(id int);")
 
@@ -72,7 +72,7 @@ async def test_prompt_carries_parsing_and_semantic_analysis(analyzed: Analyzed) 
 
 
 async def test_accepts_json_wrapped_in_markdown_fences(analyzed: Analyzed) -> None:
-    llm = FakeLLMProvider([f"Here you go:\n```json\n{llm_payload()}\n```"])
+    llm = FakeLLM([f"Here you go:\n```json\n{llm_payload()}\n```"])
 
     result = await _generate(llm, analyzed)
 
@@ -95,18 +95,18 @@ async def test_invalid_llm_answers_propagate_errors(
     analyzed: Analyzed, content: str, error_type: type[Exception]
 ) -> None:
     with pytest.raises(error_type):
-        await _generate(FakeLLMProvider([content]), analyzed)
+        await _generate(FakeLLM([content]), analyzed)
 
 
 async def test_missing_strategy_falls_back_to_recommendation(analyzed: Analyzed) -> None:
-    result = await _generate(FakeLLMProvider(['{"python_code": "x = 1"}']), analyzed)
+    result = await _generate(FakeLLM(['{"python_code": "x = 1"}']), analyzed)
 
     assert result.strategy is GenerationStrategy.HYBRID
     assert any("did not report a strategy" in warning for warning in result.warnings)
 
 
 async def test_truncated_answer_reports_token_limit(analyzed: Analyzed) -> None:
-    class TruncatingLLM(FakeLLMProvider):
+    class TruncatingLLM(FakeLLM):
         async def generate(self, request: LLMRequest) -> LLMResponse:
             response = await super().generate(request)
             # Reasoning model that spent the whole budget thinking: no content at all.
@@ -119,5 +119,22 @@ async def test_truncated_answer_reports_token_limit(analyzed: Analyzed) -> None:
 async def test_provider_errors_propagate_unchanged(analyzed: Analyzed) -> None:
     error = IntegrationError("rate limited")
     with pytest.raises(IntegrationError) as exc_info:
-        await _generate(FakeLLMProvider(error=error), analyzed)
+        await _generate(FakeLLM(error=error), analyzed)
     assert exc_info.value is error
+
+
+async def test_route_failover_is_reported_as_a_warning(analyzed: Analyzed) -> None:
+    class FailedOverLLM(FakeLLM):
+        async def generate(self, request: LLMRequest) -> LLMResponse:
+            response = await super().generate(request)
+            return response.model_copy(
+                update={"failed_routes": ("openrouter/z-ai/glm-5.3-flash: openrouter timed out",)}
+            )
+
+    result = await _generate(FailedOverLLM(provider="openai", model="gpt-5-mini"), analyzed)
+
+    assert (
+        "LLM route openrouter/z-ai/glm-5.3-flash: openrouter timed out; "
+        "answered by openai/gpt-5-mini"
+    ) in result.warnings
+    assert (result.metadata.provider, result.metadata.model) == ("openai", "gpt-5-mini")

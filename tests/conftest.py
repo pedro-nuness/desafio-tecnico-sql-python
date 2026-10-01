@@ -35,7 +35,7 @@ from app.features.modernization.infrastructure.validation.ruff_validator import 
 from app.features.modernization.prompts.generation_prompt import (
     GenerationPromptBuilder,
 )
-from tests.fakes import FakeLLMProvider, InMemoryStore
+from tests.fakes import FakeLLM, InMemoryStore
 
 PROCEDURES_DIR = Path(__file__).parent / "fixtures" / "procedures"
 
@@ -97,7 +97,7 @@ def make_graph(store: InMemoryStore) -> GraphFactory:
     """Real LangGraph graph + real parser/analyzer; fake LLM and in-memory UoW."""
 
     def factory(
-        llm: FakeLLMProvider | None = None,
+        llm: FakeLLM | None = None,
         validator: CodeValidator | None = None,
         retry: RetryPolicy = DEFAULT_RETRY,
     ) -> ModernizationGraph:
@@ -105,7 +105,7 @@ def make_graph(store: InMemoryStore) -> GraphFactory:
             parser=PglastParser(),
             analyzer=SemanticAnalyzer(),
             generation_service=CodeGenerationService(
-                llm or FakeLLMProvider([llm_payload()]), GenerationPromptBuilder()
+                llm or FakeLLM([llm_payload()]), GenerationPromptBuilder()
             ),
             validator=validator or CompositeCodeValidator([PythonASTValidator(), RuffValidator()]),
             uow_factory=store.uow,

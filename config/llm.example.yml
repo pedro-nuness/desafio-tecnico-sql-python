@@ -1,0 +1,33 @@
+# LLM gateway configuration. Enable with LLM_CONFIG_FILE=config/llm.yml (copy this file).
+# Without LLM_CONFIG_FILE, the LLM_* variables describe a single route.
+#
+# providers: endpoints, declared once. Credentials, transport and resilience live here and
+#            are shared by every route of the provider (one circuit breaker per provider:
+#            an outage skips all of its routes at once).
+# routes:    models tried in priority order until one answers.
+#
+# Secrets never go in this file: `api_key_env` names the environment variable (or .env
+# entry) that holds the key. A route whose provider has no key fails at startup.
+
+providers:
+  openrouter:
+    type: openrouter
+    api_key_env: OPENROUTER_API_KEY
+    timeout_seconds: 60
+    max_retries: 1                  # extra attempts for transient failures
+    circuit_breaker:
+      failure_threshold: 5          # consecutive transient failures that open the circuit
+      reset_seconds: 60
+  openai:
+    type: openai                    # any OpenAI-compatible endpoint via base_url
+    api_key_env: OPENAI_API_KEY
+    timeout_seconds: 45
+    max_retries: 1
+
+budget_seconds: 150                 # no further route starts after this (sync request)
+
+routes:
+  # Reasoning models spend output tokens thinking: keep the effort low (README, AD-04).
+  - { provider: openrouter, model: z-ai/glm-5.3-flash, reasoning_effort: low }
+  - { provider: openrouter, model: anthropic/claude-sonnet-4.5 }
+  - { provider: openai, model: gpt-5-mini, reasoning_effort: low }

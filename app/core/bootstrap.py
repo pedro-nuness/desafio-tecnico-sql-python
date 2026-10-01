@@ -46,7 +46,8 @@ from app.features.modernization.infrastructure.validation.ruff_validator import 
 from app.features.modernization.prompts.generation_prompt import (
     GenerationPromptBuilder,
 )
-from app.shared.integrations.llm.factory import create_llm_provider
+from app.shared.integrations.llm.gateway import LLMGateway
+from app.shared.integrations.llm.registry import build_providers
 
 
 @dataclass(frozen=True, slots=True)
@@ -63,7 +64,7 @@ class Container:
 
 def build_graph(settings: Settings, uow_factory: UnitOfWorkFactory) -> ModernizationGraph:
     generation_service = CodeGenerationService(
-        create_llm_provider(settings.llm_config()),
+        _llm_gateway(settings),
         GenerationPromptBuilder(),
         temperature=settings.llm_temperature,
         max_output_tokens=settings.llm_max_output_tokens,
@@ -82,6 +83,12 @@ def build_graph(settings: Settings, uow_factory: UnitOfWorkFactory) -> Moderniza
             budget_seconds=settings.generation_retry_budget_seconds,
         ),
     )
+
+
+def _llm_gateway(settings: Settings) -> LLMGateway:
+    llm_settings = settings.llm_settings()
+    providers = build_providers(llm_settings, app_name=settings.app_name)
+    return LLMGateway(providers, llm_settings.routes, budget_seconds=llm_settings.budget_seconds)
 
 
 def _uow_factory(engine: AsyncEngine) -> UnitOfWorkFactory:

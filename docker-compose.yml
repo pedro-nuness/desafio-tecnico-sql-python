@@ -7,6 +7,10 @@ x-app-env: &app-env
   LLM_API_KEY: ${LLM_API_KEY:-}
   LLM_BASE_URL: ${LLM_BASE_URL:-}
   LLM_REASONING_EFFORT: ${LLM_REASONING_EFFORT:-}
+  # Multi-provider gateway: LLM_CONFIG_FILE=config/llm.yml (mounted below) + the keys it names.
+  LLM_CONFIG_FILE: ${LLM_CONFIG_FILE:-}
+  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
+  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
 
 services:
@@ -39,6 +43,8 @@ services:
   app:
     build: .
     environment: *app-env
+    volumes:
+      - ./config:/app/config:ro      # LLM gateway YAML: edit without rebuilding the image
     ports:
       - "8000:8000"
     depends_on:

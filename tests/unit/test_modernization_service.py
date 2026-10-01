@@ -8,7 +8,7 @@ from app.features.modernization.domain.models.validation import ValidationResult
 from app.shared.errors import DomainError, NotFoundError
 from app.shared.integrations.errors import IntegrationError
 from tests.conftest import ServiceFactory, llm_payload
-from tests.fakes import FakeLLMProvider, InMemoryStore
+from tests.fakes import FakeLLM, InMemoryStore
 
 ALL_STEPS = tuple(PipelineStep)
 
@@ -38,7 +38,7 @@ async def test_llm_failure_is_recorded_then_propagates(
     make_service: ServiceFactory, store: InMemoryStore, load_procedure: Callable[[str], str]
 ) -> None:
     error = IntegrationError("provider unavailable")
-    service = make_service(llm=FakeLLMProvider(error=error))
+    service = make_service(llm=FakeLLM(error=error))
     progress = PipelineProgress()
     with pytest.raises(IntegrationError) as exc_info:
         await service.modernize(load_procedure("process_orders"), progress=progress)
@@ -60,7 +60,7 @@ async def test_llm_failure_is_recorded_then_propagates(
 async def test_parsing_failure_propagates_without_calling_the_llm(
     make_service: ServiceFactory, load_procedure: Callable[[str], str]
 ) -> None:
-    llm = FakeLLMProvider()
+    llm = FakeLLM()
     with pytest.raises(DomainError):
         await make_service(llm=llm).modernize(load_procedure("invalid_syntax"))
     assert not llm.requests
@@ -69,7 +69,7 @@ async def test_parsing_failure_propagates_without_calling_the_llm(
 async def test_invalid_python_is_a_failure_but_code_is_kept(
     make_service: ServiceFactory, load_procedure: Callable[[str], str]
 ) -> None:
-    llm = FakeLLMProvider([llm_payload(code="def broken(:\n")])
+    llm = FakeLLM([llm_payload(code="def broken(:\n")])
 
     result = await make_service(llm=llm).modernize(load_procedure("calculate_discount"))
 
@@ -81,7 +81,7 @@ async def test_invalid_python_is_a_failure_but_code_is_kept(
 async def test_lint_findings_make_the_result_partial(
     make_service: ServiceFactory, load_procedure: Callable[[str], str]
 ) -> None:
-    llm = FakeLLMProvider([llm_payload(code="import os\n\nvalue = 1\n")])
+    llm = FakeLLM([llm_payload(code="import os\n\nvalue = 1\n")])
 
     result = await make_service(llm=llm).modernize(load_procedure("calculate_discount"))
 
