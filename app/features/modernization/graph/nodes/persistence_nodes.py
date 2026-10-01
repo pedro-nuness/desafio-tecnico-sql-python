@@ -1,4 +1,4 @@
-"""First and last nodes of the graph: every run is recorded, whoever started it.
+"""First and last nodes: record the start and normal completion of a run.
 
 Persistence lives in the graph (not only in the HTTP use case) because the graph has more
 than one entry point: POST /modernize, the LangGraph API (/runs) and Studio. Two short

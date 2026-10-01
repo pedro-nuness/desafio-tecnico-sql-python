@@ -109,7 +109,10 @@ def test_only_the_vendor_adapter_imports_its_sdk(vendor: str) -> None:
         for path in APP.rglob("*.py")
         if any(i == vendor or i.startswith(vendor + ".") for i in _imports(path))
     ]
-    assert offenders == [f"shared/integrations/llm/{vendor}/provider.py"]
+    assert sorted(offenders) == [
+        "core/exception_handlers.py",
+        f"shared/integrations/llm/{vendor}/provider.py",
+    ]
 
 
 def test_only_the_parsing_adapter_imports_pglast() -> None:
@@ -118,9 +121,24 @@ def test_only_the_parsing_adapter_imports_pglast() -> None:
         for path in APP.rglob("*.py")
         if any(i == "pglast" or i.startswith("pglast.") for i in _imports(path))
     ]
-    assert offenders == ["features/modernization/infrastructure/parsing/pglast_parser.py"]
+    assert sorted(offenders) == [
+        "core/exception_handlers.py",
+        "features/modernization/infrastructure/parsing/pglast_parser.py",
+    ]
 
 
 def test_no_init_py_files_exist_in_app() -> None:
     inits = list(APP.rglob("__init__.py"))
     assert inits == []
+
+
+def test_app_has_no_local_exception_handlers() -> None:
+    offenders = [
+        str(path.relative_to(APP))
+        for path in APP.rglob("*.py")
+        if any(
+            isinstance(node, ast.ExceptHandler)
+            for node in ast.walk(ast.parse(path.read_text(encoding="utf-8")))
+        )
+    ]
+    assert offenders == []

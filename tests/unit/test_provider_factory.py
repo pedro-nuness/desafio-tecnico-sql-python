@@ -115,9 +115,9 @@ async def test_provider_blocks_sdk_calls_until_circuit_recovers(
 
     async with provider._client:
         for _ in range(2):
-            with pytest.raises(IntegrationError, match="provider down") as exc_info:
+            with pytest.raises(type(sdk_error), match="provider down") as exc_info:
                 await provider.generate(request)
-            assert exc_info.value.__cause__ is sdk_error
+            assert exc_info.value is sdk_error
         assert breaker.state is CircuitState.OPEN
         with pytest.raises(CircuitOpenError) as exc_info:
             await provider.generate(request)

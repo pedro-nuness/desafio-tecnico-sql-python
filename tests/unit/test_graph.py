@@ -2,13 +2,17 @@
 
 from collections.abc import Callable
 
+import pytest
+
 from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
+from app.features.modernization.domain.exceptions import GenerationError
+from app.features.modernization.domain.models.modernization import PipelineProgress
 from app.features.modernization.graph.builder import RetryPolicy
 from tests.conftest import VALID_CODE, GraphFactory, ServiceFactory, llm_payload
 from tests.fakes import FakeLLMProvider, InMemoryStore
 
-BROKEN = llm_payload(code="def broken(:\n")
 LINT_ONLY = "import os\n\nvalue = 1\n"
+BROKEN = llm_payload(code="def broken(:\n")
 
 
 async def test_rejected_code_is_regenerated_with_validation_feedback(
@@ -60,12 +64,13 @@ async def test_failed_retry_keeps_the_previous_attempt(
 ) -> None:
     llm = FakeLLMProvider([llm_payload(code=LINT_ONLY), "not json"])
 
-    result = await make_service(llm=llm).modernize(load_procedure("calculate_discount"))
-
-    assert result.status is ModernizationStatus.PARTIAL  # attempt 1 is still usable
-    assert result.generated_code == LINT_ONLY
-    [error] = result.report.errors
-    assert error.step is PipelineStep.GENERATION
+    progress = PipelineProgress()
+    with pytest.raises(GenerationError):
+        await make_service(llm=llm).modernize(
+            load_procedure("calculate_discount"), progress=progress
+        )
+    assert progress.outcome.generated_code == LINT_ONLY
+    assert progress.step is PipelineStep.GENERATION
 
 
 async def test_runs_started_on_the_graph_are_persisted(

@@ -12,10 +12,8 @@ Two grammars are combined, all AST-based:
 Tokens (`pglast.scan`) are used only to split `target := expression` assignments.
 No regular expressions are used.
 
-Known limitation: libpg_query's PL/pgSQL compiler cannot resolve `%TYPE` in parameter
-types (it has no catalog) and answers "Not implemented". In that case the
-CreateFunctionStmt AST is rewritten (parameter type -> placeholder), deparsed and the
-body is re-parsed; the original declared type is kept in the IR and a warning emitted.
+Known limitation: libpg_query cannot resolve parameter %TYPE without a catalog.
+Parameters with %TYPE are rewritten before compilation; native parsing errors propagate.
 """
 
 from collections.abc import Callable, Iterable, Mapping, Sequence
@@ -23,7 +21,6 @@ from dataclasses import dataclass, field
 
 import pglast
 from pglast import ast, enums, visitors
-from pglast.parser import ParseError
 from pglast.stream import RawStream
 
 from app.features.modernization.domain.exceptions import ParsingError
@@ -107,10 +104,7 @@ class PglastParser:
 
 
 def _find_create_function(source_code: str) -> tuple[str, ast.CreateFunctionStmt]:
-    try:
-        statements = pglast.split(source_code)
-    except ParseError as exc:
-        raise ParsingError(f"Invalid SQL: {exc}") from exc
+    statements = pglast.split(source_code)
     for statement_sql in statements:
         raw = pglast.parse_sql(statement_sql)[0].stmt
         if isinstance(raw, ast.CreateFunctionStmt):
@@ -183,12 +177,11 @@ def _return_type(create: ast.CreateFunctionStmt) -> tuple[str | None, bool]:
 def _parse_plpgsql(
     statement_sql: str, create: ast.CreateFunctionStmt, warnings: list[str]
 ) -> JsonObject:
-    try:
-        tree = pglast.parse_plpgsql(statement_sql)
-    except ParseError as exc:
-        if "Not implemented" not in str(exc) or not _has_pct_type_parameters(create):
-            raise ParsingError(f"Invalid PL/pgSQL body: {exc}") from exc
-        tree = _parse_with_placeholder_types(create, warnings)
+    tree = (
+        _parse_with_placeholder_types(create, warnings)
+        if _has_pct_type_parameters(create)
+        else pglast.parse_plpgsql(statement_sql)
+    )
     function = tree[0].get("PLpgSQL_function") if tree else None
     if not isinstance(function, dict):
         raise ParsingError("pglast returned no PL/pgSQL function tree")
@@ -225,10 +218,7 @@ def _parse_with_placeholder_types(
         options=create.options,
         sql_body=create.sql_body,
     )
-    try:
-        return pglast.parse_plpgsql(RawStream()(clone) + ";")
-    except ParseError as exc:
-        raise ParsingError(f"Invalid PL/pgSQL body: {exc}") from exc
+    return pglast.parse_plpgsql(RawStream()(clone) + ";")
 
 
 def _obj(value: JsonValue) -> JsonObject:
@@ -617,10 +607,7 @@ def _drop_implicit_return(body: tuple[Statement, ...]) -> tuple[Statement, ...]:
 def _split_assignment(text: str) -> tuple[str | None, str]:
     """Split `target := expr` using the SQL lexer (offsets are byte-based)."""
     encoded = text.encode()
-    try:
-        tokens = pglast.scan(text)
-    except ParseError:
-        return None, text
+    tokens = pglast.scan(text)
     for token in tokens:
         if token.name == "COLON_EQUALS" or (token.name == "ASCII_61" and token.start > 0):
             target = encoded[: token.start].decode().strip()
@@ -694,10 +681,7 @@ _LOCK_NAMES: Mapping[enums.LockClauseStrength, str] = {
 
 
 def analyze_sql(text: str) -> SqlFragment:
-    try:
-        statements = pglast.parse_sql(text)
-    except ParseError as exc:
-        return SqlFragment(text=text, parse_error=str(exc))
+    statements = pglast.parse_sql(text)
     visitor = _SqlVisitor()
     visitor(statements)
     first = statements[0].stmt if statements else None

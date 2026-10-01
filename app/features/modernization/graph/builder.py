@@ -1,9 +1,9 @@
 import inspect
-import logging
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
@@ -18,6 +18,7 @@ from app.features.modernization.application.services.code_generation_service imp
     CodeGenerationService,
 )
 from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
+from app.features.modernization.domain.models.modernization import PipelineProgress
 from app.features.modernization.domain.services.semantic_analyzer import SemanticAnalyzer
 from app.features.modernization.graph.nodes.generation_node import GenerationNode
 from app.features.modernization.graph.nodes.parsing_node import ParsingNode
@@ -33,14 +34,12 @@ from app.features.modernization.graph.state import (
     ModernizationInput,
     ModernizationState,
     StateUpdate,
-    failed,
+    to_outcome,
 )
-
-logger = logging.getLogger(__name__)
 
 type ModernizationGraph = CompiledStateGraph[ModernizationState, None, ModernizationInput]
 type Node = Callable[[ModernizationState], StateUpdate | Awaitable[StateUpdate]]
-type AsyncNode = Callable[[ModernizationState], Awaitable[StateUpdate]]
+type AsyncNode = Callable[[ModernizationState, RunnableConfig], Awaitable[StateUpdate]]
 
 GRAPH_NAME = "modernization"
 RECORD_START = "record_start"
@@ -72,11 +71,11 @@ def build_modernization_graph(
     """START -> record_start -> parsing -> semantic_analysis -> generation -> validation
     -> record_result -> END, with validation -> generation while retries remain.
 
-    A failed step short-circuits to record_result, so every run is persisted.
+    Exceptions propagate with per-request progress available to the global HTTP handler.
     Dependencies are injected into node instances (closures), keeping nodes thin.
     """
     graph = StateGraph(ModernizationState, input_schema=ModernizationInput)
-    graph.add_node(RECORD_START, RecordStartNode(uow_factory))
+    graph.add_node(RECORD_START, _tracked(None, RecordStartNode(uow_factory)))
     steps: list[tuple[PipelineStep, Node]] = [
         (PipelineStep.PARSING, ParsingNode(parser)),
         (PipelineStep.SEMANTIC_ANALYSIS, SemanticAnalysisNode(analyzer)),
@@ -84,14 +83,14 @@ def build_modernization_graph(
         (PipelineStep.VALIDATION, ValidationNode(validator)),
     ]
     for step, node in steps:
-        graph.add_node(step.value, _guarded(step, node))
-    graph.add_node(RECORD_RESULT, RecordResultNode(uow_factory))
+        graph.add_node(step.value, _tracked(step, node))
+    graph.add_node(RECORD_RESULT, _tracked(None, RecordResultNode(uow_factory)))
 
     graph.add_edge(START, RECORD_START)
     graph.add_edge(RECORD_START, PipelineStep.PARSING.value)
-    _continue_unless_failed(graph, PipelineStep.PARSING, PipelineStep.SEMANTIC_ANALYSIS)
-    _continue_unless_failed(graph, PipelineStep.SEMANTIC_ANALYSIS, PipelineStep.GENERATION)
-    _continue_unless_failed(graph, PipelineStep.GENERATION, PipelineStep.VALIDATION)
+    graph.add_edge(PipelineStep.PARSING.value, PipelineStep.SEMANTIC_ANALYSIS.value)
+    graph.add_edge(PipelineStep.SEMANTIC_ANALYSIS.value, PipelineStep.GENERATION.value)
+    graph.add_edge(PipelineStep.GENERATION.value, PipelineStep.VALIDATION.value)
     graph.add_conditional_edges(
         PipelineStep.VALIDATION.value,
         _after_validation(retry),
@@ -101,31 +100,19 @@ def build_modernization_graph(
     return graph.compile(name=GRAPH_NAME)
 
 
-def _guarded(step: PipelineStep, node: Node) -> AsyncNode:
-    """Unexpected exceptions become a PipelineError of `step` (expected ones are handled by
-    the node itself), so the run still reaches record_result with everything done so far."""
+def _tracked(step: PipelineStep | None, node: Node) -> AsyncNode:
+    """Snapshot completed work before calling a node; do not intercept its exceptions."""
 
-    async def run(state: ModernizationState) -> StateUpdate:
-        try:
-            update = node(state)
-            return await update if inspect.isawaitable(update) else update
-        except Exception as exc:
-            logger.exception("unexpected error in node %s", step.value)
-            return failed(step, exc)
+    async def run(state: ModernizationState, config: RunnableConfig) -> StateUpdate:
+        progress = config.get("configurable", {}).get("progress")
+        if isinstance(progress, PipelineProgress):
+            progress.execution_id = state.get("execution_id")
+            progress.step = step
+            progress.outcome = to_outcome(state)
+        update = node(state)
+        return await update if inspect.isawaitable(update) else update
 
     return run
-
-
-def _continue_unless_failed(
-    graph: StateGraph[ModernizationState, None, ModernizationInput],
-    source: PipelineStep,
-    target: PipelineStep,
-) -> None:
-    def route(state: ModernizationState) -> str:
-        failed_ = state.get("status") is ModernizationStatus.FAILURE
-        return RECORD_RESULT if failed_ else target.value
-
-    graph.add_conditional_edges(source.value, route, [target.value, RECORD_RESULT])
 
 
 def _after_validation(retry: RetryPolicy) -> Callable[[ModernizationState], str]:

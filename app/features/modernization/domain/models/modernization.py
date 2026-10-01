@@ -1,5 +1,6 @@
 """Modernization aggregate, pipeline outcome and the structured (JSONB-ready) report."""
 
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from uuid import UUID, uuid7
 
@@ -63,6 +64,15 @@ class PipelineOutcome(ValueObject):
         if self.errors or not self.validation.passed_all:
             return ModernizationStatus.PARTIAL
         return ModernizationStatus.SUCCESS
+
+
+@dataclass(slots=True)
+class PipelineProgress:
+    """Per-request snapshot consumed by the global handler if a step raises."""
+
+    execution_id: UUID | None = None
+    step: PipelineStep | None = None
+    outcome: PipelineOutcome = field(default_factory=PipelineOutcome)
 
 
 # --------------------------------------------------------------------------- report

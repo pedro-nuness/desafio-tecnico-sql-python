@@ -3,14 +3,12 @@ from app.features.modernization.application.services.code_generation_service imp
 )
 from app.features.modernization.domain.enums import PipelineStep
 from app.features.modernization.domain.exceptions import (
-    GenerationError,
     ModernizationError,
 )
 from app.features.modernization.domain.models.generation import RepairFeedback
 from app.features.modernization.graph.state import (
     ModernizationState,
     StateUpdate,
-    failed,
 )
 
 
@@ -28,22 +26,16 @@ class GenerationNode:
         procedure = state.get("parsed_procedure")
         analysis = state.get("semantic_analysis")
         if procedure is None or analysis is None:
-            return failed(
-                PipelineStep.GENERATION, ModernizationError("generation requires parse + analysis")
-            )
+            raise ModernizationError("generation requires parse + analysis")
         attempt = state.get("generation_attempts", 0) + 1
         feedback = _feedback(state, attempt)
-        try:
-            result = await self._generation_service.generate(
-                procedure=procedure,
-                analysis=analysis,
-                source_code=state["source_code"],
-                schema_context=state.get("schema_context"),
-                feedback=feedback,
-            )
-        except GenerationError as exc:
-            # Earlier attempts (if any) stay in the state: the report keeps the best so far.
-            return failed(PipelineStep.GENERATION, exc) | StateUpdate(generation_attempts=attempt)
+        result = await self._generation_service.generate(
+            procedure=procedure,
+            analysis=analysis,
+            source_code=state["source_code"],
+            schema_context=state.get("schema_context"),
+            feedback=feedback,
+        )
         warnings = []
         if feedback is not None:
             warnings.append(

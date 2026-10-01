@@ -1,4 +1,5 @@
 import ast
+import asyncio
 
 from app.features.modernization.domain.models.validation import (
     ValidationMessage,
@@ -13,17 +14,26 @@ class PythonASTValidator:
     name = "python_ast"
 
     async def validate(self, code: str) -> ValidationResult:
-        # CPU-bound and fast; async only to satisfy the CodeValidator port.
-        return ValidationResult(results=(self.check(code),))
-
-    def check(self, code: str) -> ValidatorResult:
-        try:
-            ast.parse(code, filename="generated_module.py", type_comments=False)
-        except SyntaxError as exc:
-            return ValidatorResult(
+        (result,) = await asyncio.gather(
+            asyncio.to_thread(self.check, code), return_exceptions=True
+        )
+        if isinstance(result, SyntaxError):
+            result = ValidatorResult(
                 validator=self.name,
                 success=False,
                 blocking=True,
-                messages=(ValidationMessage(message=exc.msg, line=exc.lineno, column=exc.offset),),
+                messages=(
+                    ValidationMessage(
+                        message=result.msg,
+                        line=result.lineno,
+                        column=result.offset,
+                    ),
+                ),
             )
+        elif isinstance(result, BaseException):
+            raise result
+        return ValidationResult(results=(result,))
+
+    def check(self, code: str) -> ValidatorResult:
+        ast.parse(code, filename="generated_module.py", type_comments=False)
         return ValidatorResult(validator=self.name, success=True, blocking=True)

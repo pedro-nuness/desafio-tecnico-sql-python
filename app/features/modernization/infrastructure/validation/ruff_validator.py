@@ -4,7 +4,7 @@ import asyncio
 import subprocess
 from collections.abc import Sequence
 
-from pydantic import BaseModel, TypeAdapter, ValidationError
+from pydantic import BaseModel, TypeAdapter
 from ruff.__main__ import find_ruff_bin
 
 from app.features.modernization.domain.exceptions import ValidationExecutionError
@@ -50,10 +50,7 @@ class RuffValidator:
 
     async def validate(self, code: str) -> ValidationResult:
         stdout = await self._run(code)
-        try:
-            diagnostics = _DIAGNOSTICS.validate_json(stdout or b"[]")
-        except ValidationError as exc:
-            raise ValidationExecutionError(f"Unexpected Ruff output: {exc}") from exc
+        diagnostics = _DIAGNOSTICS.validate_json(stdout or b"[]")
         messages = tuple(
             ValidationMessage(
                 message=d.message,
@@ -85,19 +82,14 @@ class RuffValidator:
         )
         # subprocess.run in a worker thread instead of asyncio subprocesses: works on every
         # event loop (Windows SelectorEventLoop has no subprocess support) and never blocks it.
-        try:
-            completed = await asyncio.to_thread(
-                subprocess.run,
-                command,
-                input=code.encode(),
-                capture_output=True,
-                timeout=self._timeout_seconds,
-                check=False,
-            )
-        except subprocess.TimeoutExpired as exc:  # run() already killed the process
-            raise ValidationExecutionError("Ruff timed out") from exc
-        except OSError as exc:
-            raise ValidationExecutionError(f"Could not start Ruff: {exc}") from exc
+        completed = await asyncio.to_thread(
+            subprocess.run,
+            command,
+            input=code.encode(),
+            capture_output=True,
+            timeout=self._timeout_seconds,
+            check=False,
+        )
         # 0 = clean, 1 = violations found, anything else = Ruff itself failed
         if completed.returncode not in (0, 1):
             stderr = completed.stderr.decode(errors="replace")

@@ -1,9 +1,9 @@
 import json
 
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel
 
 from app.features.modernization.domain.enums import GenerationStrategy
-from app.features.modernization.domain.exceptions import GenerationError, LLMProviderError
+from app.features.modernization.domain.exceptions import GenerationError
 from app.features.modernization.domain.models.generation import (
     ArchitecturalDecision,
     GenerationMetadata,
@@ -13,7 +13,6 @@ from app.features.modernization.domain.models.generation import (
 from app.features.modernization.domain.models.parsing import ParsedProcedure
 from app.features.modernization.domain.models.semantic_analysis import SemanticAnalysis
 from app.features.modernization.prompts.generation_prompt import GenerationPromptBuilder
-from app.shared.integrations.exceptions import IntegrationError
 from app.shared.integrations.llm.llm_provider import (
     LLMProvider,
     LLMRequest,
@@ -68,28 +67,16 @@ class CodeGenerationService:
             schema_context=schema_context,
             feedback=feedback,
         )
-        try:
-            response = await self._llm.generate(
-                LLMRequest(
-                    system_prompt=prompt.system,
-                    user_prompt=prompt.user,
-                    temperature=self._temperature,
-                    max_output_tokens=self._max_output_tokens,
-                    response_format=ResponseFormat.JSON,
-                )
+        response = await self._llm.generate(
+            LLMRequest(
+                system_prompt=prompt.system,
+                user_prompt=prompt.user,
+                temperature=self._temperature,
+                max_output_tokens=self._max_output_tokens,
+                response_format=ResponseFormat.JSON,
             )
-        except IntegrationError as exc:
-            raise LLMProviderError(str(exc)) from exc
-        try:
-            payload = parse_generation_payload(response)
-        except GenerationError as exc:
-            if response.finish_reason == "length":
-                raise GenerationError(
-                    f"LLM hit the output token limit ({self._max_output_tokens}) before "
-                    "finishing the answer (reasoning models count reasoning tokens too): "
-                    "raise LLM_MAX_OUTPUT_TOKENS or lower LLM_REASONING_EFFORT"
-                ) from exc
-            raise
+        )
+        payload = parse_generation_payload(response)
         if not payload.python_code.strip():
             raise GenerationError("LLM returned empty python_code")
 
@@ -129,7 +116,4 @@ def parse_generation_payload(response: LLMResponse) -> _GenerationPayload:
     start, end = content.find("{"), content.rfind("}")
     if start == -1 or end <= start:
         raise GenerationError("LLM response does not contain a JSON object")
-    try:
-        return _GenerationPayload.model_validate(json.loads(content[start : end + 1]))
-    except (json.JSONDecodeError, ValidationError) as exc:
-        raise GenerationError(f"LLM response does not match the expected contract: {exc}") from exc
+    return _GenerationPayload.model_validate(json.loads(content[start : end + 1]))

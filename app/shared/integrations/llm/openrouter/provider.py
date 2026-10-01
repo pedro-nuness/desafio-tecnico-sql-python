@@ -39,27 +39,33 @@ class OpenRouterProvider(LLMProvider):
             raise ValueError("timeout_seconds must be > 0")
         self._model = model
         self._reasoning_effort = reasoning_effort
-        self._breaker = breaker
         self._max_retries = max_retries
+        self._breaker = breaker
         self._client = OpenRouter(
             api_key=api_key,
             server_url=base_url or OPENROUTER_BASE_URL,
             x_open_router_title=app_name,
             timeout_ms=int(timeout_seconds * 1000),
-            # ponytail: SDK retries are time-based; use them when an attempt limit is supported.
             retry_config=None,
         )
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
         if self._breaker is not None:
-            return await self._breaker.call(lambda: self._generate(request))
+            return await self._breaker.call(
+                lambda: self._generate(request),
+                failure_types=(
+                    errors.OpenRouterError,
+                    httpx.TransportError,
+                    errors.NoResponseError,
+                ),
+            )
         return await self._generate(request)
 
     async def _generate(self, request: LLMRequest) -> LLMResponse:
         started = time.perf_counter()
         for attempt in range(self._max_retries + 1):
-            try:
-                completion = await self._client.chat.send_async(
+            (completion,) = await asyncio.gather(
+                self._client.chat.send_async(
                     model=self._model,
                     messages=[
                         {"role": "system", "content": request.system_prompt},
@@ -74,17 +80,19 @@ class OpenRouterProvider(LLMProvider):
                         else {"type": "text"}
                     ),
                     stream=False,
-                )
-            except errors.OpenRouterError as exc:
-                retryable = exc.status_code in (408, 409, 429) or exc.status_code >= 500
-                if not retryable or attempt == self._max_retries:
-                    raise IntegrationError(f"openrouter request failed: {exc}") from exc
-            except (httpx.TransportError, errors.NoResponseError) as exc:
-                if attempt == self._max_retries:
-                    raise IntegrationError(f"openrouter request failed: {exc}") from exc
-            else:
-                break
-            await asyncio.sleep(0.5 * (2**attempt))
+                ),
+                return_exceptions=True,
+            )
+            retryable = isinstance(completion, (httpx.TransportError, errors.NoResponseError)) or (
+                isinstance(completion, errors.OpenRouterError)
+                and (completion.status_code in (408, 409, 429) or completion.status_code >= 500)
+            )
+            if retryable and attempt < self._max_retries:
+                await asyncio.sleep(0.5 * (2**attempt))
+                continue
+            if isinstance(completion, BaseException):
+                raise completion
+            break
 
         latency_ms = (time.perf_counter() - started) * 1000
         if not completion.choices:

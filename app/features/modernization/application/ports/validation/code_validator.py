@@ -6,8 +6,7 @@ from app.features.modernization.domain.models.validation import ValidationResult
 class CodeValidator(Protocol):
     """Checks generated Python code. Async because some validators spawn processes.
 
-    Implementations raise app.features.modernization.domain.exceptions.ValidationExecutionError
-    when they cannot run; an invalid program is reported through ValidationResult instead.
+    Native validation and execution exceptions propagate to the global HTTP handlers.
     """
 
     name: str

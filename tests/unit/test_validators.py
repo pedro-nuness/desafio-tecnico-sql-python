@@ -1,3 +1,5 @@
+import pytest
+
 from app.features.modernization.domain.exceptions import ValidationExecutionError
 from app.features.modernization.domain.models.validation import ValidationResult
 from app.features.modernization.infrastructure.validation.composite_validator import (
@@ -60,11 +62,7 @@ class _BrokenValidator:
         raise ValidationExecutionError("binary missing")
 
 
-async def test_composite_merges_results_and_degrades_validator_crashes() -> None:
+async def test_composite_propagates_validator_errors() -> None:
     composite = CompositeCodeValidator([PythonASTValidator(), _BrokenValidator()])
-
-    result = await composite.validate(VALID_CODE)
-
-    assert [r.validator for r in result.results] == ["python_ast", "broken"]
-    assert result.is_valid  # the crash is non-blocking...
-    assert not result.passed_all  # ...but the code is not fully verified
+    with pytest.raises(ValidationExecutionError, match="binary missing"):
+        await composite.validate(VALID_CODE)

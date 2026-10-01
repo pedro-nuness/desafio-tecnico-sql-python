@@ -3,12 +3,7 @@ import json
 import httpx
 import pytest
 
-from app.shared.client import (
-    HttpClient,
-    HttpConnectionError,
-    HttpResponseError,
-    HttpTimeoutError,
-)
+from app.shared.client import HttpClient
 
 
 async def test_get_success() -> None:
@@ -43,7 +38,7 @@ async def test_post_success() -> None:
         assert resp.json() == {"id": 42}
 
 
-async def test_retries_on_500_and_then_fails() -> None:
+async def test_status_error_propagates_after_retries() -> None:
     attempts = 0
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -56,13 +51,13 @@ async def test_retries_on_500_and_then_fails() -> None:
         transport=transport, base_url="https://api.example.com"
     ) as mock_client:
         client = HttpClient(client=mock_client, max_retries=2)
-        with pytest.raises(HttpResponseError) as exc_info:
+        with pytest.raises(httpx.HTTPStatusError) as exc_info:
             await client.get("/flaky")
-        assert exc_info.value.status_code == 500
-        assert attempts == 3  # initial + 2 retries
+        assert exc_info.value.response.status_code == 500
+        assert attempts == 3
 
 
-async def test_timeout_error_wrapped() -> None:
+async def test_native_timeout_propagates() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.TimeoutException("Operation timed out")
 
@@ -71,11 +66,11 @@ async def test_timeout_error_wrapped() -> None:
         transport=transport, base_url="https://api.example.com"
     ) as mock_client:
         client = HttpClient(client=mock_client, max_retries=1)
-        with pytest.raises(HttpTimeoutError):
+        with pytest.raises(httpx.TimeoutException):
             await client.get("/timeout")
 
 
-async def test_network_error_wrapped() -> None:
+async def test_native_network_error_propagates() -> None:
     def handler(request: httpx.Request) -> httpx.Response:
         raise httpx.NetworkError("DNS lookup failed")
 
@@ -84,7 +79,7 @@ async def test_network_error_wrapped() -> None:
         transport=transport, base_url="https://api.example.com"
     ) as mock_client:
         client = HttpClient(client=mock_client, max_retries=0)
-        with pytest.raises(HttpConnectionError):
+        with pytest.raises(httpx.NetworkError):
             await client.get("/network-error")
 
 

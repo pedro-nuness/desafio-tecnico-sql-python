@@ -1,6 +1,7 @@
 from collections.abc import Callable
 
 import pytest
+from pglast.parser import ParseError
 
 from app.features.modernization.domain.exceptions import ParsingError
 from app.features.modernization.domain.models.parsing import (
@@ -74,7 +75,7 @@ def test_returns_table_and_return_query(load_procedure: Callable[[str], str]) ->
     assert [s.kind for s in procedure.body] == [StatementKind.RETURN_QUERY]
 
 
-def test_pct_type_parameter_falls_back_to_ast_rewrite() -> None:
+def test_pct_type_parameter_is_rewritten_before_compilation() -> None:
     procedure = parser.parse(
         "CREATE FUNCTION f(p_id orders.id%TYPE) RETURNS int LANGUAGE plpgsql AS $$"
         " BEGIN RETURN p_id; END $$;"
@@ -104,7 +105,6 @@ def test_assignment_is_split_with_the_lexer() -> None:
     [
         ("SELECT 1;", "No CREATE FUNCTION"),
         ("CREATE FUNCTION f() RETURNS int LANGUAGE sql AS $$ SELECT 1 $$;", "plpgsql"),
-        ("not sql at all", "Invalid SQL"),
     ],
 )
 def test_unsupported_sources_raise_parsing_error(source: str, message: str) -> None:
@@ -113,7 +113,7 @@ def test_unsupported_sources_raise_parsing_error(source: str, message: str) -> N
 
 
 def test_invalid_body_raises_parsing_error(load_procedure: Callable[[str], str]) -> None:
-    with pytest.raises(ParsingError, match="Invalid PL/pgSQL body"):
+    with pytest.raises(ParseError):
         parser.parse(load_procedure("invalid_syntax"))
 
 
@@ -130,6 +130,11 @@ def test_embedded_sql_analysis() -> None:
     assert fragment.locking_clauses == ("FOR UPDATE",)
 
 
-def test_unparseable_embedded_sql_is_reported_not_raised() -> None:
-    fragment = analyze_sql("SELEC broken")
-    assert fragment.parse_error is not None
+def test_unparseable_embedded_sql_propagates_native_error() -> None:
+    with pytest.raises(ParseError):
+        analyze_sql("SELEC broken")
+
+
+def test_invalid_sql_propagates_native_error() -> None:
+    with pytest.raises(ParseError):
+        parser.parse("not sql at all")

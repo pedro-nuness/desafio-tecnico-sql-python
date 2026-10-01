@@ -1,12 +1,13 @@
 from collections.abc import Callable
 
 import pytest
+from pydantic import ValidationError
 
 from app.features.modernization.application.services.code_generation_service import (
     CodeGenerationService,
 )
 from app.features.modernization.domain.enums import GenerationStrategy
-from app.features.modernization.domain.exceptions import GenerationError, LLMProviderError
+from app.features.modernization.domain.exceptions import GenerationError
 from app.features.modernization.domain.models.generation import GenerationResult
 from app.features.modernization.domain.models.parsing import ParsedProcedure
 from app.features.modernization.domain.models.semantic_analysis import SemanticAnalysis
@@ -18,7 +19,6 @@ from app.features.modernization.prompts.generation_prompt import (
 )
 from app.shared.integrations.exceptions import IntegrationError
 from app.shared.integrations.llm.llm_provider import LLMRequest, LLMResponse, ResponseFormat
-from app.shared.resilience.circuit_breaker import CircuitOpenError
 from tests.conftest import VALID_CODE, llm_payload
 from tests.fakes import FakeLLMProvider
 
@@ -82,16 +82,21 @@ async def test_accepts_json_wrapped_in_markdown_fences(analyzed: Analyzed) -> No
 
 
 @pytest.mark.parametrize(
-    "content",
+    ("content", "error_type"),
     [
-        "no json here",
-        '{"strategy": "hybrid"}',  # missing code
-        '{"python_code": "   ", "strategy": "hybrid"}',  # empty code
-        '{"python_code": "x = 1", "strategy": "rewrite_everything"}',  # unknown strategy
+        ("no json here", GenerationError),
+        ('{"strategy": "hybrid"}', ValidationError),  # missing code
+        ('{"python_code": "   ", "strategy": "hybrid"}', GenerationError),  # empty code
+        (
+            '{"python_code": "x = 1", "strategy": "rewrite_everything"}',
+            ValidationError,
+        ),  # unknown strategy
     ],
 )
-async def test_invalid_llm_answers_raise_generation_error(analyzed: Analyzed, content: str) -> None:
-    with pytest.raises(GenerationError):
+async def test_invalid_llm_answers_propagate_errors(
+    analyzed: Analyzed, content: str, error_type: type[Exception]
+) -> None:
+    with pytest.raises(error_type):
         await _generate(FakeLLMProvider([content]), analyzed)
 
 
@@ -109,17 +114,12 @@ async def test_truncated_answer_reports_token_limit(analyzed: Analyzed) -> None:
             # Reasoning model that spent the whole budget thinking: no content at all.
             return response.model_copy(update={"content": "", "finish_reason": "length"})
 
-    with pytest.raises(GenerationError, match="LLM_MAX_OUTPUT_TOKENS"):
+    with pytest.raises(GenerationError, match="does not contain a JSON object"):
         await _generate(TruncatingLLM(), analyzed)
 
 
-@pytest.mark.parametrize("error", [IntegrationError("rate limited"), CircuitOpenError("llm", 30)])
-async def test_provider_errors_propagate_as_domain_errors(
-    analyzed: Analyzed, error: IntegrationError
-) -> None:
-    llm = FakeLLMProvider(error=error)
-
-    with pytest.raises(LLMProviderError) as exc_info:
-        await _generate(llm, analyzed)
-    assert str(exc_info.value) == str(error)
-    assert exc_info.value.__cause__ is error
+async def test_provider_errors_propagate_unchanged(analyzed: Analyzed) -> None:
+    error = IntegrationError("rate limited")
+    with pytest.raises(IntegrationError) as exc_info:
+        await _generate(FakeLLMProvider(error=error), analyzed)
+    assert exc_info.value is error

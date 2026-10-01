@@ -13,13 +13,13 @@ from app.features.modernization.application.services.modernization_service impor
 )
 from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
 from app.features.modernization.domain.exceptions import (
-    LLMProviderError,
     ModernizationNotFoundError,
 )
 from app.features.modernization.domain.models.modernization import (
     Modernization,
     PipelineError,
     PipelineOutcome,
+    PipelineProgress,
 )
 from app.features.modernization.domain.services.semantic_analyzer import SemanticAnalyzer
 from app.features.modernization.graph.builder import build_modernization_graph
@@ -37,6 +37,7 @@ from app.features.modernization.infrastructure.validation.python_ast_validator i
 from app.features.modernization.prompts.generation_prompt import (
     GenerationPromptBuilder,
 )
+from app.shared.integrations.exceptions import IntegrationError
 from tests.conftest import llm_payload
 from tests.fakes import FakeLLMProvider
 
@@ -128,9 +129,13 @@ async def test_every_execution_is_persisted_including_failures(
 ) -> None:
     source = load_procedure("process_orders")
     ok = await _service(session_factory, FakeLLMProvider([llm_payload()])).modernize(source)
-    ko = await _service(
-        session_factory, FakeLLMProvider(error=LLMProviderError("timeout"))
-    ).modernize(source)
+    error = IntegrationError("timeout")
+    service = _service(session_factory, FakeLLMProvider(error=error))
+    progress = PipelineProgress()
+    with pytest.raises(IntegrationError):
+        await service.modernize(source, progress=progress)
+    ko = await service.record_failure(progress, error)
+    assert ko is not None
 
     async with session_factory() as session:
         result = await session.execute(text("SELECT id, status FROM modernization_history"))

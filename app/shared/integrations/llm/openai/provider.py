@@ -48,9 +48,11 @@ class OpenAIProvider(LLMProvider):
         )
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
-        # Count one failure only after the SDK exhausts its retries.
         if self._breaker is not None:
-            return await self._breaker.call(lambda: self._generate(request))
+            return await self._breaker.call(
+                lambda: self._generate(request),
+                failure_types=(APIError,),
+            )
         return await self._generate(request)
 
     async def _generate(self, request: LLMRequest) -> LLMResponse:
@@ -59,23 +61,20 @@ class OpenAIProvider(LLMProvider):
             {"role": "user", "content": request.user_prompt},
         ]
         started = time.perf_counter()
-        try:
-            completion = await self._client.chat.completions.create(
-                model=self._model,
-                messages=messages,
-                temperature=request.temperature,
-                max_completion_tokens=request.max_output_tokens,
-                # Reasoning tokens count against max_completion_tokens: an unbounded
-                # reasoning model can spend the whole budget and return no content.
-                reasoning_effort=self._reasoning_effort or omit,
-                response_format=(
-                    {"type": "json_object"}
-                    if request.response_format is ResponseFormat.JSON
-                    else {"type": "text"}
-                ),
-            )
-        except APIError as exc:
-            raise IntegrationError(f"{self._provider_name} request failed: {exc}") from exc
+        completion = await self._client.chat.completions.create(
+            model=self._model,
+            messages=messages,
+            temperature=request.temperature,
+            max_completion_tokens=request.max_output_tokens,
+            # Reasoning tokens count against max_completion_tokens: an unbounded
+            # reasoning model can spend the whole budget and return no content.
+            reasoning_effort=self._reasoning_effort or omit,
+            response_format=(
+                {"type": "json_object"}
+                if request.response_format is ResponseFormat.JSON
+                else {"type": "text"}
+            ),
+        )
         latency_ms = (time.perf_counter() - started) * 1000
 
         if not completion.choices:

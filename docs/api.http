@@ -112,7 +112,7 @@ GET {{baseUrl}}/modernizations/{{minimo.response.body.$.execution_id}}
 # Casos de erro
 # =============================================================================
 
-### SQL inválido -> 200 com status "failure" e erro no passo "parsing" (execução gravada)
+### SQL inválido -> 400 com detail e execution_id (falha e progresso gravados)
 POST {{baseUrl}}/modernize
 Content-Type: application/json
 

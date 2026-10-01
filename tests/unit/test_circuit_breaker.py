@@ -112,3 +112,35 @@ async def test_exceptions_outside_failure_types_are_neutral() -> None:
         await breaker.call(_boom)
 
     assert breaker.state is CircuitState.CLOSED
+
+
+async def test_cancelling_half_open_trial_releases_the_probe() -> None:
+    clock = FakeClock()
+    breaker = _breaker(clock)
+    await _fail(breaker, 2)
+    clock.now = 30
+    started = asyncio.Event()
+
+    async def slow() -> str:
+        started.set()
+        await asyncio.Event().wait()
+        return "ok"
+
+    trial = asyncio.create_task(breaker.call(slow))
+    await started.wait()
+    trial.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await trial
+    assert await breaker.call(_ok) == "ok"
+    assert breaker.state is CircuitState.CLOSED
+
+
+async def test_exception_returned_as_data_is_not_a_failure() -> None:
+    breaker = _breaker(FakeClock())
+    value = RuntimeError("data")
+
+    async def result() -> Exception:
+        return value
+
+    assert await breaker.call(result) is value
+    assert breaker.state is CircuitState.CLOSED

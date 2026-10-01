@@ -120,9 +120,8 @@ async def test_retry_limit_and_breaker_count_with_official_sdk(
         )
         with provider._client:
             request = LLMRequest(system_prompt="s", user_prompt="u")
-            with pytest.raises(IntegrationError, match="provider down") as exc_info:
+            with pytest.raises((OpenRouterError, httpx.TransportError), match="provider down"):
                 await provider.generate(request)
-            assert isinstance(exc_info.value.__cause__, (OpenRouterError, httpx.TransportError))
             assert attempts == (3 if retryable else 1)
             assert sleep.await_count == (2 if retryable else 0)
             assert breaker._failures == 1

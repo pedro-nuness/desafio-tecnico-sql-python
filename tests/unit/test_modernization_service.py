@@ -1,12 +1,13 @@
 from collections.abc import Callable
 
 import pytest
+from pglast.parser import ParseError
 
 from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
 from app.features.modernization.domain.exceptions import ModernizationNotFoundError
+from app.features.modernization.domain.models.modernization import PipelineProgress
 from app.features.modernization.domain.models.validation import ValidationResult
 from app.shared.integrations.exceptions import IntegrationError
-from app.shared.resilience.circuit_breaker import CircuitOpenError
 from tests.conftest import ServiceFactory, llm_payload
 from tests.fakes import FakeLLMProvider, InMemoryStore
 
@@ -34,42 +35,30 @@ async def test_success_runs_all_four_nodes_and_persists_twice(
     assert store.rows[result.id] == result
 
 
-@pytest.mark.parametrize(
-    "error", [IntegrationError("provider unavailable"), CircuitOpenError("llm", 30)]
-)
-async def test_llm_failure_is_persisted_with_completed_steps(
-    make_service: ServiceFactory,
-    store: InMemoryStore,
-    load_procedure: Callable[[str], str],
-    error: IntegrationError,
-) -> None:
-    llm = FakeLLMProvider(error=error)
-
-    result = await make_service(llm=llm).modernize(load_procedure("process_orders"))
-
-    assert result.status is ModernizationStatus.FAILURE
-    assert result.generated_code is None
-    assert result.report.completed_steps == (PipelineStep.PARSING, PipelineStep.SEMANTIC_ANALYSIS)
-    [error] = result.report.errors
-    assert (error.step, error.error_type) == (PipelineStep.GENERATION, "LLMProviderError")
-    assert result.report.generation is not None and not result.report.generation.success
-    assert result.report.validation is None
-    assert store.rows[result.id].status is ModernizationStatus.FAILURE
-
-
-async def test_parsing_failure_short_circuits_the_graph(
+async def test_llm_failure_propagates_with_progress_for_the_handler(
     make_service: ServiceFactory, store: InMemoryStore, load_procedure: Callable[[str], str]
 ) -> None:
-    llm = FakeLLMProvider([llm_payload()])
+    error = IntegrationError("provider unavailable")
+    service = make_service(llm=FakeLLMProvider(error=error))
+    progress = PipelineProgress()
+    with pytest.raises(IntegrationError) as exc_info:
+        await service.modernize(load_procedure("process_orders"), progress=progress)
+    assert exc_info.value is error
+    assert progress.step is PipelineStep.GENERATION
+    assert progress.outcome.completed_steps == (
+        PipelineStep.PARSING,
+        PipelineStep.SEMANTIC_ANALYSIS,
+    )
+    assert store.rows[progress.execution_id].status is ModernizationStatus.RUNNING
 
-    result = await make_service(llm=llm).modernize(load_procedure("invalid_syntax"))
 
-    assert result.status is ModernizationStatus.FAILURE
-    assert result.report.completed_steps == ()
-    assert result.report.errors[0].step is PipelineStep.PARSING
-    assert result.report.parsing is not None and not result.report.parsing.success
-    assert llm.requests == []  # generation never ran
-    assert result.id in store.rows
+async def test_parsing_failure_propagates_without_calling_the_llm(
+    make_service: ServiceFactory, load_procedure: Callable[[str], str]
+) -> None:
+    llm = FakeLLMProvider()
+    with pytest.raises(ParseError):
+        await make_service(llm=llm).modernize(load_procedure("invalid_syntax"))
+    assert not llm.requests
 
 
 async def test_invalid_python_is_a_failure_but_code_is_kept(
@@ -103,19 +92,18 @@ class _ExplodingValidator:
         raise RuntimeError("unexpected bug")
 
 
-async def test_unexpected_crash_is_recorded_with_last_known_state(
-    make_service: ServiceFactory, store: InMemoryStore, load_procedure: Callable[[str], str]
+async def test_unexpected_crash_propagates_with_last_known_state(
+    make_service: ServiceFactory, load_procedure: Callable[[str], str]
 ) -> None:
-    service = make_service(validator=_ExplodingValidator())
-
-    result = await service.modernize(load_procedure("process_orders"))
-
-    assert result.status is ModernizationStatus.PARTIAL  # code exists but is unverified
-    assert result.generated_code is not None
-    assert result.report.completed_steps == ALL_STEPS[:3]
-    [error] = result.report.errors
-    assert (error.step, error.error_type) == (PipelineStep.VALIDATION, "RuntimeError")
-    assert store.rows[result.id].status is ModernizationStatus.PARTIAL
+    progress = PipelineProgress()
+    with pytest.raises(RuntimeError, match="unexpected bug"):
+        await make_service(validator=_ExplodingValidator()).modernize(
+            load_procedure("process_orders"),
+            progress=progress,
+        )
+    assert progress.outcome.generated_code is not None
+    assert progress.outcome.completed_steps == ALL_STEPS[:3]
+    assert progress.step is PipelineStep.VALIDATION
 
 
 async def test_get_returns_persisted_execution(

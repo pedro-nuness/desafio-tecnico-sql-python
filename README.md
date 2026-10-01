@@ -259,13 +259,11 @@ flowchart LR
 - **Estado tipado** (`app/features/modernization/graph/state.py`): `ModernizationState` (`TypedDict`) com modelos de domínio
   explícitos (`ParsedProcedure`, `SemanticAnalysis`, `GenerationResult`, `ValidationResult`) e canais
   append-only (`completed_steps`, `warnings`, `errors`) via reducer `operator.add`.
-- **Nodes finos** (`app/features/modernization/graph/nodes/`): cada um chama um port/serviço, converte erros *esperados*
-  do domínio em `PipelineError` e devolve um `StateUpdate` parcial. Nenhum node monta prompt,
-  conhece vendor ou chama `ast`/Ruff diretamente.
-- **Persistência como nós** (`record_start` / `record_result`): toda run é gravada, entre pela
-  `POST /modernize`, pela API do LangGraph (`/runs`) ou pelo Studio. `record_start` commita
-  `running` antes do LLM; `record_result` grava status, código e relatório finais (AD-07).
-- **Short-circuit**: se um passo falha, arestas condicionais levam direto a `record_result`.
+- **Nodes finos** (`app/features/modernization/graph/nodes/`): cada um chama um port/serviço e
+  devolve `StateUpdate`; exceções propagam sem tratamento HTTP local.
+- **Persistência**: `record_start` commita `running` antes do LLM; `record_result` grava a
+  conclusão normal. Nas rotas FastAPI, o handler global grava `failure` com o progresso
+  já realizado antes de devolver o erro HTTP e o `execution_id` para consulta.
 - **Loop de reparo** (`validation → generation`, AD-13): se a validação reprova (AST ou Ruff), a
   geração roda de novo com o código anterior e a lista de problemas no prompt, até
   `GENERATION_MAX_ATTEMPTS` (default 2) e só se a run tiver menos de
@@ -274,10 +272,10 @@ flowchart LR
   tentativa produziu o código final.
 - **Dependências injetadas nos nodes** (instâncias callable construídas no builder), não via
   `config`/`context` — assim o mesmo graph roda no uvicorn e no servidor LangGraph.
-- **Resiliência**: cada nó do pipeline é embrulhado por uma guarda (`_guarded` no builder) que
-  converte exceção inesperada em `PipelineError` daquele passo, então a run ainda chega em
-  `record_result` com tudo que foi produzido até ali. Só falha de persistência propaga (uma run
-  que não pode ser registrada deve falhar alto).
+- **Tratamento global**: não há `try/except` em `app`. O breaker mantém seu controle de
+  estados e os retries continuam ativos; ambos observam resultados assíncronos com
+  `asyncio.gather(return_exceptions=True)`. O erro final propaga para o handler HTTP.
+  `try/finally` permanece para liberar recursos e garantir rollback.
 
 ---
 
@@ -311,8 +309,14 @@ flowchart LR
 }
 ```
 
-Falhas do pipeline **não** viram HTTP 5xx: a execução foi registrada e o corpo diz o que aconteceu
-(`status: failure|partial` + `report.errors`). Entrada inválida (ex.: `source_code` vazio) → 422.
+Exceções do pipeline viram erros HTTP: parsing/SQL inválido → 400; falhas de integração
+ou resposta gerada inválida → 502; circuito aberto → 503 com `Retry-After`; timeout de
+upstream → 504; erro inesperado → 500. O handler grava `failure` e o progresso, incluindo
+código já gerado, antes de responder com `detail` e `execution_id`. O relatório fica
+disponível no GET da execução. Resultados de validação continuam alimentando o loop de
+reparo; erros de execução dos validadores propagam. Entrada inválida → 422.
+Se o banco não permitir gravar a falha, o handler registra o erro de persistência e
+responde 500 sem anunciar um resultado gravado.
 
 ---
 
@@ -335,7 +339,7 @@ Falhas do pipeline **não** viram HTTP 5xx: a execução foi registrada e o corp
 | `running` | gravado pelo nó `record_start`, **antes** do LLM (se o processo morrer, a execução fica visível) |
 | `success` | código gerado e todos os validadores passaram                                        |
 | `partial` | código gerado e sintaticamente válido, mas Ruff reportou algo, ou a validação não rodou |
-| `failure` | nenhum código utilizável: falha em parsing/análise/geração ou Python inválido (`ast.parse`) |
+| `failure` | execução interrompida por exceção (progresso preservado) ou Python inválido após reparos |
 
 A regra fica em `PipelineOutcome.status()` (domínio), testada isoladamente.
 
@@ -676,17 +680,18 @@ Python coordena validação, fluxo, erros e composição; a transação pertence
 `finish_reason`). `OpenAIProvider` usa o SDK OpenAI e aceita `base_url` para endpoints
 compatíveis. `OpenRouterProvider` é independente e usa o [SDK oficial OpenRouter](https://openrouter.ai/docs/client-sdks/python/overview),
 com `chat.send_async` (uma chave → Claude, Gemini, GPT, Llama só trocando `LLM_MODEL`). Tudo vive em
-`app/shared/integrations/llm/` para ser reutilizado por qualquer feature. Erros do SDK viram
-`IntegrationError` (`app/shared/integrations/exceptions.py`); a feature traduz para o seu
-`LLMProviderError` em `CodeGenerationService`.
+`app/shared/integrations/llm/` para ser reutilizado por qualquer feature. Erros dos SDKs propagam
+com seu tipo original até `app/core/exception_handlers.py`; violações do contrato do
+próprio adapter usam `IntegrationError`. O breaker também conta as exceções nativas
+informadas pelo adapter, mantendo erros de programação fora dessa contagem.
 A seleção acontece em `app/shared/integrations/llm/factory.py` (um `match`), chamada só pelo
 composition root com `Settings.llm_config()`. Adicionar `AnthropicProvider`/`GeminiProvider` =
 um pacote novo + um `case`; nodes e services não mudam.
 
 Todo provider sai da factory com um `CircuitBreaker` injetado (breaker genérico em
 `app/shared/resilience/`): após N falhas consecutivas (cada uma já com os retries
-esgotados) o circuito abre e as chamadas falham na hora com `CircuitOpenError`, uma
-`IntegrationError`, em vez de esperar timeout × retries por requisição; depois do reset,
+esgotados) o circuito abre e as chamadas falham na hora com `CircuitOpenError`, que o
+handler global converte em HTTP 503; depois do reset,
 uma única chamada de teste decide se fecha ou reabre.
 
 OpenAI faz retries pelo SDK. O SDK OpenRouter limita retries por tempo, sem limite de
@@ -699,8 +704,7 @@ Modelos de raciocínio contam os tokens de "pensamento" dentro de `max_completio
 com `z-ai/glm-5.3-flash` no Anexo F: sem limite, gastou >32k tokens pensando e devolveu conteúdo
 vazio (`finish_reason=length`, ~180 s); com `LLM_REASONING_EFFORT=low`, ~2k tokens e ~11 s, com a
 resposta completa. Por isso o esforço é configurável (enviado como `reasoning_effort`, que
-OpenAI e OpenRouter aceitam) e, quando a resposta é cortada por limite, o erro diz isso
-explicitamente em vez de "JSON inválido". Se o modelo omitir `strategy` no contrato, usa-se a
+OpenAI e OpenRouter aceitam); respostas válidas mantêm o `finish_reason` no relatório. Se o modelo omitir `strategy` no contrato, usa-se a
 estratégia recomendada deterministicamente e registra-se um warning: o código é o produto, a
 estratégia é metadado.
 
@@ -719,19 +723,21 @@ binário do Ruff isolado (`--isolated`, stdin, regras de correção `E4,E7,E9,F,
 `S608` pega SQL montado com f-string), é **não bloqueante** (achados ⇒ `partial`). O Ruff roda com
 `subprocess.run` numa worker thread: funciona em qualquer event loop (o `SelectorEventLoop` do
 Windows, usado pelo `langgraph dev`, não suporta subprocess async). `CompositeCodeValidator` roda
-os validadores em paralelo e transforma "validador não conseguiu rodar" em resultado não bloqueante,
-sem esconder os demais.
+os validadores em paralelo e propaga erros de execução. Sintaxe inválida continua sendo
+um resultado bloqueante que pode provocar reparo; a conversão desse resultado usa
+`asyncio.gather`, sem `try/except`.
 
-### AD-07 · Toda execução é persistida (duas transações curtas, dentro do graph)
+### AD-07 · Progresso e persistência de falhas HTTP
 
-Nós `record_start` e `record_result`: (1) grava `running` e **commita antes** da chamada ao LLM;
-(2) os passos rodam (falhas viram erros do relatório, nunca exceções); (3) grava o estado final.
-A persistência fica **no graph, não no service**, porque o graph tem mais de uma porta de entrada:
-`POST /modernize` e a API/Studio do servidor LangGraph (`make_graph`) — com a persistência no
-service, runs disparadas pelo LangGraph não eram registradas. Transação longa segurando conexão durante uma
-chamada de LLM de dezenas de segundos seria pior, e um crash no meio deixaria nada gravado. Optei
-por `running` em vez de "registrar como `partial`" para não misturar "em andamento" com "concluído
-com ressalvas"; um `running` antigo é detectável como execução abortada.
+`record_start` grava `running` e commita antes da chamada ao LLM; `record_result` grava a
+conclusão normal. Antes de cada node, `_tracked` atualiza um `PipelineProgress` por requisição
+com o ID, o passo atual e o resultado já produzido, sem interceptar exceções.
+O handler global usa esse snapshot para gravar `failure` em uma transação curta antes
+da resposta HTTP, preservando código e etapas concluídas.
+
+A API/Studio do LangGraph registra início e conclusões normais pelo mesmo graph. Exceções
+nessa entrada são tratadas pelo servidor LangGraph, não pelo handler FastAPI; sem esse
+handler, a linha interrompida permanece `running`.
 
 ### AD-08 · Unit of Work + repositories específicos
 
@@ -746,7 +752,7 @@ do domínio (`save`, `update`, `find_by_id`), não um CRUD genérico.
 O caso de uso depende de um Protocol, não de LangGraph. O graph (`app/features/modernization/graph`) é um adapter que
 implementa esse port. Isso mantém o service testável e o framework de orquestração trocável.
 O contrato do port inclui registrar a run (AD-07): qualquer implementação deve persistir
-`running` antes e o resultado final depois, e só lança se a persistência falhar.
+`running` antes e a conclusão normal depois; erros propagam, com progresso opcional para o handler HTTP.
 
 ### AD-10 · Pydantic no domínio
 
@@ -805,7 +811,7 @@ síncrono e cada tentativa é outra chamada ao LLM:
 - `GENERATION_RETRY_BUDGET_SECONDS=90`: não inicia retentativa em run que já passou do orçamento
   (uma chamada lenta de 140 s ao provider não vira 280 s de espera).
 - Retentativa que falha na geração (ex.: JSON inválido) não apaga a anterior: o relatório mantém o
-  código da tentativa anterior (`partial` em vez de `failure` se ele era Python válido).
+  código da tentativa anterior no snapshot; o handler HTTP registra `failure` preservando esse código.
 
 Trade-off: retentar também por lint (não bloqueante) custa uma chamada a mais em troca de código
 limpo; `GENERATION_MAX_ATTEMPTS=1` desliga o loop. Para requests que não podem esperar, o caminho é
@@ -817,10 +823,9 @@ assíncrono (ver Evolução futura).
 
 - **Só `LANGUAGE plpgsql`**; funções `LANGUAGE sql` são rejeitadas com `ParsingError`.
   Arquivos com vários `CREATE FUNCTION` usam o primeiro.
-- **Sem catálogo**: tipos `%TYPE`/`%ROWTYPE` não são resolvidos. `%TYPE` em **parâmetro** faz o
-  compilador do libpg_query responder "Not implemented"; o adapter reescreve o AST do
-  `CreateFunctionStmt` com um tipo placeholder, faz deparse e reparse, mantém o tipo original no IR
-  e emite warning.
+- **Sem catálogo**: tipos `%TYPE`/`%ROWTYPE` não são resolvidos. Parâmetros `%TYPE` são
+  reescritos com um placeholder antes da compilação, preservando o tipo original no IR e
+  emitindo um warning. Erros de parsing propagam para o handler global.
 - **Builtins vs routines do usuário** é heurística (lista de funções conhecidas + `pg_catalog.`);
   sem acesso ao banco não dá para ter certeza.
 - **SQL dinâmico** (`EXECUTE`) não é analisável estaticamente: vira risco `DYNAMIC_SQL`.

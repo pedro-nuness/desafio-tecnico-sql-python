@@ -1,41 +1,15 @@
 """Generic asynchronous HTTP client for external integrations."""
 
 import asyncio
-import logging
 from collections.abc import Mapping
 from types import TracebackType
 from typing import Any, Self
 
 import httpx
 
-logger = logging.getLogger(__name__)
-
-
-class HttpClientError(Exception):
-    """Base exception for HTTP client operations."""
-
-
-class HttpConnectionError(HttpClientError):
-    """Raised when connection to the remote server fails."""
-
-
-class HttpTimeoutError(HttpClientError):
-    """Raised when request exceeds timeout budget."""
-
-
-class HttpResponseError(HttpClientError):
-    """Raised when HTTP response status represents an error (4xx/5xx)."""
-
-    def __init__(
-        self, status_code: int, message: str, response: httpx.Response | None = None
-    ) -> None:
-        super().__init__(f"HTTP {status_code}: {message}")
-        self.status_code = status_code
-        self.response = response
-
 
 class HttpClient:
-    """Reusable, asynchronous HTTP client with timeout, retry, and connection pooling."""
+    """Reusable, asynchronous HTTP client with timeout, retries, and connection pooling."""
 
     def __init__(
         self,
@@ -46,9 +20,11 @@ class HttpClient:
         default_headers: Mapping[str, str] | None = None,
         client: httpx.AsyncClient | None = None,
     ) -> None:
+        if max_retries < 0:
+            raise ValueError("max_retries must be >= 0")
+        self.max_retries = max_retries
         self.base_url = base_url.rstrip("/")
         self.timeout_seconds = timeout_seconds
-        self.max_retries = max_retries
         self.default_headers = dict(default_headers or {})
         self._custom_client = client is not None
         self._client = client or httpx.AsyncClient(
@@ -85,51 +61,35 @@ class HttpClient:
         timeout_seconds: float | None = None,
         raise_for_status: bool = True,
     ) -> httpx.Response:
-        """Execute HTTP request with transient retry handling and structured error wrapping."""
-        req_headers = {**self.default_headers, **(headers or {})}
-        timeout_budget = timeout_seconds if timeout_seconds is not None else self.timeout_seconds
-
+        """Retry transient failures; native exceptions propagate after exhaustion."""
         for attempt in range(self.max_retries + 1):
-            try:
-                response = await self._client.request(
+            (response,) = await asyncio.gather(
+                self._client.request(
                     method=method.upper(),
                     url=url,
                     params=params,
                     json=json,
                     data=data,
-                    headers=req_headers,
-                    timeout=timeout_budget,
-                )
-
-                if raise_for_status and response.is_error:
-                    # Retry on 5xx if retry attempts remain
-                    if response.is_server_error and attempt < self.max_retries:
-                        await asyncio.sleep(0.2 * (2**attempt))
-                        continue
-                    raise HttpResponseError(
-                        status_code=response.status_code,
-                        message=response.text,
-                        response=response,
-                    )
-
-                return response
-
-            except httpx.TimeoutException as exc:
-                if attempt < self.max_retries:
-                    await asyncio.sleep(0.2 * (2**attempt))
-                    continue
-                raise HttpTimeoutError(f"Request {method} {url} timed out: {exc}") from exc
-
-            except httpx.NetworkError as exc:
-                if attempt < self.max_retries:
-                    await asyncio.sleep(0.2 * (2**attempt))
-                    continue
-                raise HttpConnectionError(f"Network error connecting to {url}: {exc}") from exc
-
-            except httpx.HTTPError as exc:
-                raise HttpClientError(f"HTTP request failed: {exc}") from exc
-
-        raise HttpClientError(f"Request failed after {self.max_retries} retries")
+                    headers={**self.default_headers, **(headers or {})},
+                    timeout=timeout_seconds
+                    if timeout_seconds is not None
+                    else self.timeout_seconds,
+                ),
+                return_exceptions=True,
+            )
+            retryable = isinstance(response, (httpx.TimeoutException, httpx.NetworkError)) or (
+                isinstance(response, httpx.Response)
+                and raise_for_status
+                and response.is_server_error
+            )
+            if retryable and attempt < self.max_retries:
+                await asyncio.sleep(0.2 * (2**attempt))
+                continue
+            if isinstance(response, BaseException):
+                raise response
+            if raise_for_status and response.is_error:
+                response.raise_for_status()
+            return response
 
     async def get(
         self,

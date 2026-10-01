@@ -1,5 +1,5 @@
 class IntegrationError(Exception):
-    """Integration failure exposed to callers instead of SDK-specific exceptions."""
+    """Failure in an integration's own response contract."""
 
 
 class IntegrationConfigurationError(IntegrationError):

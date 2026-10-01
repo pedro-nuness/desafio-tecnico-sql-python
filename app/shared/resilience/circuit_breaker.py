@@ -1,5 +1,6 @@
 """Generic async circuit breaker: fail fast while a dependency is known to be down."""
 
+import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
@@ -62,16 +63,28 @@ class CircuitBreaker:
             return CircuitState.HALF_OPEN
         return CircuitState.OPEN
 
-    async def call[T](self, func: Callable[[], Awaitable[T]]) -> T:
+    async def call[T](
+        self,
+        func: Callable[[], Awaitable[T]],
+        *,
+        failure_types: tuple[type[BaseException], ...] = (),
+    ) -> T:
         self._before_call()
+
+        async def invoke() -> T:
+            return await func()
+
+        task = asyncio.create_task(invoke())
         try:
-            result = await func()
-        except self._failure_types:
-            self._on_failure()
-            raise
-        except BaseException:
+            await asyncio.gather(task, return_exceptions=True)
+        finally:
             self._trial_in_flight = False
-            raise
+        error = None if task.cancelled() else task.exception()
+        if isinstance(error, (*self._failure_types, *failure_types)):
+            self._on_failure()
+        if error is not None:
+            raise error
+        result = task.result()
         self._on_success()
         return result
 

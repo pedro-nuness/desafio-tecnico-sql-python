@@ -13,10 +13,6 @@ class GenerationError(ModernizationError):
     """Code generation failed or produced an unusable answer."""
 
 
-class LLMProviderError(GenerationError):
-    """The LLM provider failed (network, auth, rate limit, timeout...)."""
-
-
 class ValidationExecutionError(ModernizationError):
     """A validator could not run (as opposed to the code being invalid)."""
 

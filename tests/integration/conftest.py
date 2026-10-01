@@ -14,8 +14,8 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
-from app.infrastructure.persistence.database.engine import create_engine
-from app.infrastructure.persistence.database.session import create_session_factory
+from app.core.database.engine import create_engine
+from app.core.database.session import create_session_factory
 
 ROOT = Path(__file__).parents[2]
 

@@ -46,7 +46,7 @@ class ModernizationState(TypedDict):
     errors: Annotated[list[PipelineError], operator.add]
 
     status: ModernizationStatus
-    """Routing flag while running (FAILURE short-circuits); final status after record_result."""
+    """RUNNING until record_result computes the final status."""
 
     modernization: Modernization
     """The persisted aggregate, set by record_result (the run's output)."""
@@ -68,13 +68,6 @@ class StateUpdate(TypedDict, total=False):
     errors: list[PipelineError]
     status: ModernizationStatus
     modernization: Modernization
-
-
-def failed(step: PipelineStep, exc: Exception) -> StateUpdate:
-    return StateUpdate(
-        errors=[PipelineError(step=step, error_type=type(exc).__name__, message=str(exc))],
-        status=ModernizationStatus.FAILURE,
-    )
 
 
 def to_outcome(state: ModernizationState) -> PipelineOutcome:
