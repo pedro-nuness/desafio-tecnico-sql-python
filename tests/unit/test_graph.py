@@ -5,10 +5,11 @@ from collections.abc import Callable
 import pytest
 
 from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
-from app.features.modernization.domain.models.modernization import PipelineProgress
+from app.features.modernization.domain.modernization import PipelineProgress
 from app.features.modernization.graph.builder import RetryPolicy
+from app.features.modernization.use_cases import ModernizeCommand
 from app.shared.integrations.errors import IntegrationError
-from tests.conftest import VALID_CODE, GraphFactory, ServiceFactory, llm_payload
+from tests.conftest import VALID_CODE, GraphFactory, ModernizeFactory, llm_payload
 from tests.fakes import FakeLLM, InMemoryDatabase
 
 LINT_ONLY = "import os\n\nvalue = 1\n"
@@ -16,11 +17,13 @@ BROKEN = llm_payload(code="def broken(:\n")
 
 
 async def test_rejected_code_is_regenerated_with_validation_feedback(
-    make_service: ServiceFactory, load_procedure: Callable[[str], str]
+    make_modernize: ModernizeFactory, load_procedure: Callable[[str], str]
 ) -> None:
     llm = FakeLLM([BROKEN, llm_payload()])
 
-    result = await make_service(llm=llm).modernize(load_procedure("process_orders"))
+    result = await make_modernize(llm=llm).execute(
+        ModernizeCommand(load_procedure("process_orders"))
+    )
 
     assert result.status is ModernizationStatus.SUCCESS
     assert result.generated_code == VALID_CODE
@@ -35,12 +38,12 @@ async def test_rejected_code_is_regenerated_with_validation_feedback(
 
 
 async def test_retries_stop_at_max_attempts(
-    make_service: ServiceFactory, load_procedure: Callable[[str], str]
+    make_modernize: ModernizeFactory, load_procedure: Callable[[str], str]
 ) -> None:
     llm = FakeLLM([BROKEN])  # always broken
 
-    service = make_service(llm=llm, retry=RetryPolicy(max_attempts=3))
-    result = await service.modernize(load_procedure("process_orders"))
+    use_case = make_modernize(llm=llm, retry=RetryPolicy(max_attempts=3))
+    result = await use_case.execute(ModernizeCommand(load_procedure("process_orders")))
 
     assert result.status is ModernizationStatus.FAILURE
     assert len(llm.requests) == 3
@@ -48,26 +51,26 @@ async def test_retries_stop_at_max_attempts(
 
 
 async def test_no_retry_once_the_time_budget_is_spent(
-    make_service: ServiceFactory, load_procedure: Callable[[str], str]
+    make_modernize: ModernizeFactory, load_procedure: Callable[[str], str]
 ) -> None:
     llm = FakeLLM([BROKEN, llm_payload()])
 
-    service = make_service(llm=llm, retry=RetryPolicy(max_attempts=3, budget_seconds=0))
-    result = await service.modernize(load_procedure("process_orders"))
+    use_case = make_modernize(llm=llm, retry=RetryPolicy(max_attempts=3, budget_seconds=0))
+    result = await use_case.execute(ModernizeCommand(load_procedure("process_orders")))
 
     assert result.status is ModernizationStatus.FAILURE
     assert len(llm.requests) == 1
 
 
 async def test_failed_retry_keeps_the_previous_attempt(
-    make_service: ServiceFactory, store: InMemoryDatabase, load_procedure: Callable[[str], str]
+    make_modernize: ModernizeFactory, store: InMemoryDatabase, load_procedure: Callable[[str], str]
 ) -> None:
     llm = FakeLLM([llm_payload(code=LINT_ONLY), "not json"])
 
     progress = PipelineProgress()
     with pytest.raises(IntegrationError):
-        await make_service(llm=llm).modernize(
-            load_procedure("calculate_discount"), progress=progress
+        await make_modernize(llm=llm).execute(
+            ModernizeCommand(load_procedure("calculate_discount")), progress=progress
         )
     assert progress.execution_id is not None
     recorded = store.rows[progress.execution_id]

@@ -37,6 +37,15 @@ COMPOSITION_ROOT = {"app.core.bootstrap", "app.core.providers", "app.core.server
 CORE_INFRASTRUCTURE = {"app.core.database", "app.core.config"}
 DI = {"dishka"}
 
+FEATURE = "app.features.modernization"
+ENTRY = {f"{FEATURE}.routes", f"{FEATURE}.schemas"}
+# Business logic and contracts: no vendor, no framework, no infrastructure, no DI.
+PURE = (
+    VENDORS | LLM_ADAPTERS | DI | CORE_INFRASTRUCTURE | {"fastapi", "langgraph", "langchain_core"}
+)
+# Implementations (strategies, repository, graph) never know the HTTP layer or the DI library.
+IMPLEMENTATION = DI | {"fastapi"} | ENTRY | {f"{FEATURE}.use_cases"}
+
 FORBIDDEN: dict[str, set[str]] = {
     # shared/integrations holds vendor adapters; the rest of shared stays vendor-free.
     "shared": {"fastapi", "langgraph", "app.core", "app.features"} | DI,
@@ -45,50 +54,27 @@ FORBIDDEN: dict[str, set[str]] = {
     "shared/resilience": VENDORS,
     "core/config": VENDORS | {"fastapi", "langgraph", "app.features"},
     "core/database": {"fastapi", "langgraph", "app.features", "openai", "pglast", "ruff"},
-    "features/modernization/infrastructure": DI,
-    "features/modernization/domain": VENDORS
-    | LLM_ADAPTERS
-    | DI
-    | CORE_INFRASTRUCTURE
+    # The vocabulary every capability shares: depends on nothing else in the feature.
+    "features/modernization/domain": PURE
+    | ENTRY
     | {
-        "langgraph",
-        "fastapi",
-        "app.features.modernization.application",
-        "app.features.modernization.infrastructure",
-        "app.features.modernization.graph",
-        "app.features.modernization.api",
+        f"{FEATURE}.{module}"
+        for module in ("use_cases", "parsing", "generation", "validation", "persistence", "graph")
     },
-    "features/modernization/application": VENDORS
+    "features/modernization/use_cases.py": PURE | ENTRY,
+    "features/modernization/generation": PURE | IMPLEMENTATION | {f"{FEATURE}.graph"},
+    "features/modernization/parsing/strategy.py": PURE | IMPLEMENTATION,
+    "features/modernization/validation/validate_code.py": PURE | IMPLEMENTATION,
+    "features/modernization/persistence/execution_log.py": PURE
+    | IMPLEMENTATION
+    | {f"{FEATURE}.graph"},
+    "features/modernization/parsing": IMPLEMENTATION | {f"{FEATURE}.graph"},
+    "features/modernization/validation": IMPLEMENTATION | {f"{FEATURE}.graph"},
+    "features/modernization/persistence": IMPLEMENTATION | {f"{FEATURE}.graph"},
+    "features/modernization/graph": (VENDORS - {"langgraph"})
     | LLM_ADAPTERS
-    | DI
     | CORE_INFRASTRUCTURE
-    | {
-        "langgraph",
-        "fastapi",
-        "app.features.modernization.infrastructure",
-        "app.features.modernization.graph",
-        "app.features.modernization.api",
-    },
-    "features/modernization/prompts": VENDORS
-    | LLM_ADAPTERS
-    | DI
-    | CORE_INFRASTRUCTURE
-    | {
-        "langgraph",
-        "fastapi",
-        "app.features.modernization.infrastructure",
-        "app.features.modernization.graph",
-        "app.features.modernization.api",
-    },
-    "features/modernization/graph": VENDORS
-    | LLM_ADAPTERS
-    | DI
-    | CORE_INFRASTRUCTURE
-    | {
-        "fastapi",
-        "app.features.modernization.infrastructure",
-        "app.features.modernization.api",
-    },
+    | IMPLEMENTATION,
 }
 
 
@@ -105,8 +91,9 @@ def _imports(path: Path) -> set[str]:
 
 def _violations(rel_path: str) -> list[str]:
     found = []
-    target_dir = APP / Path(rel_path)
-    for path in target_dir.rglob("*.py"):
+    target = APP / Path(rel_path)
+    assert target.exists(), f"rule targets a missing path: {rel_path}"
+    for path in [target] if target.suffix == ".py" else target.rglob("*.py"):
         for imported in _imports(path):
             for forbidden in FORBIDDEN[rel_path]:
                 if imported == forbidden or imported.startswith(forbidden + "."):
@@ -130,13 +117,58 @@ def test_only_the_vendor_adapter_imports_its_sdk(vendor: str) -> None:
     assert offenders == [f"shared/integrations/llm/{vendor}/provider.py"]
 
 
-def test_only_the_parsing_adapter_imports_pglast() -> None:
-    offenders = [
-        str(path.relative_to(APP)).replace("\\", "/")
-        for path in APP.rglob("*.py")
-        if any(i == "pglast" or i.startswith("pglast.") for i in _imports(path))
+# Inside the feature, each library is known by the implementation that wraps it, only.
+FEATURE_VENDOR_HOMES = {
+    "pglast": ("features/modernization/parsing/plpgsql.py",),
+    "ruff": ("features/modernization/validation/ruff_check.py",),
+    "sqlalchemy": ("features/modernization/persistence/models.py",),
+    "langgraph": ("features/modernization/graph/builder.py",),
+    "langchain_core": ("features/modernization/graph/builder.py",),
+}
+
+
+@pytest.mark.parametrize("vendor", sorted(FEATURE_VENDOR_HOMES))
+def test_each_library_is_imported_only_by_its_implementation(vendor: str) -> None:
+    offenders = tuple(
+        sorted(
+            str(path.relative_to(APP)).replace("\\", "/")
+            for path in (APP / "features").rglob("*.py")
+            if any(i == vendor or i.startswith(vendor + ".") for i in _imports(path))
+        )
+    )
+    assert offenders == FEATURE_VENDOR_HOMES[vendor]
+
+
+def _feature_imports(path: Path) -> set[str]:
+    return {i for i in _imports(path) if i.startswith(FEATURE + ".")}
+
+
+@pytest.mark.parametrize("entry", ["routes.py", "schemas.py"])
+def test_http_layer_only_knows_use_cases_schemas_and_domain(entry: str) -> None:
+    allowed = (f"{FEATURE}.use_cases", f"{FEATURE}.schemas", f"{FEATURE}.domain.")
+    imports = _feature_imports(APP / "features/modernization" / entry)
+    assert [i for i in imports if not i.startswith(allowed)] == []
+
+
+def test_every_use_case_exposes_a_single_async_execute() -> None:
+    """Commands/queries are plain data; every other class is one use case = one `execute`."""
+    tree = ast.parse((APP / "features/modernization/use_cases.py").read_text(encoding="utf-8"))
+    use_cases = [
+        node
+        for node in tree.body
+        if isinstance(node, ast.ClassDef) and not node.name.endswith(("Command", "Query"))
     ]
-    assert offenders == ["features/modernization/infrastructure/parsing/pglast_parser.py"]
+    assert use_cases
+    for use_case in use_cases:
+        public = [
+            node
+            for node in use_case.body
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef)
+            and not node.name.startswith("_")
+        ]
+        assert [(type(m), m.name) for m in public] == [(ast.AsyncFunctionDef, "execute")], (
+            use_case.name
+        )
 
 
 def test_no_init_py_files_exist_in_app() -> None:
@@ -150,10 +182,10 @@ def test_no_init_py_files_exist_in_app() -> None:
 # carry domain meaning (invalid SQL, syntax errors feeding the repair loop, an LLM answer
 # off contract).
 LOCAL_EXCEPT_ALLOWED = [
-    "features/modernization/application/services/code_generation_service.py",
+    "features/modernization/generation/generate_code.py",
     "features/modernization/graph/builder.py",
-    "features/modernization/infrastructure/parsing/pglast_parser.py",
-    "features/modernization/infrastructure/validation/python_ast_validator.py",
+    "features/modernization/parsing/plpgsql.py",
+    "features/modernization/validation/python_ast_check.py",
     "shared/integrations/integration.py",
     "shared/integrations/llm/gateway.py",
     "shared/resilience/circuit_breaker.py",
@@ -172,16 +204,12 @@ def test_local_exception_handlers_only_where_needed() -> None:
     assert offenders == LOCAL_EXCEPT_ALLOWED
 
 
-# The error class decides the HTTP status (see app/shared/errors.py), so a layer may only
+# The error class decides the HTTP status (see app/shared/errors.py), so a module may only
 # claim the faults it can know about: a dependency failing is known at the integration edge
-# (or by the use case validating its answer); "not found" is never a domain rule.
+# (or by the generation step validating the LLM answer); "not found" only by persistence.
 ERROR_CLASSES_ALLOWED_IN = {
-    "IntegrationError": ("shared/integrations/", "features/modernization/application/"),
-    "NotFoundError": (
-        "features/modernization/application/",
-        "features/modernization/graph/",
-        "features/modernization/infrastructure/",
-    ),
+    "IntegrationError": ("shared/integrations/", "features/modernization/generation/"),
+    "NotFoundError": ("features/modernization/persistence/",),
 }
 
 

@@ -5,8 +5,8 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from uuid import UUID
 
-from app.features.modernization.domain.models.modernization import Modernization
-from app.shared.errors import NotFoundError
+from app.features.modernization.domain.modernization import Modernization
+from app.features.modernization.persistence.repository import not_found
 from app.shared.integrations.llm.llm import LLMRequest, LLMResponse
 
 
@@ -53,7 +53,7 @@ class InMemoryDatabase:
 
 
 class InMemoryModernizationRepository:
-    """Same contract as SqlAlchemyModernizationRepository: works in the current transaction."""
+    """ModernizationRepository port, same contract as the SQLAlchemy one: current transaction."""
 
     def __init__(self, database: InMemoryDatabase) -> None:
         self._database = database
@@ -64,12 +64,15 @@ class InMemoryModernizationRepository:
     async def update(self, modernization: Modernization) -> None:
         pending = self._database.current().pending
         if modernization.id not in self._database.rows and modernization.id not in pending:
-            raise NotFoundError(f"Modernization {modernization.id} not found")
+            raise not_found(modernization.id)
         pending[modernization.id] = modernization
 
-    async def find_by_id(self, modernization_id: UUID) -> Modernization | None:
+    async def get(self, modernization_id: UUID) -> Modernization:
         pending = self._database.current().pending
-        return pending.get(modernization_id) or self._database.rows.get(modernization_id)
+        found = pending.get(modernization_id) or self._database.rows.get(modernization_id)
+        if found is None:
+            raise not_found(modernization_id)
+        return found
 
 
 DEFAULT_TEST_CODE = """\

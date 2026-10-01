@@ -1,4 +1,3 @@
-import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -7,40 +6,36 @@ from langchain_core.runnables import RunnableConfig
 from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
-from app.features.modernization.application.ports.parsing.sql_parser import SQLParser
-from app.features.modernization.application.ports.repositories.modernization_repository import (
-    ModernizationRepository,
-)
-from app.features.modernization.application.ports.validation.code_validator import (
-    CodeValidator,
-)
-from app.features.modernization.application.services.code_generation_service import (
-    CodeGenerationService,
-)
 from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
-from app.features.modernization.domain.models.modernization import PipelineProgress
-from app.features.modernization.domain.services.semantic_analyzer import SemanticAnalyzer
-from app.features.modernization.graph.nodes.generation_node import GenerationNode
-from app.features.modernization.graph.nodes.parsing_node import ParsingNode
-from app.features.modernization.graph.nodes.persistence_nodes import (
-    RecordFailure,
+from app.features.modernization.domain.modernization import (
+    Modernization,
+    PipelineError,
+    PipelineProgress,
+)
+from app.features.modernization.domain.semantic_analyzer import SemanticAnalyzer
+from app.features.modernization.generation.generate_code import GenerateCode
+from app.features.modernization.graph.nodes import (
+    GenerationNode,
+    ParsingNode,
     RecordResultNode,
     RecordStartNode,
-)
-from app.features.modernization.graph.nodes.semantic_analysis_node import (
     SemanticAnalysisNode,
+    StepNode,
+    ValidationNode,
 )
-from app.features.modernization.graph.nodes.validation_node import ValidationNode
 from app.features.modernization.graph.state import (
     ModernizationInput,
     ModernizationState,
     StateUpdate,
+    to_outcome,
 )
-from app.shared.persistence import TransactionManager
+from app.features.modernization.parsing.strategy import SQLParser
+from app.features.modernization.persistence.execution_log import ExecutionLog
+from app.features.modernization.validation.validate_code import ValidateCode
 
 type ModernizationGraph = CompiledStateGraph[ModernizationState, None, ModernizationInput]
-type Node = Callable[[ModernizationState], StateUpdate | Awaitable[StateUpdate]]
-type AsyncNode = Callable[[ModernizationState, RunnableConfig], Awaitable[StateUpdate]]
+type Node = Callable[[ModernizationState], Awaitable[StateUpdate]]
+type TrackedNode = Callable[[ModernizationState, RunnableConfig], Awaitable[StateUpdate]]
 
 GRAPH_NAME = "modernization"
 RECORD_START = "record_start"
@@ -64,10 +59,9 @@ def build_modernization_graph(
     *,
     parser: SQLParser,
     analyzer: SemanticAnalyzer,
-    generation_service: CodeGenerationService,
-    validator: CodeValidator,
-    transactions: TransactionManager,
-    modernizations: ModernizationRepository,
+    generate_code: GenerateCode,
+    validate_code: ValidateCode,
+    execution_log: ExecutionLog,
     retry: RetryPolicy = DEFAULT_RETRY,
 ) -> ModernizationGraph:
     """START -> record_start -> parsing -> semantic_analysis -> generation -> validation
@@ -75,20 +69,18 @@ def build_modernization_graph(
 
     A step that raises is recorded as FAILURE (with everything produced so far) and the
     exception propagates to the caller: the global HTTP handler maps it to a response.
-    Dependencies are injected into node instances (closures), keeping nodes thin.
     """
     graph = StateGraph(ModernizationState, input_schema=ModernizationInput)
-    record_failure = RecordFailure(transactions, modernizations)
-    graph.add_node(RECORD_START, _tracked(None, RecordStartNode(transactions, modernizations)))
-    steps: list[tuple[PipelineStep, Node]] = [
-        (PipelineStep.PARSING, ParsingNode(parser)),
-        (PipelineStep.SEMANTIC_ANALYSIS, SemanticAnalysisNode(analyzer)),
-        (PipelineStep.GENERATION, GenerationNode(generation_service)),
-        (PipelineStep.VALIDATION, ValidationNode(validator)),
+    steps: list[StepNode] = [
+        ParsingNode(parser),
+        SemanticAnalysisNode(analyzer),
+        GenerationNode(generate_code),
+        ValidationNode(validate_code),
     ]
-    for step, node in steps:
-        graph.add_node(step.value, _tracked(step, node, record_failure))
-    graph.add_node(RECORD_RESULT, _tracked(None, RecordResultNode(transactions, modernizations)))
+    graph.add_node(RECORD_START, _tracked(RecordStartNode(execution_log)))
+    for node in steps:
+        graph.add_node(node.step.value, _tracked(node, node.step, execution_log))
+    graph.add_node(RECORD_RESULT, _tracked(RecordResultNode(execution_log)))
 
     graph.add_edge(START, RECORD_START)
     graph.add_edge(RECORD_START, PipelineStep.PARSING.value)
@@ -104,13 +96,29 @@ def build_modernization_graph(
     return graph.compile(name=GRAPH_NAME)
 
 
+async def run_modernization(
+    graph: ModernizationGraph,
+    *,
+    source_code: str,
+    schema_context: str | None,
+    progress: PipelineProgress | None = None,
+) -> Modernization:
+    """Invokes the graph; `progress` receives the execution id as soon as it exists."""
+    final = await graph.ainvoke(
+        ModernizationInput(source_code=source_code, schema_context=schema_context),
+        config={"configurable": {"progress": progress}},
+    )
+    modernization: Modernization = final["modernization"]
+    return modernization
+
+
 def _tracked(
-    step: PipelineStep | None, node: Node, record_failure: RecordFailure | None = None
-) -> AsyncNode:
+    node: Node, step: PipelineStep | None = None, execution_log: ExecutionLog | None = None
+) -> TrackedNode:
     """Expose the execution id to the caller and record a failing step before re-raising.
 
-    Persistence nodes (step=None) are not recorded: a run that cannot be persisted must
-    fail loudly.
+    Recording nodes (no step) are not recorded: a run that cannot be persisted must fail
+    loudly.
     """
 
     async def run(state: ModernizationState, config: RunnableConfig) -> StateUpdate:
@@ -119,11 +127,11 @@ def _tracked(
             progress.execution_id = state.get("execution_id")
         # Needed: the only local handler of the pipeline. It persists, never swallows.
         try:
-            update = node(state)
-            return await update if inspect.isawaitable(update) else update
+            return await node(state)
         except Exception as exc:
-            if step is not None and record_failure is not None:
-                await record_failure(state, step, exc)
+            if step is not None and execution_log is not None:
+                error = PipelineError.from_exception(step, exc)
+                await execution_log.fail(state["execution_id"], to_outcome(state), error)
             raise
 
     return run

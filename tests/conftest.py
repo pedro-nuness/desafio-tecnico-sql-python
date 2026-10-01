@@ -5,36 +5,21 @@ from typing import Any
 
 import pytest
 
-from app.features.modernization.application.ports.validation.code_validator import (
-    CodeValidator,
-)
-from app.features.modernization.application.services.code_generation_service import (
-    CodeGenerationService,
-)
-from app.features.modernization.application.services.modernization_service import (
-    ModernizationService,
-)
-from app.features.modernization.domain.services.semantic_analyzer import SemanticAnalyzer
+from app.features.modernization.domain.semantic_analyzer import SemanticAnalyzer
+from app.features.modernization.generation.generate_code import GenerateCode
+from app.features.modernization.generation.prompt import GenerationPromptBuilder
 from app.features.modernization.graph.builder import (
     DEFAULT_RETRY,
     ModernizationGraph,
     RetryPolicy,
     build_modernization_graph,
 )
-from app.features.modernization.graph.pipeline import LangGraphModernizationPipeline
-from app.features.modernization.infrastructure.parsing.pglast_parser import PglastParser
-from app.features.modernization.infrastructure.validation.composite_validator import (
-    CompositeCodeValidator,
-)
-from app.features.modernization.infrastructure.validation.python_ast_validator import (
-    PythonASTValidator,
-)
-from app.features.modernization.infrastructure.validation.ruff_validator import (
-    RuffValidator,
-)
-from app.features.modernization.prompts.generation_prompt import (
-    GenerationPromptBuilder,
-)
+from app.features.modernization.parsing.plpgsql import PglastParser
+from app.features.modernization.persistence.execution_log import ExecutionLog
+from app.features.modernization.use_cases import GetModernization, ModernizeRoutine
+from app.features.modernization.validation.python_ast_check import PythonASTCheck
+from app.features.modernization.validation.ruff_check import RuffCheck
+from app.features.modernization.validation.validate_code import Rule, ValidateCode
 from tests.fakes import FakeLLM, InMemoryDatabase, InMemoryModernizationRepository
 
 PROCEDURES_DIR = Path(__file__).parent / "fixtures" / "procedures"
@@ -89,7 +74,12 @@ def store() -> InMemoryDatabase:
 
 
 type GraphFactory = Callable[..., ModernizationGraph]
-type ServiceFactory = Callable[..., ModernizationService]
+type ModernizeFactory = Callable[..., ModernizeRoutine]
+
+
+def default_validate_code() -> ValidateCode:
+    """Same policy as core/providers.py."""
+    return ValidateCode([Rule(PythonASTCheck(), blocking=True), Rule(RuffCheck(), blocking=False)])
 
 
 @pytest.fixture
@@ -98,18 +88,15 @@ def make_graph(store: InMemoryDatabase) -> GraphFactory:
 
     def factory(
         llm: FakeLLM | None = None,
-        validator: CodeValidator | None = None,
+        validate_code: ValidateCode | None = None,
         retry: RetryPolicy = DEFAULT_RETRY,
     ) -> ModernizationGraph:
         return build_modernization_graph(
             parser=PglastParser(),
             analyzer=SemanticAnalyzer(),
-            generation_service=CodeGenerationService(
-                llm or FakeLLM([llm_payload()]), GenerationPromptBuilder()
-            ),
-            validator=validator or CompositeCodeValidator([PythonASTValidator(), RuffValidator()]),
-            transactions=store,
-            modernizations=InMemoryModernizationRepository(store),
+            generate_code=GenerateCode(llm or FakeLLM([llm_payload()]), GenerationPromptBuilder()),
+            validate_code=validate_code or default_validate_code(),
+            execution_log=ExecutionLog(store, InMemoryModernizationRepository(store)),
             retry=retry,
         )
 
@@ -117,12 +104,13 @@ def make_graph(store: InMemoryDatabase) -> GraphFactory:
 
 
 @pytest.fixture
-def make_service(store: InMemoryDatabase, make_graph: GraphFactory) -> ServiceFactory:
-    def factory(**graph_options: Any) -> ModernizationService:
-        return ModernizationService(
-            LangGraphModernizationPipeline(make_graph(**graph_options)),
-            store,
-            InMemoryModernizationRepository(store),
-        )
+def make_modernize(make_graph: GraphFactory) -> ModernizeFactory:
+    def factory(**graph_options: Any) -> ModernizeRoutine:
+        return ModernizeRoutine(make_graph(**graph_options))
 
     return factory
+
+
+@pytest.fixture
+def get_modernization(store: InMemoryDatabase) -> GetModernization:
+    return GetModernization(store, InMemoryModernizationRepository(store))

@@ -1,6 +1,6 @@
 """Runs the pipeline over the challenge annexes (B-F) and writes the results to disk.
 
-Goes through ModernizationService, the same use case behind POST /modernize, so every run is
+Goes through ModernizeRoutine, the same use case behind POST /modernize, so every run is
 also persisted in `modernization_history`. Requires a migrated PostgreSQL (DATABASE_URL) and
 the LLM configured in `.env`.
 
@@ -15,10 +15,8 @@ from pathlib import Path
 
 from app.core.bootstrap import build_container
 from app.core.config.settings import Settings
-from app.features.modernization.application.services.modernization_service import (
-    ModernizationService,
-)
-from app.features.modernization.domain.models.modernization import Modernization
+from app.features.modernization.domain.modernization import Modernization
+from app.features.modernization.use_cases import ModernizeCommand, ModernizeRoutine
 
 EXAMPLES = Path(__file__).parents[1] / "examples"
 PROCEDURES = EXAMPLES / "procedures"
@@ -31,10 +29,13 @@ async def main() -> None:
     sources = sorted(PROCEDURES.glob("*.sql"))
     container = build_container(settings)
     try:
-        service = await container.get(ModernizationService)
+        modernize = await container.get(ModernizeRoutine)
         # Independent executions: run concurrently, like concurrent POST /modernize calls.
         runs = await asyncio.gather(
-            *(service.modernize(path.read_text(encoding="utf-8"), schema) for path in sources)
+            *(
+                modernize.execute(ModernizeCommand(path.read_text(encoding="utf-8"), schema))
+                for path in sources
+            )
         )
     finally:
         await container.close()

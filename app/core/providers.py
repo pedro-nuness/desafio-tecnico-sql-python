@@ -15,39 +15,24 @@ from app.core.config.settings import Settings
 from app.core.database.engine import create_engine
 from app.core.database.session import create_session_factory
 from app.core.database.transaction import SessionTransactionManager
-from app.features.modernization.application.ports.pipeline.modernization_pipeline import (
-    ModernizationPipeline,
-)
-from app.features.modernization.application.ports.repositories.modernization_repository import (
-    ModernizationRepository,
-)
-from app.features.modernization.application.services.code_generation_service import (
-    CodeGenerationService,
-)
-from app.features.modernization.application.services.modernization_service import (
-    ModernizationService,
-)
-from app.features.modernization.domain.services.semantic_analyzer import SemanticAnalyzer
+from app.features.modernization.domain.semantic_analyzer import SemanticAnalyzer
+from app.features.modernization.generation.generate_code import GenerateCode
+from app.features.modernization.generation.prompt import GenerationPromptBuilder
 from app.features.modernization.graph.builder import (
     ModernizationGraph,
     RetryPolicy,
     build_modernization_graph,
 )
-from app.features.modernization.graph.pipeline import LangGraphModernizationPipeline
-from app.features.modernization.infrastructure.parsing.pglast_parser import PglastParser
-from app.features.modernization.infrastructure.persistence.repositories.sqlalchemy_modernization_repository import (  # noqa: E501
+from app.features.modernization.parsing.plpgsql import PglastParser
+from app.features.modernization.persistence.execution_log import ExecutionLog
+from app.features.modernization.persistence.repository import (
+    ModernizationRepository,
     SqlAlchemyModernizationRepository,
 )
-from app.features.modernization.infrastructure.validation.composite_validator import (
-    CompositeCodeValidator,
-)
-from app.features.modernization.infrastructure.validation.python_ast_validator import (
-    PythonASTValidator,
-)
-from app.features.modernization.infrastructure.validation.ruff_validator import (
-    RuffValidator,
-)
-from app.features.modernization.prompts.generation_prompt import GenerationPromptBuilder
+from app.features.modernization.use_cases import GetModernization, ModernizeRoutine
+from app.features.modernization.validation.python_ast_check import PythonASTCheck
+from app.features.modernization.validation.ruff_check import RuffCheck
+from app.features.modernization.validation.validate_code import Rule, ValidateCode
 from app.shared.integrations.llm.gateway import LLMGateway
 from app.shared.integrations.llm.llm import LLM
 from app.shared.integrations.llm.registry import build_providers
@@ -85,15 +70,16 @@ class InfrastructureProvider(Provider):
 
 
 class ModernizationProvider(Provider):
-    """The modernization feature: graph, use cases and their adapters."""
+    """The modernization feature: use cases, graph, steps and strategies."""
 
     scope = Scope.APP
 
     modernizations = provide(SqlAlchemyModernizationRepository, provides=ModernizationRepository)
+    execution_log = provide(ExecutionLog)
 
     @provide
-    def generation_service(self, settings: Settings, llm: LLM) -> CodeGenerationService:
-        return CodeGenerationService(
+    def generate_code(self, settings: Settings, llm: LLM) -> GenerateCode:
+        return GenerateCode(
             llm,
             GenerationPromptBuilder(),
             temperature=settings.llm_temperature,
@@ -101,28 +87,34 @@ class ModernizationProvider(Provider):
         )
 
     @provide
+    def validate_code(self, settings: Settings) -> ValidateCode:
+        # The policy: invalid syntax makes the code unusable; lint findings only PARTIAL.
+        return ValidateCode(
+            [
+                Rule(PythonASTCheck(), blocking=True),
+                Rule(RuffCheck(timeout_seconds=settings.ruff_timeout_seconds), blocking=False),
+            ]
+        )
+
+    @provide
     def graph(
         self,
         settings: Settings,
-        generation_service: CodeGenerationService,
-        transactions: TransactionManager,
-        modernizations: ModernizationRepository,
+        generate_code: GenerateCode,
+        validate_code: ValidateCode,
+        execution_log: ExecutionLog,
     ) -> ModernizationGraph:
-        validator = CompositeCodeValidator(
-            [PythonASTValidator(), RuffValidator(timeout_seconds=settings.ruff_timeout_seconds)]
-        )
         return build_modernization_graph(
             parser=PglastParser(),
             analyzer=SemanticAnalyzer(),
-            generation_service=generation_service,
-            validator=validator,
-            transactions=transactions,
-            modernizations=modernizations,
+            generate_code=generate_code,
+            validate_code=validate_code,
+            execution_log=execution_log,
             retry=RetryPolicy(
                 max_attempts=settings.generation_max_attempts,
                 budget_seconds=settings.generation_retry_budget_seconds,
             ),
         )
 
-    pipeline = provide(LangGraphModernizationPipeline, provides=ModernizationPipeline)
-    service = provide(ModernizationService)
+    modernize = provide(ModernizeRoutine)
+    get_modernization = provide(GetModernization)

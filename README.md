@@ -136,14 +136,16 @@ saíram, porque mostram o que a validação pega.
 
 ## Arquitetura
 
-Ports & Adapters (hexagonal) com Dependency Inversion. Domínio e casos de uso não conhecem
-OpenAI, SQLAlchemy, asyncpg, pglast, Ruff nem LangGraph.
+Package by Feature e, dentro da feature, **pastas por capacidade** (`parsing`, `generation`,
+`validation`, `persistence`, `graph`): contrato, lógica e implementações de uma capacidade ficam
+juntos. Abstração só onde há variação real (AD-15): 3 ports (fronteiras com sistemas externos,
+trocadas por fakes nos testes) e 2 strategies (algoritmos intercambiáveis).
 
 ```mermaid
 flowchart LR
-    API --> ModernizationService
-    ModernizationService --> ModernizationPipeline
-    ModernizationPipeline -. implementado por .-> LangGraph
+    Routes --> ModernizeRoutine
+    Routes --> GetModernization
+    ModernizeRoutine --> LangGraph
     LangGraph --> RecordStart
     RecordStart --> Parsing
     Parsing --> Analysis
@@ -154,91 +156,60 @@ flowchart LR
 
     Parsing --> SQLParser
     Analysis --> SemanticAnalyzer
-    Generation --> CodeGenerationService
-    CodeGenerationService --> GenerationPromptBuilder
-    CodeGenerationService --> LLM
-    Validation --> CodeValidator
+    Generation --> GenerateCode
+    GenerateCode --> GenerationPromptBuilder
+    GenerateCode --> LLM
+    Validation --> ValidateCode
+    ValidateCode --> CodeCheck
 
-    RecordStart --> TransactionManager
-    RecordResult --> TransactionManager
-    ModernizationService -. leitura .-> TransactionManager
-    RecordStart --> Repository
-    RecordResult --> Repository
-    ModernizationService -. leitura .-> Repository
+    RecordStart --> ExecutionLog
+    RecordResult --> ExecutionLog
+    ExecutionLog --> TransactionManager
+    ExecutionLog --> Repository
+    GetModernization --> TransactionManager
+    GetModernization --> Repository
     Repository --> PostgreSQL
 ```
 
-### Ports & Adapters
+### Contratos por papel
 
-```mermaid
-flowchart TB
-    subgraph Driving["Driving adapters"]
-        FASTAPI["FastAPI routes<br/>app/core/server.py · app/features"]
-        LGCLI["LangGraph server / Studio<br/>langgraph.json"]
-    end
+| papel               | contrato                                                                         | onde                              |
+|---------------------|----------------------------------------------------------------------------------|-----------------------------------|
+| Rota (controller)   | `request.to_command()` → `use_case.execute(command)` → `Response.from_domain()`  | `routes.py`, `schemas.py`         |
+| Caso de uso         | uma classe, um `async def execute(command)`; Command/Query são dataclasses frozen | `use_cases.py`                    |
+| Nó do graph         | `StepNode`: `step: ClassVar[PipelineStep]` + `async __call__(state) -> StateUpdate`; pré-condições com `require()` | `graph/nodes.py` |
+| Step                | classe com um `execute(...)`: `GenerateCode`, `ValidateCode`                     | `generation/`, `validation/`      |
+| Strategy            | `SQLParser.parse(source)`, `CodeCheck.check(code) -> achados`                    | `parsing/`, `validation/`         |
+| Port                | `LLM`, `TransactionManager` (shared), `ModernizationRepository`                  | `shared/`, `persistence/`         |
+| Ciclo de vida da run | `ExecutionLog.start / complete / fail`, uma transação cada                      | `persistence/execution_log.py`    |
 
-    subgraph Core["Application + Domain (sem dependências de vendor)"]
-        SVC["ModernizationService<br/>CodeGenerationService"]
-        DOM["Domain models · SemanticAnalyzer<br/>ModernizationReport · status rules"]
-        subgraph Ports["Ports (typing.Protocol)"]
-            P1["SQLParser"]
-            P2["LLM (perfil do LLMGateway)"]
-            P3["CodeValidator"]
-            P4["TransactionManager (shared) · ModernizationRepository"]
-            P5["ModernizationPipeline"]
-        end
-    end
+### Eixos de variação (onde existem abstrações — e só lá)
 
-    subgraph Driven["Driven adapters (app/features/modernization/infrastructure, graph)"]
-        A1["PglastParser"]
-        A2["LLMGateway → OpenAIProvider / OpenRouterProvider (SDKs oficiais)"]
-        A3["PythonASTValidator · RuffValidator<br/>CompositeCodeValidator"]
-        A4["SessionTransactionManager (core)<br/>SqlAlchemyModernizationRepository"]
-        A5["LangGraphModernizationPipeline"]
-    end
+| eixo                | tipo     | contrato                                         | implementações hoje                                   | nos testes |
+|---------------------|----------|--------------------------------------------------|-------------------------------------------------------|------------|
+| LLM provider/modelo | port     | `LLM`                                            | `LLMGateway` (routes em ordem → `OpenAIProvider` / `OpenRouterProvider`) | `FakeLLM` |
+| Persistência        | port     | `TransactionManager` + `ModernizationRepository` | `SessionTransactionManager`, `SqlAlchemyModernizationRepository` | `InMemoryDatabase`, `InMemoryModernizationRepository` |
+| Dialeto de origem   | strategy | `SQLParser`                                      | `PglastParser` (PL/pgSQL)                             | parser real |
+| Checagens do código | strategy | `CodeCheck` + `Rule(check, blocking)`            | `PythonASTCheck`, `RuffCheck`                         | checks reais e de teste |
 
-    FASTAPI --> SVC
-    LGCLI --> A5
-    A5 --> P4
-    SVC --> DOM
-    SVC --> P4
-    SVC --> P5
-    SVC --> P2
-    A1 -. implements .-> P1
-    A2 -. implements .-> P2
-    A3 -. implements .-> P3
-    A4 -. implements .-> P4
-    A5 -. implements .-> P5
-    A5 --> P1
-    A5 --> P3
-```
+O orquestrador (LangGraph) **não** fica atrás de um port: é o fluxo da feature, e o caso de uso o
+chama via `run_modernization` (AD-09). Não há `BaseService`, `BaseRepository`, `GenericDAO` etc. O
+único "base" é `ValueObject` (configuração Pydantic `frozen`) e o `DeclarativeBase` do SQLAlchemy.
 
 Direção das dependências (verificada por teste — `tests/unit/test_architecture.py`):
 
 ```
 shared (reutilizável, zero dependências de core ou features)
-core (providers, bootstrap, server, config, database) ──► features (rotas, domínio, ports)
+core (providers, bootstrap, server, config, database) ──► features
 features/modernization:
-  api ──► application ──► ports ◄── infrastructure
-               │                          │
-               └──────► domain ◄──────────┘
-  graph (LangGraph) ──► application/ports + domain
-app/core/providers.py = composition root (único lugar que conhece todos os adapters);
+  routes/schemas ──► use_cases ──► graph ──► generation · validation · parsing (steps/strategies)
+                                      └────► persistence (ExecutionLog, repository)
+  domain ◄── todos; o domínio não importa nada da feature
+  cada lib só no módulo que a encapsula: pglast → parsing/plpgsql.py · ruff → validation/ruff_check.py
+  · sqlalchemy → persistence/models.py · langgraph → graph/builder.py
+app/core/providers.py = composition root (único lugar que conhece todas as implementações);
 features nunca importam providers/bootstrap/server
 ```
-
-### Eixos de variação (onde existem abstrações — e só lá)
-
-| Eixo                 | Port                                   | Adapters hoje                                         |
-|----------------------|----------------------------------------|-------------------------------------------------------|
-| LLM provider/modelo  | `LLM`                                  | `LLMGateway` (routes em ordem → `OpenAIProvider` / `OpenRouterProvider`) |
-| Parser SQL           | `SQLParser`                            | `PglastParser`                                        |
-| Validadores          | `CodeValidator`                        | `PythonASTValidator`, `RuffValidator`, `CompositeCodeValidator` |
-| Persistência         | `TransactionManager` + `ModernizationRepository` | `SessionTransactionManager`, `SqlAlchemyModernizationRepository` |
-| Orquestração         | `ModernizationPipeline`                | `LangGraphModernizationPipeline`                      |
-
-Não há `BaseService`, `BaseRepository`, `GenericDAO` etc. O único "base" é
-`ValueObject` (configuração Pydantic `frozen`) e o `DeclarativeBase` do SQLAlchemy.
 
 ---
 
@@ -262,11 +233,12 @@ flowchart LR
 - **Estado tipado** (`app/features/modernization/graph/state.py`): `ModernizationState` (`TypedDict`) com modelos de domínio
   explícitos (`ParsedProcedure`, `SemanticAnalysis`, `GenerationResult`, `ValidationResult`) e canais
   append-only (`completed_steps`, `warnings`, `errors`) via reducer `operator.add`.
-- **Nodes finos** (`app/features/modernization/graph/nodes/`): cada um chama um port/serviço e
-  devolve `StateUpdate`; exceções propagam sem tratamento HTTP local.
+- **Nodes finos** (`app/features/modernization/graph/nodes.py`): cada um implementa `StepNode`,
+  chama uma strategy/step e devolve `StateUpdate`; pré-condições via `require()`; exceções
+  propagam sem tratamento HTTP local.
 - **Persistência**: `record_start` commita `running` antes do LLM; `record_result` grava a
-  conclusão normal. Se um passo lança exceção, o wrapper `_tracked` grava `failure` com o
-  progresso já realizado e relança — vale para `POST /modernize`, API do LangGraph e Studio.
+  conclusão normal. Se um passo lança exceção, o wrapper `_tracked` grava `failure`
+  (`ExecutionLog.fail`) com o progresso já realizado e relança — vale para `POST /modernize`, API do LangGraph e Studio.
 - **Loop de reparo** (`validation → generation`, AD-13): se a validação reprova (AST ou Ruff), a
   geração roda de novo com o código anterior e a lista de problemas no prompt, até
   `GENERATION_MAX_ATTEMPTS` (default 2) e só se a run tiver menos de
@@ -416,14 +388,17 @@ TEST_DATABASE_URL=postgresql+asyncpg://modernizer:modernizer@localhost:5432/mode
 uv run ruff check . && uv run ruff format --check .
 ```
 
-- **Unitários (64)**: parser (`pglast`), análise semântica (inclusive sobre IR montado à mão, sem
-  parser), `CodeGenerationService` com test double (verifica que o prompt carrega parsing +
-  análise; resposta truncada; `strategy` ausente), validadores (AST, Ruff, composite),
-  `ModernizationService` com LangGraph real + banco em memória (sucesso, falha do LLM, falha de
-  parsing, Python inválido, lint → partial, crash inesperado), graph (loop de reparo com feedback,
-  limite de tentativas, orçamento de tempo, retentativa que falha mantém a anterior, run iniciada
-  direto no graph — caminho do servidor LangGraph — é persistida), API (`/health`, `/modernize`, `/modernizations/{id}`), factory de providers e
-  **regras de dependência entre camadas** (análise de imports via `ast`).
+- **Unitários (180)**: parser (`pglast`), análise semântica (inclusive sobre IR montado à mão, sem
+  parser), `GenerateCode` com test double (verifica que o prompt carrega parsing + análise;
+  resposta truncada; `strategy` ausente), validação (checks AST e Ruff, política bloqueante/não
+  bloqueante decidida pela `Rule`, checks em paralelo), `ExecutionLog`, casos de uso
+  (`ModernizeRoutine`, `GetModernization`) com LangGraph real + banco em memória (sucesso, falha
+  do LLM, falha de parsing, Python inválido, lint → partial, crash inesperado), graph (loop de
+  reparo com feedback, limite de tentativas, orçamento de tempo, retentativa que falha mantém a
+  anterior, run iniciada direto no graph — caminho do servidor LangGraph — é persistida),
+  transação corrente por task, API (`/health`, `/modernize`, `/modernizations/{id}`), container e
+  **regras de arquitetura** (imports via `ast`: dependências entre módulos, cada lib só no módulo
+  que a encapsula, um `execute` por caso de uso).
 - **Integração (5)**: Postgres real migrado com Alembic (subprocess), round-trip do repository,
   JSONB, rollback sem commit, e persistência de sucesso **e** falha ponta a ponta.
   São pulados quando `TEST_DATABASE_URL` não está definido. O `docker compose` cria o banco
@@ -469,32 +444,21 @@ app/
     ├── health/               # Feature de monitoramento e liveness check
     │   ├── routes.py
     │   └── schemas.py
-    └── modernization/        # Feature principal: modernização de SQL para Python
-        ├── api/              # Driving adapter HTTP (rotas com FromDishka[...], schemas)
-        │   ├── routes.py
-        │   └── schemas/
-        ├── domain/           # Entidades, agregados, value objects e regras puras
-        │   ├── enums.py
-        │   ├── exceptions.py
-        │   ├── models/       # IR de parsing, análise semântica, geração e validação
-        │   └── services/     # Analisador semântico determinístico
-        ├── application/      # Casos de uso e portas abstratas (Protocols)
-        │   ├── ports/        # parsing, validation, pipeline, repositories
-        │   │                 # (LLM e TransactionManager vêm de shared)
-        │   └── services/     # ModernizationService e CodeGenerationService
-        ├── graph/            # Workflow LangGraph (pipeline, state, builder e nodes finos)
-        │   ├── builder.py
-        │   ├── pipeline.py
-        │   ├── state.py
-        │   └── nodes/
-        ├── infrastructure/   # Driven adapters (parsing pglast, Ruff/AST, repositórios SQLAlchemy)
-        │   ├── parsing/      # PglastParser
-        │   ├── persistence/  # repositórios, mappers e models ORM
-        │   └── validation/   # PythonASTValidator, RuffValidator e CompositeCodeValidator
-        └── prompts/          # Templates de engenharia de prompt (generation_prompt.py)
+    └── modernization/        # Feature principal: pastas por capacidade (AD-15)
+        ├── routes.py         # 1 rota = 1 caso de uso (FromDishka[...])
+        ├── schemas.py        # request.to_command() / response.from_domain()
+        ├── use_cases.py      # ModernizeRoutine, GetModernization (+ Command/Query)
+        ├── domain/           # Vocabulário puro: aggregate, IR, relatório, SemanticAnalyzer
+        ├── parsing/          # strategy.py (SQLParser) · plpgsql.py (PglastParser)
+        ├── generation/       # generate_code.py (GenerateCode) · prompt.py
+        ├── validation/       # validate_code.py (CodeCheck, Rule, ValidateCode)
+        │                     # python_ast_check.py · ruff_check.py
+        ├── persistence/      # repository.py (port + SQLAlchemy) · execution_log.py
+        │                     # models.py (ORM) · mapper.py
+        └── graph/            # builder.py (graph + run_modernization) · nodes.py · state.py
 migrations/                   # Alembic (env async + versions/)
 examples/                     # Anexo A (schema.sql), Anexos B–F (procedures/) e results/
-scripts/run_examples.py       # Roda os anexos pelo ModernizationService e grava results/
+scripts/run_examples.py       # Roda os anexos pelo ModernizeRoutine e grava results/
 tests/{unit,integration,fixtures/procedures}
 docker/postgres/init/         # Cria o banco de testes
 ```
@@ -753,21 +717,24 @@ recomendações/estratégia, schema opcional e, por último, o source original "
 referência". A resposta é um contrato JSON validado com Pydantic (tolerante a fences Markdown).
 `PROMPT_VERSION` vai para o relatório.
 
-### AD-06 · Validação: composite, bloqueante vs não bloqueante
+### AD-06 · Validação: checks são strategies, a política está nas rules
 
-`PythonASTValidator` (`ast.parse`) é **bloqueante** (falha ⇒ `failure`). `RuffValidator` executa o
-binário do Ruff isolado (`--isolated`, stdin, regras de correção `E4,E7,E9,F,B,ASYNC,S608` —
-`S608` pega SQL montado com f-string), é **não bloqueante** (achados ⇒ `partial`). O Ruff roda com
-`subprocess.run` numa worker thread: funciona em qualquer event loop (o `SelectorEventLoop` do
-Windows, usado pelo `langgraph dev`, não suporta subprocess async). `CompositeCodeValidator` roda
-os validadores em paralelo e propaga erros de execução. Sintaxe inválida continua sendo
-um resultado bloqueante que pode provocar reparo.
+Cada check (`CodeCheck`) só reporta achados. `PythonASTCheck` usa `ast.parse`. `RuffCheck` executa
+o binário do Ruff isolado (`--isolated`, stdin, regras de correção `E4,E7,E9,F,B,ASYNC,S608` —
+`S608` pega SQL montado com f-string) com `subprocess.run` numa worker thread: funciona em
+qualquer event loop (o `SelectorEventLoop` do Windows, usado pelo `langgraph dev`, não suporta
+subprocess async). Se um achado **bloqueia** (`failure`) ou só rebaixa para `partial` é política,
+declarada uma vez em `core/providers.py`: `Rule(PythonASTCheck(), blocking=True)`,
+`Rule(RuffCheck(...), blocking=False)`. `ValidateCode` roda os checks em paralelo e propaga
+erros de execução da própria ferramenta. Sintaxe inválida continua sendo um resultado bloqueante
+que pode provocar reparo. Novo check (mypy, bandit, execução contra banco de teste): um módulo em
+`validation/` + uma `Rule`.
 
 ### AD-07 · Toda execução é persistida, dentro do graph
 
 `record_start` grava `running` e commita antes da chamada ao LLM; `record_result` grava a
 conclusão normal. Se um passo lança exceção, `_tracked` (o wrapper de cada node) grava
-`failure` com tudo o que foi produzido até ali (`RecordFailure`, transação curta) e relança
+`failure` com tudo o que foi produzido até ali (`ExecutionLog.fail`, transação curta) e relança
 a exceção, sem engoli-la. A persistência fica **no graph** porque ele tem mais de uma porta de
 entrada: `POST /modernize` e a API/Studio do servidor LangGraph, que não passa pelos handlers
 FastAPI. Nas rotas FastAPI, `PipelineProgress` só leva o `execution_id` até o handler global,
@@ -781,9 +748,9 @@ qualquer outra dependência e trabalham dentro da transação em andamento:
 
 ```python
 async with self._transactions.transaction() as tx:
-    running = await self._modernizations.find_by_id(execution_id)
+    running = await self._modernizations.get(execution_id)  # NotFoundError se não existe
     await self._modernizations.update(running.complete(outcome))
-    await tx.commit()          # explícito: sair sem commit() faz rollback
+    await tx.commit()  # explícito: sair sem commit() faz rollback
 ```
 
 - **Port** genérico em `app/shared/persistence.py` (`TransactionManager`, `Transaction`), sem
@@ -798,17 +765,20 @@ async with self._transactions.transaction() as tx:
 Commit é explícito por escolha: nada é gravado por acidente. Uma run usa duas transações curtas
 (AD-07), então nenhuma conexão fica presa durante a chamada ao LLM. Ler, alterar e gravar fica na
 mesma transação, e vários repositórios podem participar da mesma. Adicionar `evaluation_results` ou
-`llm_calls`: novo model em `app/features/modernization/infrastructure/persistence/models/`, novo
+`llm_calls`: novo model em `app/features/modernization/persistence/models.py`, novo
 repository, novo mapper, um `provide` em `app/core/providers.py` e uma migration — nenhum módulo
 existente precisa mudar. O port do repositório expressa necessidades do domínio (`save`,
-`update`, `find_by_id`), não um CRUD genérico.
+`update`, `get`), não um CRUD genérico.
 
-### AD-09 · `ModernizationPipeline` como port
+### AD-09 · O graph é o fluxo da feature, sem port de pipeline
 
-O caso de uso depende de um Protocol, não de LangGraph. O graph (`app/features/modernization/graph`) é um adapter que
-implementa esse port. Isso mantém o service testável e o framework de orquestração trocável.
-O contrato do port inclui registrar a run (AD-07): qualquer implementação deve persistir
-`running` antes, a conclusão (normal ou `failure`) depois; erros propagam após serem gravados.
+Havia um `ModernizationPipeline` (Protocol) implementado por `LangGraphModernizationPipeline`.
+Foram removidos: só existia uma implementação e nenhum teste usava outra (os testes rodam o graph
+real, com fakes só nas bordas: LLM e banco). Um port sem segunda implementação só adiciona
+indireção. `ModernizeRoutine` chama `run_modernization(graph, ...)` (`graph/builder.py`), que
+também é o único lugar que conhece o canal `progress` lido pelo wrapper dos nós. Trocar de
+orquestrador muda `graph/` e o caso de uso; steps, strategies e `ExecutionLog` não conhecem
+LangGraph (garantido por teste).
 
 ### AD-10 · Pydantic no domínio
 
@@ -821,16 +791,17 @@ de serialização.
 
 `app/core/providers.py` é o único módulo que importa adapters concretos. Cada dependência é
 declarada uma vez como provider [dishka](https://dishka.readthedocs.io/) (`@provide`, escopo
-`APP`): `InfrastructureProvider` (Settings, engine com `dispose` na finalização, `LLM` = gateway)
-e `ModernizationProvider` (repositórios, serviços, graph, pipeline). Os construtores continuam explícitos;
+`APP`): `InfrastructureProvider` (Settings, engine com `dispose` na finalização,
+`TransactionManager`, `LLM` = gateway) e `ModernizationProvider` (repositório, `ExecutionLog`,
+steps, regras de validação, graph, casos de uso). Os construtores continuam explícitos;
 o dishka só resolve o grafo de dependências, valida-o ao criar o container (dependência
 faltando quebra no boot) e finaliza recursos no `close()`. `build_container(settings,
 *overrides)` cria o container; `default_container()` (`@cache`) guarda-o **por processo**.
 
 Antes, cada feature tinha um `api/dependencies.py` lendo um `Container` com um campo por
 service, e a feature importava o `core.bootstrap` (ciclo core ↔ feature). Agora a rota só
-declara o tipo: `service: FromDishka[ModernizationService]` com
-`APIRouter(route_class=DishkaRoute)`; um service novo custa um `provide` em `providers.py`.
+declara o tipo: `use_case: FromDishka[ModernizeRoutine]` com
+`APIRouter(route_class=DishkaRoute)`; um caso de uso novo custa um `provide` em `providers.py`.
 `test_architecture.py` proíbe features de importar `providers`/`bootstrap`/`server` e restringe
 o dishka ao core e às rotas.
 
@@ -906,8 +877,37 @@ Mensagem e payload são públicos: nada de texto de SDK, segredos ou stack (isso
 `__cause__`, que é logado). Erros de vendor nunca sobem crus: o `Integration`, instanciado uma
 vez por dependência, os traduz de forma genérica (status HTTP exposto pelo SDK, ou timeout /
 transporte na cadeia de causas), então o core não importa nenhum SDK. `test_architecture.py`
-fixa quem pode criar cada classe: `IntegrationError` só em `shared/integrations` e na camada de
-aplicação (que valida a resposta do LLM); `NotFoundError` nunca no domínio.
+fixa quem pode criar cada classe: `IntegrationError` só em `shared/integrations` e em
+`generation/` (que valida a resposta do LLM); `NotFoundError` só em `persistence/`.
+
+### AD-15 · Pastas por capacidade, contrato por papel, abstração só com variação real
+
+A feature começou em camadas técnicas (`api/`, `application/ports/…`, `infrastructure/…`, 21
+pastas): uma capacidade como validação ficava em três lugares (port, composite, adapters), e havia
+port para tudo. Hoje são 6 pastas por capacidade (`domain`, `parsing`, `generation`, `validation`,
+`persistence`, `graph`) mais `routes.py`, `schemas.py` e `use_cases.py`:
+
+- **Contrato junto de quem o consome**: `CodeCheck` ao lado de `ValidateCode`,
+  `ModernizationRepository` ao lado da implementação SQLAlchemy, `SQLParser` no pacote de parsing.
+  Sem pasta `ports/` genérica.
+- **Port × strategy**: port é uma fronteira com sistema externo, trocada por fake nos testes
+  (`LLM`, `TransactionManager`, `ModernizationRepository`); strategy é um algoritmo intercambiável
+  escolhido ou combinado pela aplicação (`SQLParser` por dialeto, `CodeCheck` por regra). Sem
+  segunda implementação nem fake, não há abstração (AD-09).
+- **Contrato por papel** ([tabela](#contratos-por-papel)): rota de 3 linhas, caso de uso com um
+  `execute`, nó `StepNode` fino com `require()`. Regra de negócio fica no domínio
+  (`Modernization.fail`, `PipelineError.from_exception`) ou no `ExecutionLog`, nunca no graph.
+- **Fronteira por arquivo, garantida por teste**: sem pasta `infrastructure/`,
+  `test_architecture.py` fixa quem importa cada lib (`pglast` só em `parsing/plpgsql.py`, `ruff`
+  só em `validation/ruff_check.py`, `sqlalchemy` só em `persistence/models.py`, `langgraph` só
+  em `graph/builder.py`); domínio, casos de uso, steps e contratos não importam vendor, core nem
+  DI; rotas só conhecem casos de uso, schemas e domínio.
+- **Sem `__init__.py`** (namespace packages): imports apontam para o módulo; a estrutura rasa
+  mantém esses caminhos curtos.
+
+Crescimento: novo dialeto = `parsing/<dialeto>.py`; novo check = `validation/<check>.py` + uma
+`Rule`; novo caso de uso = uma classe em `use_cases.py` + um `provide`; nova tabela =
+model/mapper/repository em `persistence/` + migration.
 
 ---
 

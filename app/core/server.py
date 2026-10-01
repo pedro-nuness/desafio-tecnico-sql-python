@@ -12,10 +12,8 @@ from app.core.bootstrap import default_container
 from app.core.config.settings import Settings
 from app.core.exception_handlers import register_exception_handlers
 from app.features.health.routes import router as health_router
-from app.features.modernization.api.routes import router as modernization_router
-from app.features.modernization.application.services.modernization_service import (
-    ModernizationService,
-)
+from app.features.modernization.routes import router as modernization_router
+from app.features.modernization.use_cases import ModernizeRoutine
 
 
 def create_app(container: AsyncContainer | None = None) -> FastAPI:
@@ -26,9 +24,9 @@ def create_app(container: AsyncContainer | None = None) -> FastAPI:
     @asynccontextmanager
     async def lifespan(app: FastAPI) -> AsyncIterator[None]:
         logging.basicConfig(level=(await container.get(Settings)).log_level)
-        # Resolve the use case once at startup: a missing API key or a broken config fails
-        # the boot instead of the first request.
-        await container.get(ModernizationService)
+        # Resolve the use case (and the graph behind it) once at startup: a missing API key
+        # or a broken config fails the boot instead of the first request.
+        await container.get(ModernizeRoutine)
         try:
             yield
         finally:

@@ -4,15 +4,15 @@ from typing import Annotated, NotRequired, TypedDict
 from uuid import UUID
 
 from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
-from app.features.modernization.domain.models.generation import GenerationResult
-from app.features.modernization.domain.models.modernization import (
+from app.features.modernization.domain.generation import GenerationResult
+from app.features.modernization.domain.modernization import (
     Modernization,
     PipelineError,
     PipelineOutcome,
 )
-from app.features.modernization.domain.models.parsing import ParsedProcedure
-from app.features.modernization.domain.models.semantic_analysis import SemanticAnalysis
-from app.features.modernization.domain.models.validation import ValidationResult
+from app.features.modernization.domain.parsing import ParsedProcedure
+from app.features.modernization.domain.semantic_analysis import SemanticAnalysis
+from app.features.modernization.domain.validation import ValidationResult
 
 
 class ModernizationInput(TypedDict):

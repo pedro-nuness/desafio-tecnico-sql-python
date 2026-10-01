@@ -5,10 +5,8 @@ from collections.abc import AsyncIterator
 import pytest
 
 from app.core.bootstrap import default_container, make_graph
-from app.features.modernization.application.services.modernization_service import (
-    ModernizationService,
-)
 from app.features.modernization.graph.builder import ModernizationGraph
+from app.features.modernization.use_cases import ModernizeRoutine
 
 
 @pytest.fixture
@@ -29,5 +27,5 @@ async def test_api_and_langgraph_server_share_one_container_and_graph() -> None:
     graph = await make_graph()  # langgraph.json factory
     assert graph is await container.get(ModernizationGraph)
     # The HTTP use case runs that same graph (no second engine / graph / Settings).
-    service = await container.get(ModernizationService)
-    assert service._pipeline._graph is graph  # type: ignore[attr-defined]
+    use_case = await container.get(ModernizeRoutine)
+    assert use_case._graph is graph  # type: ignore[attr-defined]

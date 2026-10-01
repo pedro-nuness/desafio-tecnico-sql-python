@@ -10,26 +10,32 @@ from httpx import ASGITransport, AsyncClient
 from app.core.bootstrap import build_container
 from app.core.config.settings import Settings
 from app.core.server import create_app
-from app.features.modernization.application.services.modernization_service import (
-    ModernizationService,
-)
 from app.features.modernization.domain.enums import ModernizationStatus
+from app.features.modernization.domain.validation import ValidationMessage
+from app.features.modernization.persistence.repository import ModernizationRepository
+from app.features.modernization.use_cases import ModernizeRoutine
+from app.features.modernization.validation.validate_code import Rule, ValidateCode
 from app.shared.errors import AppError, DomainError, NotFoundError
 from app.shared.integrations.errors import IntegrationError
-from tests.conftest import ServiceFactory
-from tests.fakes import FakeLLM, InMemoryDatabase
+from app.shared.persistence import TransactionManager
+from tests.conftest import ModernizeFactory
+from tests.fakes import FakeLLM, InMemoryDatabase, InMemoryModernizationRepository
 
 type ApiFactory = Callable[..., FastAPI]
 
 
 @pytest.fixture
-def make_api(make_service: ServiceFactory) -> ApiFactory:
-    """The real container (core/providers.py) with the use case overridden by one wired to
-    the in-memory store and fakes; graph options as in `make_graph`."""
+def make_api(make_modernize: ModernizeFactory, store: InMemoryDatabase) -> ApiFactory:
+    """The real container (core/providers.py) with the use cases and persistence overridden
+    by ones wired to the in-memory store and fakes; graph options as in `make_graph`."""
 
     def factory(**graph_options: Any) -> FastAPI:
         fakes = Provider(scope=Scope.APP)
-        fakes.provide(lambda: make_service(**graph_options), provides=ModernizationService)
+        fakes.provide(lambda: make_modernize(**graph_options), provides=ModernizeRoutine)
+        fakes.provide(lambda: store, provides=TransactionManager)
+        fakes.provide(
+            lambda: InMemoryModernizationRepository(store), provides=ModernizationRepository
+        )
         return create_app(build_container(Settings(_env_file=None), fakes))  # type: ignore[call-arg]
 
     return factory
@@ -217,15 +223,16 @@ async def test_validation_exception_keeps_generated_code_before_http_response(
 ) -> None:
     import json
 
-    class CrashingValidator:
+    class CrashingCheck:
         name = "crashing"
 
-        async def validate(self, code: str):
+        async def check(self, code: str) -> tuple[ValidationMessage, ...]:
             raise RuntimeError("validator failed")
 
     code = "def broken(:\n"
     crashing = make_api(
-        llm=FakeLLM([json.dumps({"python_code": code})]), validator=CrashingValidator()
+        llm=FakeLLM([json.dumps({"python_code": code})]),
+        validate_code=ValidateCode([Rule(CrashingCheck(), blocking=True)]),
     )
     async with AsyncClient(
         transport=ASGITransport(app=crashing, raise_app_exceptions=False), base_url="http://test"

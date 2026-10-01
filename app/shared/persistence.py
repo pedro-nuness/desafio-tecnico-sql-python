@@ -4,7 +4,7 @@ Use cases decide where a transaction starts and ends; repositories are injected 
 and work inside the transaction in progress:
 
     async with transactions.transaction() as tx:
-        running = await modernizations.find_by_id(execution_id)
+        running = await modernizations.get(execution_id)
         await modernizations.update(running.complete(outcome))
         await tx.commit()          # explicit: leaving without commit() rolls back
 """

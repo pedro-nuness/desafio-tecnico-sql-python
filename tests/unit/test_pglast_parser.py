@@ -2,14 +2,14 @@ from collections.abc import Callable
 
 import pytest
 
-from app.features.modernization.domain.models.parsing import (
+from app.features.modernization.domain.parsing import (
     DeclarationKind,
     ParameterMode,
     RoutineKind,
     SqlCommand,
     StatementKind,
 )
-from app.features.modernization.infrastructure.parsing.pglast_parser import (
+from app.features.modernization.parsing.plpgsql import (
     PglastParser,
     analyze_sql,
 )
