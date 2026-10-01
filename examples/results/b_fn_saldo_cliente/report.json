@@ -1,10 +1,9 @@
 {
-  "execution_id": "01a0f7ab-e468-70b4-a372-baddfcf25a95",
+  "execution_id": "01a0f7c7-9754-772b-811d-2dac45e98282",
   "status": "success",
-  "created_at": "2026-10-01T13:33:52.616992+00:00",
+  "created_at": "2026-10-01T14:04:07.892369+00:00",
   "report": {
     "parsing": {
-      "success": true,
       "procedure_name": "fn_saldo_cliente",
       "kind": "function",
       "parser": "pglast",
@@ -27,7 +26,7 @@
       "warnings": []
     },
     "semantic_analysis": {
-      "detected_features": [
+      "features": [
         {
           "feature": "aggregation",
           "occurrences": 1,
@@ -55,6 +54,16 @@
           "kind": "table"
         }
       ],
+      "parameters": {
+        "inputs": [
+          "p_cliente_id"
+        ],
+        "outputs": [],
+        "in_out": []
+      },
+      "variables": [
+        "v_total"
+      ],
       "recommended_strategy": "database_delegated",
       "recommendations": [
         {
@@ -64,44 +73,24 @@
       ]
     },
     "generation": {
-      "success": true,
       "strategy": "database_delegated",
       "recommended_strategy": "database_delegated",
+      "architectural_decisions": [],
+      "warnings": [
+        "No transaction control is emitted: the caller owns the transaction (the original function did not manage transactions either).",
+        "The function returns Decimal (matching NUMERIC), not float; callers must expect decimal.Decimal."
+      ],
       "provider": "openrouter",
       "model": "z-ai/glm-5.3-flash",
       "prompt_version": "generation-v4",
       "input_tokens": 2109,
-      "output_tokens": 611,
-      "latency_ms": 37691.03,
+      "output_tokens": 638,
+      "latency_ms": 14008.15,
       "finish_reason": "stop",
-      "attempt": 1,
-      "architectural_decisions": [
-        {
-          "topic": "Aggregation placement",
-          "decision": "Kept the SUM/COALESCE aggregation as a single parameterized SQL statement executed by Python.",
-          "rationale": "Rule 1: aggregates stay close to the database; the routine is a single SELECT INTO."
-        },
-        {
-          "topic": "Transaction ownership",
-          "decision": "No commit/rollback in the function; the caller owns the transaction.",
-          "rationale": "The original PL/pgSQL function runs inside the caller's transaction and does not control transactions."
-        },
-        {
-          "topic": "Return type",
-          "decision": "Scalar function returns a Decimal, cast to NUMERIC(18,2) in SQL.",
-          "rationale": "Rule 12: NUMERIC values must be Decimal end to end; the CAST reproduces the NUMERIC(18,2) rounding of the declared return type."
-        }
-      ],
-      "warnings": [
-        "COALESCE and the polymorphic bind position use CAST(:name AS type) because asyncpg cannot infer untyped parameters in prepared statements.",
-        "The original function returns NUMERIC(18,2); the SQL CAST reproduces the two-decimal rounding on the final value. There are no intermediate assignments in the original, so no extra rounding steps are needed.",
-        "No row locking or exception blocks existed in the original, so no savepoints are required."
-      ]
+      "attempt": 1
     },
     "validation": {
-      "valid_python": true,
-      "passed_all": true,
-      "validators": [
+      "results": [
         {
           "validator": "python_ast",
           "success": true,
@@ -123,8 +112,7 @@
           "messages": [],
           "skipped": null
         }
-      ],
-      "warnings": []
+      ]
     },
     "completed_steps": [
       "parsing",

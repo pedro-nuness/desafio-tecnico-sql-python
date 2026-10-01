@@ -5,12 +5,11 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.database.transaction import SessionTransactionManager
 from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
 from app.features.modernization.domain.modernization import (
     Modernization,
+    ModernizationReport,
     PipelineError,
-    PipelineOutcome,
     PipelineProgress,
 )
 from app.features.modernization.domain.semantic_analyzer import SemanticAnalyzer
@@ -39,39 +38,30 @@ type SessionFactory = async_sessionmaker[AsyncSession]
 
 
 def _failed(modernization: Modernization) -> Modernization:
-    outcome = PipelineOutcome(
+    report = ModernizationReport(
         completed_steps=(PipelineStep.PARSING,),
         errors=(PipelineError(step=PipelineStep.GENERATION, error_type="X", message="boom"),),
     )
-    return modernization.complete(outcome)
+    return modernization.complete(report, None)
 
 
 async def test_save_and_get_round_trip(session_factory: SessionFactory) -> None:
-    transactions, modernizations = _persistence(session_factory)
+    modernizations = SqlAlchemyModernizationRepository(session_factory)
     modernization = Modernization.start("CREATE FUNCTION ...", "CREATE TABLE t();")
 
-    async with transactions.transaction() as tx:
-        await modernizations.save(modernization)
-        await tx.commit()
-
-    async with transactions.transaction():
-        found = await modernizations.get(modernization.id)
+    await modernizations.save(modernization)
+    found = await modernizations.get(modernization.id)
 
     assert found == modernization
     assert found.created_at.tzinfo is not None
 
 
 async def test_update_persists_report_as_jsonb(session_factory: SessionFactory) -> None:
-    transactions, modernizations = _persistence(session_factory)
+    modernizations = SqlAlchemyModernizationRepository(session_factory)
     modernization = Modernization.start("src")
-    async with transactions.transaction() as tx:
-        await modernizations.save(modernization)
-        await tx.commit()
+    await modernizations.save(modernization)
 
-    finished = _failed(modernization)
-    async with transactions.transaction() as tx:
-        await modernizations.update(finished)
-        await tx.commit()
+    await modernizations.update(_failed(modernization))
 
     async with session_factory() as session:
         row = (
@@ -86,46 +76,24 @@ async def test_update_persists_report_as_jsonb(session_factory: SessionFactory) 
     assert tuple(row) == ("failure", "object", "generation")
 
 
-async def test_nothing_is_written_without_commit(session_factory: SessionFactory) -> None:
-    transactions, modernizations = _persistence(session_factory)
-    modernization = Modernization.start("src")
-
-    async with transactions.transaction():
-        await modernizations.save(modernization)  # flushed, never committed
-
-    async with transactions.transaction():
-        with pytest.raises(NotFoundError):
-            await modernizations.get(modernization.id)
-
-
 async def test_update_of_unknown_aggregate_raises(session_factory: SessionFactory) -> None:
-    transactions, modernizations = _persistence(session_factory)
-    async with transactions.transaction():
-        with pytest.raises(NotFoundError):
-            await modernizations.update(
-                Modernization.start("src").model_copy(update={"id": uuid4()})
-            )
-
-
-def _persistence(
-    session_factory: SessionFactory,
-) -> tuple[SessionTransactionManager, SqlAlchemyModernizationRepository]:
-    transactions = SessionTransactionManager(session_factory)
-    return transactions, SqlAlchemyModernizationRepository(transactions)
+    modernizations = SqlAlchemyModernizationRepository(session_factory)
+    with pytest.raises(NotFoundError):
+        await modernizations.update(Modernization.start("src").model_copy(update={"id": uuid4()}))
 
 
 def _use_cases(
     session_factory: SessionFactory, llm: FakeLLM
 ) -> tuple[ModernizeRoutine, GetModernization]:
-    transactions, modernizations = _persistence(session_factory)
+    modernizations = SqlAlchemyModernizationRepository(session_factory)
     graph = build_modernization_graph(
         parser=PglastParser(),
         analyzer=SemanticAnalyzer(),
         generate_code=GenerateCode(llm, GenerationPromptBuilder()),
         validate_code=ValidateCode([Rule(PythonASTCheck(), blocking=True)]),
-        execution_log=ExecutionLog(transactions, modernizations),
+        execution_log=ExecutionLog(modernizations),
     )
-    return ModernizeRoutine(graph), GetModernization(transactions, modernizations)
+    return ModernizeRoutine(graph), GetModernization(modernizations)
 
 
 async def test_every_execution_is_persisted_including_failures(

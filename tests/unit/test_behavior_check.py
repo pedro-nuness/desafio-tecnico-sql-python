@@ -9,8 +9,7 @@ from app.features.modernization.domain.evaluation import CaseResult, Evaluation,
 from app.features.modernization.domain.modernization import (
     Modernization,
     ModernizationReport,
-    ParsingReport,
-    ValidationReport,
+    ParsingSummary,
 )
 from app.features.modernization.evaluation.scenarios import Dataset
 from app.features.modernization.parsing.plpgsql import PglastParser
@@ -99,18 +98,14 @@ async def test_a_skipped_check_passes_and_is_reported_as_not_run() -> None:
     behavior = next(r for r in result.results if r.validator == "behavior")
     assert behavior.success and behavior.skipped is not None
     assert result.passed_all  # nothing to retry on
-    warnings = ValidationReport.from_result(result).warnings
+    warnings = result.warnings()
     assert any(w.startswith("[behavior] not run: no evaluation scenario") for w in warnings)
 
 
 def test_holdout_rates_count_only_cases_the_loop_never_saw() -> None:
     def evaluation(procedure: str, *cases: CaseResult) -> Evaluation:
         modernization = Modernization.start("src").model_copy(
-            update={
-                "report": ModernizationReport(
-                    parsing=ParsingReport(success=True, procedure_name=procedure)
-                )
-            }
+            update={"report": ModernizationReport(parsing=ParsingSummary(procedure_name=procedure))}
         )
         return Evaluation.of(modernization, cases)
 

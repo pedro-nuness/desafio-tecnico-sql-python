@@ -2,15 +2,14 @@ from typing import Protocol
 
 from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import distinct_on
+from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.database.transaction import SessionTransactionManager
 from app.features.modernization.domain.evaluation import CaseResult, Evaluation
 from app.features.modernization.evaluation.models import EvaluationResultModel
 
 
 class EvaluationRepository(Protocol):
-    """Port: evaluation results (in-memory fake in the tests). Works inside the caller's
-    transaction; flushes, never commits."""
+    """Port: evaluation results (in-memory fake in the tests). Each save commits."""
 
     async def save(self, evaluation: Evaluation) -> None: ...
 
@@ -20,29 +19,29 @@ class EvaluationRepository(Protocol):
 
 
 class SqlAlchemyEvaluationRepository:
-    def __init__(self, transactions: SessionTransactionManager) -> None:
-        self._transactions = transactions
+    def __init__(self, sessions: async_sessionmaker[AsyncSession]) -> None:
+        self._sessions = sessions
 
     async def save(self, evaluation: Evaluation) -> None:
-        session = self._transactions.current_session()
-        session.add(
-            EvaluationResultModel(
-                id=evaluation.id,
-                modernization_id=evaluation.modernization_id,
-                procedure_name=evaluation.procedure_name,
-                metric=evaluation.metric,
-                prompt_version=evaluation.prompt_version,
-                model=evaluation.model,
-                static_valid=evaluation.static_valid,
-                completed=evaluation.completed,
-                cases_passed=evaluation.cases_passed,
-                cases_total=evaluation.cases_total,
-                score=evaluation.score,
-                cases=[case.model_dump(mode="json") for case in evaluation.cases],
-                created_at=evaluation.created_at,
+        async with self._sessions() as session:
+            session.add(
+                EvaluationResultModel(
+                    id=evaluation.id,
+                    modernization_id=evaluation.modernization_id,
+                    procedure_name=evaluation.procedure_name,
+                    metric=evaluation.metric,
+                    prompt_version=evaluation.prompt_version,
+                    model=evaluation.model,
+                    static_valid=evaluation.static_valid,
+                    completed=evaluation.completed,
+                    cases_passed=evaluation.cases_passed,
+                    cases_total=evaluation.cases_total,
+                    score=evaluation.score,
+                    cases=[case.model_dump(mode="json") for case in evaluation.cases],
+                    created_at=evaluation.created_at,
+                )
             )
-        )
-        await session.flush()
+            await session.commit()
 
     async def latest_per_procedure(self) -> tuple[Evaluation, ...]:
         latest = (
@@ -50,7 +49,8 @@ class SqlAlchemyEvaluationRepository:
             .ext(distinct_on(EvaluationResultModel.procedure_name))
             .order_by(EvaluationResultModel.procedure_name, EvaluationResultModel.created_at.desc())
         )
-        models = (await self._transactions.current_session().scalars(latest)).all()
+        async with self._sessions() as session:
+            models = (await session.scalars(latest)).all()
         return tuple(_to_domain(model) for model in models)
 
 

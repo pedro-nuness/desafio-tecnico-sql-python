@@ -114,7 +114,7 @@ def _summary(
         validation = report.validation
         risks = sorted({risk.code for risk in analysis.risks}) if analysis else []
         lint = (
-            next((v for v in validation.validators if v.validator == "ruff"), None)
+            next((v for v in validation.results if v.validator == "ruff"), None)
             if validation
             else None
         )
@@ -127,14 +127,14 @@ def _summary(
                     str(generation.attempt) if generation and generation.attempt else "—",
                     (
                         f"{generation.strategy} / {generation.recommended_strategy}"
-                        if generation and generation.success
+                        if generation
                         else "—"
                     ),
                     ", ".join(risks) or "—",
                     "—" if lint is None else ("ok" if lint.success else f"{len(lint.messages)}"),
                     (
                         f"{generation.input_tokens} / {generation.output_tokens}"
-                        if generation and generation.success
+                        if generation
                         else "—"
                     ),
                     f"{(run.updated_at - run.created_at).total_seconds():.1f}s",

@@ -33,10 +33,10 @@ async def test_success_runs_all_four_nodes_and_persists_twice(
     assert result.report.completed_steps == ALL_STEPS
     assert result.generated_code is not None
     report = result.report
-    assert report.parsing is not None and report.parsing.success
+    assert report.parsing is not None
     assert report.semantic_analysis is not None
     assert report.generation is not None and report.generation.provider == "fake"
-    assert report.validation is not None and report.validation.valid_python
+    assert report.validation is not None and report.validation.is_valid
     # RUNNING row committed before the pipeline, final row committed after it
     assert [m.status for m in store.history] == [
         ModernizationStatus.RUNNING,
@@ -92,7 +92,7 @@ async def test_invalid_python_is_a_failure_but_code_is_kept(
 
     assert result.status is ModernizationStatus.FAILURE
     assert result.generated_code == "def broken(:\n"
-    assert result.report.validation is not None and not result.report.validation.valid_python
+    assert result.report.validation is not None and not result.report.validation.is_valid
 
 
 async def test_lint_findings_make_the_result_partial(
@@ -106,7 +106,7 @@ async def test_lint_findings_make_the_result_partial(
 
     assert result.status is ModernizationStatus.PARTIAL
     assert result.report.validation is not None
-    assert any("F401" in warning for warning in result.report.validation.warnings)
+    assert any("F401" in warning for warning in result.report.warnings)
 
 
 class _ExplodingCheck:

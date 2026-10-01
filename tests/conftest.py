@@ -103,7 +103,7 @@ def make_graph(store: InMemoryDatabase) -> GraphFactory:
             analyzer=SemanticAnalyzer(),
             generate_code=GenerateCode(llm or FakeLLM([llm_payload()]), GenerationPromptBuilder()),
             validate_code=validate_code or default_validate_code(),
-            execution_log=ExecutionLog(store, InMemoryModernizationRepository(store)),
+            execution_log=ExecutionLog(InMemoryModernizationRepository(store)),
             retry=retry,
         )
 
@@ -120,4 +120,4 @@ def make_modernize(make_graph: GraphFactory) -> ModernizeFactory:
 
 @pytest.fixture
 def get_modernization(store: InMemoryDatabase) -> GetModernization:
-    return GetModernization(store, InMemoryModernizationRepository(store))
+    return GetModernization(InMemoryModernizationRepository(store))

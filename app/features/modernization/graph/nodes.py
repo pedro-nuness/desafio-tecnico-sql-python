@@ -10,7 +10,7 @@ from app.features.modernization.domain.enums import PipelineStep
 from app.features.modernization.domain.generation import RepairFeedback
 from app.features.modernization.domain.semantic_analyzer import SemanticAnalyzer
 from app.features.modernization.generation.generate_code import GenerateCode
-from app.features.modernization.graph.state import ModernizationState, StateUpdate, to_outcome
+from app.features.modernization.graph.state import ModernizationState, StateUpdate, to_report
 from app.features.modernization.parsing.strategy import SQLParser
 from app.features.modernization.persistence.execution_log import ExecutionLog
 from app.features.modernization.validation.validate_code import Routine, ValidateCode
@@ -78,7 +78,7 @@ class GenerationNode:
     async def __call__(self, state: ModernizationState) -> StateUpdate:
         attempt = state.get("generation_attempts", 0) + 1
         feedback = _feedback(state, attempt)
-        result = await self._generate_code.execute(
+        code, result = await self._generate_code.execute(
             procedure=require(state.get("parsed_procedure"), "parsed_procedure"),
             analysis=require(state.get("semantic_analysis"), "semantic_analysis"),
             source_code=state["source_code"],
@@ -95,7 +95,7 @@ class GenerationNode:
         )
         return StateUpdate(
             generation=result,
-            generated_code=result.code,
+            generated_code=code,
             generation_attempts=attempt,
             completed_steps=[self.step],
             warnings=warnings,
@@ -148,5 +148,7 @@ class RecordResultNode:
         self._execution_log = execution_log
 
     async def __call__(self, state: ModernizationState) -> StateUpdate:
-        finished = await self._execution_log.complete(state["execution_id"], to_outcome(state))
+        finished = await self._execution_log.complete(
+            state["execution_id"], to_report(state), state.get("generated_code")
+        )
         return StateUpdate(modernization=finished, status=finished.status)

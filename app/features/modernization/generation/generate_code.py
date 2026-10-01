@@ -6,7 +6,6 @@ from pydantic import BaseModel, ValidationError
 from app.features.modernization.domain.enums import GenerationStrategy
 from app.features.modernization.domain.generation import (
     ArchitecturalDecision,
-    GenerationMetadata,
     GenerationResult,
     RepairFeedback,
 )
@@ -58,7 +57,8 @@ class GenerateCode:
         source_code: str,
         schema_context: str | None,
         feedback: RepairFeedback | None = None,
-    ) -> GenerationResult:
+    ) -> tuple[str, GenerationResult]:
+        """Returns the generated module and everything else about the generation."""
         prompt = self._prompt_builder.build(
             procedure=procedure,
             analysis=analysis,
@@ -114,22 +114,19 @@ class GenerateCode:
                 "LLM did not report a strategy; assuming the recommended one "
                 f"({analysis.recommended_strategy.value})."
             )
-        return GenerationResult(
-            code=code,
+        return code, GenerationResult(
             strategy=payload.strategy or analysis.recommended_strategy,
             recommended_strategy=analysis.recommended_strategy,
             architectural_decisions=decisions,
             warnings=tuple(warnings),
-            metadata=GenerationMetadata(
-                provider=response.provider,
-                model=response.model,
-                prompt_version=prompt.version,
-                input_tokens=response.input_tokens,
-                output_tokens=response.output_tokens,
-                latency_ms=response.latency_ms,
-                finish_reason=response.finish_reason,
-                attempt=feedback.attempt if feedback else 1,
-            ),
+            provider=response.provider,
+            model=response.model,
+            prompt_version=prompt.version,
+            input_tokens=response.input_tokens,
+            output_tokens=response.output_tokens,
+            latency_ms=response.latency_ms,
+            finish_reason=response.finish_reason,
+            attempt=feedback.attempt if feedback else 1,
         )
 
 

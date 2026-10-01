@@ -1,24 +1,20 @@
-from __future__ import annotations
+"""Port of the PL/pgSQL function fn_saldo_cliente.
 
-import logging
+Returns the consolidated balance of all active accounts of a client.
+"""
+
 from decimal import Decimal
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-logger = logging.getLogger(__name__)
-
-
-class SaldoClienteError(Exception):
-    """Typed error replacing RAISE EXCEPTION in the original routine."""
-
 
 async def fn_saldo_cliente(conn: AsyncConnection, p_cliente_id: int) -> Decimal:
-    """Return the consolidated balance of all active accounts of a client.
+    """Return SUM(saldo) of active accounts for the given client (0 if none).
 
-    Python port of fn_saldo_cliente(p_cliente_id BIGINT) RETURNS NUMERIC(18,2).
-    The aggregation stays in SQL (database_delegated); the caller owns the
-    transaction.
+    The aggregation is kept in SQL (database_delegated). The CAST to
+    NUMERIC(18,2) reproduces the rounding that the PL/pgSQL variable
+    declaration applied on assignment into v_total.
     """
     result = await conn.execute(
         text(
@@ -31,5 +27,5 @@ async def fn_saldo_cliente(conn: AsyncConnection, p_cliente_id: int) -> Decimal:
         ),
         {"p_cliente_id": p_cliente_id},
     )
-    total: Decimal | None = result.scalar_one()
-    return Decimal("0.00") if total is None else total
+    row = result.one()
+    return Decimal(row[0])

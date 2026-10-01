@@ -1,10 +1,9 @@
 {
-  "execution_id": "01a0f7ab-e479-7546-9bee-a080d0e63a0b",
+  "execution_id": "01a0f7c7-975d-7097-b914-37112dc13895",
   "status": "success",
-  "created_at": "2026-10-01T13:33:52.633654+00:00",
+  "created_at": "2026-10-01T14:04:07.901610+00:00",
   "report": {
     "parsing": {
-      "success": true,
       "procedure_name": "sp_relatorio_mensal_cliente",
       "kind": "function",
       "parser": "pglast",
@@ -73,7 +72,7 @@
       "warnings": []
     },
     "semantic_analysis": {
-      "detected_features": [
+      "features": [
         {
           "feature": "aggregation",
           "occurrences": 1,
@@ -185,6 +184,24 @@
           "kind": "function"
         }
       ],
+      "parameters": {
+        "inputs": [
+          "p_cliente_id",
+          "p_data_inicio",
+          "p_data_fim"
+        ],
+        "outputs": [
+          "mes_referencia",
+          "total_creditos",
+          "total_debitos",
+          "saldo_consolidado",
+          "qtd_transacoes"
+        ],
+        "in_out": []
+      },
+      "variables": [
+        "v_saldo_atual"
+      ],
       "recommended_strategy": "hybrid",
       "recommendations": [
         {
@@ -206,55 +223,52 @@
       ]
     },
     "generation": {
-      "success": true,
       "strategy": "hybrid",
       "recommended_strategy": "hybrid",
-      "provider": "openrouter",
-      "model": "z-ai/glm-5.3-flash",
-      "prompt_version": "generation-v4",
-      "input_tokens": 4067,
-      "output_tokens": 3021,
-      "latency_ms": 36225.52,
-      "finish_reason": "stop",
-      "attempt": 1,
       "architectural_decisions": [
         {
-          "topic": "Set-based SQL kept in database",
-          "decision": "The recursive CTE (meses), the aggregation (movimento) and the final LEFT JOIN remain a single parameterized SQL statement executed by Python.",
-          "rationale": "Re-implementing a recursive month generator plus aggregation in Python would be costly and slower; rule 7/9 favor keeping relational logic close to the database."
+          "topic": "Set-based SQL preserved",
+          "decision": "The recursive CTE, LEFT JOIN and aggregations stay as one parameterized SQL statement executed via SQLAlchemy text().",
+          "rationale": "Joins, aggregates and recursive CTEs belong in the database; rewriting them in Python would be slower and risk semantic drift."
+        },
+        {
+          "topic": "External routine dependency",
+          "decision": "fn_saldo_cliente is still called in SQL (SELECT fn_saldo_cliente(CAST(:cliente_id AS BIGINT))).",
+          "rationale": "The function encapsulates balance logic in the database; the result is assigned to v_saldo_atual exactly once, as in the original."
         },
         {
           "topic": "Exception block as savepoint",
-          "decision": "The whole original BEGIN block (validation, fn_saldo_cliente call, main query) runs inside `async with conn.begin_nested():`; the WHEN OTHERS handler logic runs outside it, after the savepoint rollback.",
-          "rationale": "Rule 14: without the savepoint the transaction stays aborted and the fallback query would fail too."
+          "decision": "The protected statements run inside `async with conn.begin_nested():` and the WHEN OTHERS handling happens outside it.",
+          "rationale": "A PL/pgSQL BEGIN...EXCEPTION block is a savepoint; without begin_nested the transaction would stay aborted and the fallback query would fail too."
         },
         {
-          "topic": "Swallowed exception preserved",
-          "decision": "The handler catches `Exception` (WHEN OTHERS), logs a WARNING and returns the degraded fallback row instead of re-raising, exactly like the original.",
-          "rationale": "Rule 14 requires keeping the original control flow, including the fallback row return."
+          "topic": "Swallowed exceptions",
+          "decision": "The WHEN OTHERS handler is preserved: any failure (including the period validation RAISE, which sits inside the protected block in the original) logs a WARNING and returns the degraded fallback row instead of propagating.",
+          "rationale": "Faithful behaviour preservation; the swallowed-error risk is reported in warnings."
         },
         {
-          "topic": "fn_saldo_cliente dependency",
-          "decision": "Called as `SELECT fn_saldo_cliente(...)` on the same connection/transaction, with the result quantized to 2 decimals in Python to reproduce the NUMERIC(18,2) variable assignment rounding.",
-          "rationale": "The routine is not provided; keeping the call in SQL preserves its semantics, and rule 12 requires reproducing per-assignment rounding."
-        },
-        {
-          "topic": "Typed exception",
-          "decision": "RAISE EXCEPTION mapped to PeriodoInvalidoError, raised inside the protected block; RAISE NOTICE mapped to logging.info and RAISE WARNING to logging.warning.",
-          "rationale": "Rules 5 and 14: the validation RAISE sits inside the block covered by WHEN OTHERS, so it is caught and degrades to the fallback row, as in the original."
+          "topic": "Result await bug fixed",
+          "decision": "`conn.execute(...)` is awaited first and `.first()` is called on the resulting Result object (previously `.first()` was chained onto the un-awaited coroutine, raising AttributeError before any SQL ran).",
+          "rationale": "In SQLAlchemy 2.x async, execute() returns a coroutine; attribute access on it fails immediately, which silently pushed every run into the fallback path."
         }
       ],
       "warnings": [
-        "The original WHEN OTHERS swallows every error, including the period-validation RAISE EXCEPTION: an invalid period returns the fallback row instead of raising PeriodoInvalidoError outward. This mirrors the legacy behaviour; if callers should see the error, move the validation outside the begin_nested block.",
-        "The routine depends on fn_saldo_cliente, which was not provided; it is invoked in SQL and assumed to return a numeric value.",
-        "The fallback row is computed with a fresh SELECT after the savepoint rollback; if the original failure was a connection-level error (not a statement error), the fallback query may also fail, as in the original.",
-        "saldo_consolidado is rounded to NUMERIC(18,2) in SQL after summing, matching the RETURNS TABLE column type; v_saldo_atual is quantized in Python to reproduce the PL/pgSQL variable declaration rounding."
-      ]
+        "SWALLOWED_EXCEPTION: the original WHEN OTHERS does not re-raise; any failure (including an invalid period) degrades to a single fallback row with zeros and the current balance. Preserved as-is.",
+        "Depends on the database routine fn_saldo_cliente; it must exist in the target schema.",
+        "The fallback row's saldo_consolidado uses COALESCE(v_saldo_atual, 0): if fn_saldo_cliente returns NULL the fallback reports 0, matching the original.",
+        "NUMERIC(18,2) rounding is reproduced in Python with quantize(0.01, ROUND_HALF_UP) on each assignment point (saldo fetch and each output column)."
+      ],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "generation-v4",
+      "input_tokens": 6026,
+      "output_tokens": 7101,
+      "latency_ms": 78120.92,
+      "finish_reason": "stop",
+      "attempt": 2
     },
     "validation": {
-      "valid_python": true,
-      "passed_all": true,
-      "validators": [
+      "results": [
         {
           "validator": "python_ast",
           "success": true,
@@ -276,16 +290,19 @@
           "messages": [],
           "skipped": null
         }
-      ],
-      "warnings": []
+      ]
     },
     "completed_steps": [
       "parsing",
       "semantic_analysis",
       "generation",
+      "validation",
+      "generation",
       "validation"
     ],
     "errors": [],
-    "warnings": []
+    "warnings": [
+      "generation attempt 2: regenerated after 1 validation issue(s) in the previous attempt"
+    ]
   }
 }

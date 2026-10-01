@@ -1,8 +1,7 @@
 """In-memory test doubles for persistence and LLM ports."""
 
 import json
-from collections.abc import AsyncIterator, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import Sequence
 from uuid import UUID
 
 from app.features.modernization.domain.evaluation import CaseResult, Evaluation
@@ -11,87 +10,51 @@ from app.features.modernization.persistence.repository import not_found
 from app.shared.integrations.llm.llm import LLMRequest, LLMResponse
 
 
-class InMemoryTransaction:
-    """Buffers writes; only commit() publishes them to the database."""
-
-    def __init__(self, database: InMemoryDatabase) -> None:
-        self._database = database
-        self.pending: dict[UUID, Modernization] = {}
-        self.pending_evaluations: list[Evaluation] = []
-
-    async def commit(self) -> None:
-        self._database.rows.update(self.pending)
-        self._database.history.extend(self.pending.values())
-        self._database.evaluations.extend(self.pending_evaluations)
-        self.pending.clear()
-        self.pending_evaluations.clear()
-
-    async def rollback(self) -> None:
-        self.pending.clear()
-        self.pending_evaluations.clear()
-
-
 class InMemoryDatabase:
-    """Fake TransactionManager + storage: committed rows and every committed version."""
+    """Storage shared by the in-memory repositories."""
 
     def __init__(self) -> None:
         self.rows: dict[UUID, Modernization] = {}
         self.history: list[Modernization] = []
-        """Every committed version, in order (lets tests see RUNNING -> final)."""
+        """Every written version, in order (lets tests see RUNNING -> final)."""
         self.evaluations: list[Evaluation] = []
-        self._active: InMemoryTransaction | None = None
-
-    @asynccontextmanager
-    async def transaction(self) -> AsyncIterator[InMemoryTransaction]:
-        if self._active is not None:
-            raise RuntimeError("Nested transactions are not supported")
-        self._active = InMemoryTransaction(self)
-        try:
-            yield self._active
-        finally:
-            await self._active.rollback()  # leaving without commit() discards the writes
-            self._active = None
-
-    def current(self) -> InMemoryTransaction:
-        if self._active is None:
-            raise RuntimeError("Repository used outside a transaction")
-        return self._active
 
 
 class InMemoryModernizationRepository:
-    """ModernizationRepository port, same contract as the SQLAlchemy one: current transaction."""
+    """ModernizationRepository port: every write is committed at once, like the SQL one."""
 
     def __init__(self, database: InMemoryDatabase) -> None:
         self._database = database
 
     async def save(self, modernization: Modernization) -> None:
-        self._database.current().pending[modernization.id] = modernization
+        self._write(modernization)
 
     async def update(self, modernization: Modernization) -> None:
-        pending = self._database.current().pending
-        if modernization.id not in self._database.rows and modernization.id not in pending:
+        if modernization.id not in self._database.rows:
             raise not_found(modernization.id)
-        pending[modernization.id] = modernization
+        self._write(modernization)
 
     async def get(self, modernization_id: UUID) -> Modernization:
-        pending = self._database.current().pending
-        found = pending.get(modernization_id) or self._database.rows.get(modernization_id)
+        found = self._database.rows.get(modernization_id)
         if found is None:
             raise not_found(modernization_id)
         return found
 
+    def _write(self, modernization: Modernization) -> None:
+        self._database.rows[modernization.id] = modernization
+        self._database.history.append(modernization)
+
 
 class InMemoryEvaluationRepository:
-    """EvaluationRepository port, same contract as the SQLAlchemy one: current transaction."""
+    """EvaluationRepository port."""
 
     def __init__(self, database: InMemoryDatabase) -> None:
         self._database = database
 
     async def save(self, evaluation: Evaluation) -> None:
-        self._database.current().pending_evaluations.append(evaluation)
+        self._database.evaluations.append(evaluation)
 
     async def latest_per_procedure(self) -> tuple[Evaluation, ...]:
-        self._database.current()
         latest: dict[str, Evaluation] = {}
         for evaluation in sorted(self._database.evaluations, key=lambda e: e.created_at):
             latest[evaluation.procedure_name] = evaluation

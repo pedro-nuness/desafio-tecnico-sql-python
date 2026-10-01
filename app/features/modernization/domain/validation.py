@@ -32,13 +32,30 @@ class ValidationResult(ValueObject):
         return all(result.success for result in self.results)
 
     def issues(self) -> tuple[str, ...]:
-        """Every message of every failed validator, one line each."""
+        """Every message of every failed validator, one line each (repair feedback)."""
         return tuple(
-            f"[{result.validator}] "
-            + (f"L{message.line}: " if message.line else "")
-            + (f"{message.code} " if message.code else "")
-            + message.message
-            for result in self.results
-            if not result.success
-            for message in result.messages
+            line for result in self.results if not result.success for line in _lines(result)
         )
+
+    def warnings(self) -> tuple[str, ...]:
+        """Report lines: findings of non-blocking checks and checks that could not run."""
+        return tuple(
+            line
+            for result in self.results
+            if not result.success and not result.blocking
+            for line in _lines(result)
+        ) + tuple(
+            f"[{result.validator}] not run: {result.skipped}"
+            for result in self.results
+            if result.skipped
+        )
+
+
+def _lines(result: ValidatorResult) -> tuple[str, ...]:
+    return tuple(
+        f"[{result.validator}] "
+        + (f"L{message.line}: " if message.line else "")
+        + (f"{message.code} " if message.code else "")
+        + message.message
+        for message in result.messages
+    )

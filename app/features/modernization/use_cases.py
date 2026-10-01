@@ -14,7 +14,6 @@ from app.features.modernization.evaluation.equivalence import EquivalenceMetric
 from app.features.modernization.evaluation.repository import EvaluationRepository
 from app.features.modernization.graph.builder import ModernizationGraph, run_modernization
 from app.features.modernization.persistence.repository import ModernizationRepository
-from app.shared.persistence import TransactionManager
 
 logger = logging.getLogger(__name__)
 
@@ -63,15 +62,11 @@ class ModernizeRoutine:
 
 
 class GetModernization:
-    def __init__(
-        self, transactions: TransactionManager, modernizations: ModernizationRepository
-    ) -> None:
-        self._transactions = transactions
+    def __init__(self, modernizations: ModernizationRepository) -> None:
         self._modernizations = modernizations
 
     async def execute(self, query: GetModernizationQuery) -> Modernization:
-        async with self._transactions.transaction():  # read-only: nothing to commit
-            return await self._modernizations.get(query.execution_id)
+        return await self._modernizations.get(query.execution_id)
 
 
 class EvaluateModernization:
@@ -79,24 +74,19 @@ class EvaluateModernization:
 
     def __init__(
         self,
-        transactions: TransactionManager,
         modernizations: ModernizationRepository,
         evaluations: EvaluationRepository,
         metric: EquivalenceMetric,
     ) -> None:
-        self._transactions = transactions
         self._modernizations = modernizations
         self._evaluations = evaluations
         self._metric = metric
 
     async def execute(self, command: EvaluateCommand) -> Evaluation:
-        async with self._transactions.transaction():  # read-only: nothing to commit
-            modernization = await self._modernizations.get(command.execution_id)
-        # Outside any transaction: the cases take seconds and run on their own database.
+        modernization = await self._modernizations.get(command.execution_id)
+        # The cases take seconds and run on their own database (no session held meanwhile).
         evaluation = Evaluation.of(modernization, await self._metric.evaluate(modernization))
-        async with self._transactions.transaction() as tx:
-            await self._evaluations.save(evaluation)
-            await tx.commit()
+        await self._evaluations.save(evaluation)
         logger.info(
             "modernization evaluated",
             extra={
@@ -109,10 +99,8 @@ class EvaluateModernization:
 
 
 class GetEvaluationSummary:
-    def __init__(self, transactions: TransactionManager, evaluations: EvaluationRepository) -> None:
-        self._transactions = transactions
+    def __init__(self, evaluations: EvaluationRepository) -> None:
         self._evaluations = evaluations
 
     async def execute(self, query: EvaluationSummaryQuery) -> EvaluationSummary:
-        async with self._transactions.transaction():  # read-only: nothing to commit
-            return EvaluationSummary(evaluations=await self._evaluations.latest_per_procedure())
+        return EvaluationSummary(evaluations=await self._evaluations.latest_per_procedure())

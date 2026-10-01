@@ -34,8 +34,7 @@ LLM_ADAPTERS = {
 # The composition root (core/providers.py + bootstrap.py) wires everything; nothing it builds
 # may reach back into it. Only entry points (core, features/*/api routes) know the DI library.
 COMPOSITION_ROOT = {"app.core.bootstrap", "app.core.providers", "app.core.server"}
-# Use cases and the graph open transactions through the port (app.shared.persistence); only
-# infrastructure (repositories) knows the SQLAlchemy implementation in core/database.
+# Only infrastructure (repositories, composition root) knows core/database and core/config.
 CORE_INFRASTRUCTURE = {"app.core.database", "app.core.config"}
 DI = {"dishka"}
 
@@ -138,6 +137,7 @@ FEATURE_VENDOR_HOMES = {
         "features/modernization/evaluation/models.py",
         "features/modernization/evaluation/repository.py",
         "features/modernization/persistence/models.py",
+        "features/modernization/persistence/repository.py",
     ),
     "langgraph": ("features/modernization/graph/builder.py",),
     "langchain_core": ("features/modernization/graph/builder.py",),

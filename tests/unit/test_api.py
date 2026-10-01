@@ -20,7 +20,6 @@ from app.features.modernization.use_cases import ModernizeRoutine
 from app.features.modernization.validation.validate_code import Rule, ValidateCode
 from app.shared.errors import AppError, DomainError, NotFoundError
 from app.shared.integrations.errors import IntegrationError
-from app.shared.persistence import TransactionManager
 from tests.conftest import ModernizeFactory
 from tests.fakes import (
     FakeLLM,
@@ -42,7 +41,6 @@ def make_api(make_modernize: ModernizeFactory, store: InMemoryDatabase) -> ApiFa
         metric = metric or FakeMetric()
         fakes = Provider(scope=Scope.APP)
         fakes.provide(lambda: make_modernize(**graph_options), provides=ModernizeRoutine)
-        fakes.provide(lambda: store, provides=TransactionManager)
         fakes.provide(
             lambda: InMemoryModernizationRepository(store), provides=ModernizationRepository
         )
@@ -89,7 +87,7 @@ async def test_modernize_returns_structured_report(
     assert body["report"]["parsing"]["procedure_name"] == "billing.process_customer_orders"
     assert body["report"]["generation"]["strategy"] == "hybrid"
     assert body["report"]["semantic_analysis"]["recommended_strategy"] == "hybrid"
-    assert body["report"]["validation"]["valid_python"] is True
+    assert all(check["success"] for check in body["report"]["validation"]["results"])
 
     stored = await client.get(f"/modernizations/{body['execution_id']}")
     assert stored.status_code == 200

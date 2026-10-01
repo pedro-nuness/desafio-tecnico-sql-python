@@ -11,12 +11,11 @@ from collections.abc import AsyncIterator
 from dishka import Provider, Scope, alias, from_context, provide
 from langfuse import Langfuse
 from langfuse.langchain import CallbackHandler
-from sqlalchemy.ext.asyncio import AsyncEngine
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 
 from app.core.config.settings import Settings
 from app.core.database.engine import create_engine
 from app.core.database.session import create_session_factory
-from app.core.database.transaction import SessionTransactionManager
 from app.features.modernization.domain.semantic_analyzer import SemanticAnalyzer
 from app.features.modernization.evaluation.equivalence import (
     BehavioralEquivalence,
@@ -53,7 +52,6 @@ from app.shared.integrations.llm.gateway import LLMGateway
 from app.shared.integrations.llm.llm import LLM
 from app.shared.integrations.llm.registry import build_providers
 from app.shared.integrations.llm.tracing import TracedLLM
-from app.shared.persistence import TransactionManager
 
 
 class InfrastructureProvider(Provider):
@@ -70,11 +68,8 @@ class InfrastructureProvider(Provider):
         await engine.dispose()
 
     @provide
-    def transactions(self, engine: AsyncEngine) -> SessionTransactionManager:
-        return SessionTransactionManager(create_session_factory(engine))
-
-    # Use cases depend on the port; repositories on the implementation (current_session()).
-    transaction_port = alias(source=SessionTransactionManager, provides=TransactionManager)
+    def sessions(self, engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
+        return create_session_factory(engine)
 
     @provide
     async def langfuse(self, settings: Settings) -> AsyncIterator[Langfuse | None]:

@@ -10,33 +10,35 @@ logger = logging.getLogger(__name__)
 
 
 class ParametroInvalidoError(Exception):
-    """RAISE EXCEPTION equivalente para validação de parâmetros."""
-
-    def __init__(self, p_dias: int | None) -> None:
-        self.p_dias = p_dias
-        super().__init__(
-            f"Parametro p_dias deve ser positivo, recebido: {p_dias}"
-        )
+    """Equivalente ao RAISE EXCEPTION da rotina original."""
 
 
 @dataclass(frozen=True)
-class AtualizarStatusContasInativasResult:
-    """Campos OUT da procedure, na ordem original."""
+class ResultadoInativacao:
+    """Representa o OUT p_afetadas da procedure original."""
 
     p_afetadas: int
+
+    def __repr__(self) -> str:
+        return str(self.p_afetadas)
 
 
 async def sp_atualizar_status_contas_inativas(
     conn: AsyncConnection,
-    p_dias: int | None,
-) -> AtualizarStatusContasInativasResult:
-    """Marca contas ATIVA sem movimentação recente como INATIVA.
+    p_dias: int,
+) -> ResultadoInativacao:
+    """Porta de sp_atualizar_status_contas_inativas.
 
-    Equivalente à procedure PL/pgSQL sp_atualizar_status_contas_inativas.
-    A transação é de responsabilidade do chamador.
+    Marca como INATIVA toda conta ATIVA sem movimentacao nos ultimos
+    ``p_dias`` dias e registra a operacao em log_auditoria.
+
+    A transacao e controlada pelo chamador (a procedure original nao
+    gerencia COMMIT/ROLLBACK explicitamente).
     """
     if p_dias is None or p_dias <= 0:
-        raise ParametroInvalidoError(p_dias)
+        raise ParametroInvalidoError(
+            f"Parametro p_dias deve ser positivo, recebido: {p_dias}"
+        )
 
     result = await conn.execute(
         text(
@@ -54,7 +56,7 @@ async def sp_atualizar_status_contas_inativas(
         ),
         {"p_dias": p_dias},
     )
-    p_afetadas: int = result.rowcount or 0
+    p_afetadas: int = result.rowcount
 
     await conn.execute(
         text(
@@ -73,4 +75,4 @@ async def sp_atualizar_status_contas_inativas(
         {"p_dias": p_dias, "p_afetadas": p_afetadas},
     )
 
-    return AtualizarStatusContasInativasResult(p_afetadas=p_afetadas)
+    return ResultadoInativacao(p_afetadas)

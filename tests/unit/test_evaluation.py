@@ -13,7 +13,7 @@ from app.features.modernization.domain.evaluation import CaseResult, Evaluation,
 from app.features.modernization.domain.modernization import (
     Modernization,
     ModernizationReport,
-    ParsingReport,
+    ParsingSummary,
 )
 from app.features.modernization.domain.parsing import Parameter, ParameterMode
 from app.features.modernization.evaluation.equivalence import (
@@ -214,7 +214,7 @@ def _evaluation(procedure: str, *passed: bool, static_valid: bool = True) -> Eva
     modernization = Modernization.start("src").model_copy(
         update={
             "report": ModernizationReport(
-                parsing=ParsingReport(success=True, procedure_name=f"public.{procedure}")
+                parsing=ParsingSummary(procedure_name=f"public.{procedure}")
             )
         }
     )
@@ -254,7 +254,7 @@ async def test_evaluate_stores_the_result_of_the_recorded_execution(
     created = await make_modernize().execute(ModernizeCommand(load_procedure("process_orders")))
     metric = FakeMetric([_case(True), _case(False)])
     use_case = EvaluateModernization(
-        store, InMemoryModernizationRepository(store), InMemoryEvaluationRepository(store), metric
+        InMemoryModernizationRepository(store), InMemoryEvaluationRepository(store), metric
     )
 
     evaluation = await use_case.execute(EvaluateCommand(created.id))
@@ -264,7 +264,7 @@ async def test_evaluate_stores_the_result_of_the_recorded_execution(
     assert evaluation.modernization_id == created.id
     assert evaluation.procedure_name == "process_customer_orders"
     assert evaluation.prompt_version is not None and evaluation.static_valid
-    summary = await GetEvaluationSummary(store, InMemoryEvaluationRepository(store)).execute(
+    summary = await GetEvaluationSummary(InMemoryEvaluationRepository(store)).execute(
         EvaluationSummaryQuery()
     )
     assert summary.evaluations == (evaluation,)
@@ -279,7 +279,6 @@ async def test_evaluate_unknown_execution_or_unknown_routine_stores_nothing(
 
     def use_case(metric: FakeMetric) -> EvaluateModernization:
         return EvaluateModernization(
-            store,
             InMemoryModernizationRepository(store),
             InMemoryEvaluationRepository(store),
             metric,

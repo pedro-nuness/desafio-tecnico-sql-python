@@ -77,8 +77,10 @@ quote-style = "double"
 [tool.coverage.run]
 source = ["app"]
 branch = true
+# The evaluation runs generated code in a subprocess (evaluation/runner.py); measure it too.
+patch = ["subprocess"]
 
 [tool.coverage.report]
 show_missing = true
 skip_covered = true
-fail_under = 95  # measured: 95% unit-only, 97% with the Postgres integration tests
+fail_under = 95  # with the Postgres integration tests (96%); unit-only is 91%: the evaluation harness needs Postgres

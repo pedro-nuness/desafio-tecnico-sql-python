@@ -48,7 +48,7 @@ class Evaluation(ValueObject):
             procedure_name=_bare_name(report.parsing.procedure_name if report.parsing else None),
             prompt_version=report.generation.prompt_version if report.generation else None,
             model=report.generation.model if report.generation else None,
-            static_valid=bool(report.validation and report.validation.valid_python),
+            static_valid=bool(report.validation and report.validation.is_valid),
             completed=modernization.status
             in {ModernizationStatus.SUCCESS, ModernizationStatus.PARTIAL},
             cases=cases,

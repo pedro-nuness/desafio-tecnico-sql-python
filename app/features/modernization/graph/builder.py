@@ -27,7 +27,7 @@ from app.features.modernization.graph.state import (
     ModernizationInput,
     ModernizationState,
     StateUpdate,
-    to_outcome,
+    to_report,
 )
 from app.features.modernization.parsing.strategy import SQLParser
 from app.features.modernization.persistence.execution_log import ExecutionLog
@@ -131,7 +131,9 @@ def _tracked(
         except Exception as exc:
             if step is not None and execution_log is not None:
                 error = PipelineError.from_exception(step, exc)
-                await execution_log.fail(state["execution_id"], to_outcome(state), error)
+                await execution_log.fail(
+                    state["execution_id"], to_report(state), state.get("generated_code"), error
+                )
             raise
 
     return run

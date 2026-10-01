@@ -1,6 +1,6 @@
 {
-  "id": "01a0f7ac-b8f5-70b1-bdb9-c65d7afc03d3",
-  "modernization_id": "01a0f7ab-e47c-7242-afbb-163be7f0c301",
+  "id": "01a0f7c9-3f60-73e7-a478-48f67a12ae4e",
+  "modernization_id": "01a0f7c7-9760-729e-bc28-9f81fed5c06f",
   "procedure_name": "sp_processar_lote_taxas",
   "metric": "behavioral_equivalence",
   "prompt_version": "generation-v4",
@@ -33,5 +33,5 @@
       "holdout": true
     }
   ],
-  "created_at": "2026-10-01T13:34:47.029912Z"
+  "created_at": "2026-10-01T14:05:56.448793Z"
 }

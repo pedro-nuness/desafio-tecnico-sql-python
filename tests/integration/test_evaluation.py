@@ -8,13 +8,12 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.core.database.transaction import SessionTransactionManager
 from app.features.modernization.domain.enums import ModernizationStatus
 from app.features.modernization.domain.evaluation import CaseResult, Evaluation
 from app.features.modernization.domain.modernization import (
     Modernization,
     ModernizationReport,
-    ParsingReport,
+    ParsingSummary,
 )
 from app.features.modernization.evaluation.equivalence import BehavioralEquivalence
 from app.features.modernization.evaluation.repository import SqlAlchemyEvaluationRepository
@@ -68,7 +67,7 @@ async def sp_transferir_entre_contas(conn, origem: int, destino: int, valor: Dec
 
 def _modernization(annex: str, code: str) -> Modernization:
     source = (EXAMPLES / "procedures" / f"{annex}.sql").read_text(encoding="utf-8")
-    parsing = ParsingReport.from_procedure(PglastParser().parse(source))
+    parsing = ParsingSummary.of(PglastParser().parse(source))
     return Modernization.start(source).model_copy(
         update={"generated_code": code, "report": ModernizationReport(parsing=parsing)}
     )
@@ -130,9 +129,8 @@ async def test_every_sandbox_schema_is_dropped(
 async def test_repository_keeps_every_evaluation_and_reads_the_latest_per_routine(
     session_factory: SessionFactory,
 ) -> None:
-    transactions = SessionTransactionManager(session_factory)
-    modernizations = SqlAlchemyModernizationRepository(transactions)
-    evaluations = SqlAlchemyEvaluationRepository(transactions)
+    modernizations = SqlAlchemyModernizationRepository(session_factory)
+    evaluations = SqlAlchemyEvaluationRepository(session_factory)
     modernization = _modernization("b_fn_saldo_cliente", FAITHFUL_B)
     case = CaseResult(name="c", passed=True, detail="d", original="o", generated="g")
     older = Evaluation.of(modernization, (case,)).model_copy(
@@ -140,13 +138,10 @@ async def test_repository_keeps_every_evaluation_and_reads_the_latest_per_routin
     )
     newer = Evaluation.of(modernization, (case, case.model_copy(update={"passed": False})))
 
-    async with transactions.transaction() as tx:
-        await modernizations.save(modernization)
-        await evaluations.save(older)
-        await evaluations.save(newer)
-        await tx.commit()
-    async with transactions.transaction():
-        latest = await evaluations.latest_per_procedure()
+    await modernizations.save(modernization)
+    await evaluations.save(older)
+    await evaluations.save(newer)
+    latest = await evaluations.latest_per_procedure()
 
     assert latest == (newer,)
     assert (latest[0].cases_passed, latest[0].cases_total) == (1, 2)
