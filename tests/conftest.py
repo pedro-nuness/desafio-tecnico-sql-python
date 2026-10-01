@@ -5,7 +5,7 @@ from typing import Any
 
 import pytest
 
-from app.features.modernization.domain.semantic_analyzer import SemanticAnalyzer
+from app.features.modernization.analysis.analyzer import SemanticAnalyzer
 from app.features.modernization.generation.generate_code import GenerateCode
 from app.features.modernization.generation.prompt import GenerationPromptBuilder
 from app.features.modernization.graph.builder import (

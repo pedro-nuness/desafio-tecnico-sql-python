@@ -5,6 +5,7 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
+from app.features.modernization.analysis.analyzer import SemanticAnalyzer
 from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
 from app.features.modernization.domain.modernization import (
     Modernization,
@@ -12,7 +13,6 @@ from app.features.modernization.domain.modernization import (
     PipelineError,
     PipelineProgress,
 )
-from app.features.modernization.domain.semantic_analyzer import SemanticAnalyzer
 from app.features.modernization.generation.generate_code import GenerateCode
 from app.features.modernization.generation.prompt import GenerationPromptBuilder
 from app.features.modernization.graph.builder import build_modernization_graph

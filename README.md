@@ -158,10 +158,11 @@ app/
         ├── routes.py · schemas.py · use_cases.py
         ├── domain/             # IR, análise, relatório, aggregate Modernization (Pydantic)
         ├── parsing/            # SQLParser (strategy) · PglastParser
+        ├── analysis/           # SemanticAnalyzer · riscos/recomendações · catálogos
         ├── generation/         # GenerateCode · prompt
         ├── validation/         # ValidateCode + Rule · checks: AST, Ruff, comportamento
         ├── evaluation/         # harness de equivalência, dataset, runner, repositório
-        ├── persistence/        # repositório, ExecutionLog, model ORM, mapper
+        ├── persistence/        # repositório, ExecutionLog, model ORM (com mapeamento)
         └── graph/              # builder · nodes · state
 migrations/  scripts/run_examples.py  examples/  tests/{unit,integration}  docker/
 ```
@@ -422,7 +423,8 @@ dialeto novo é outra implementação de `SQLParser` produzindo o mesmo IR.
 
 ### 2. Análise semântica determinística e a escolha SQL × Python
 
-`SemanticAnalyzer` é domínio puro sobre o IR: detecta features e riscos e recomenda a estratégia.
+`SemanticAnalyzer` (`analysis/`) é lógica pura sobre o IR: detecta features e riscos e recomenda a
+estratégia. Catálogos (funções nativas, textos de riscos e recomendações) ficam em `analysis/catalog.py`.
 
 
 | condição                  | estratégia                |

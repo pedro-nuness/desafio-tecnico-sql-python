@@ -4,7 +4,6 @@ from uuid import UUID
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.features.modernization.domain.modernization import Modernization
-from app.features.modernization.persistence import mapper
 from app.features.modernization.persistence.models import ModernizationHistoryModel
 from app.shared.errors import NotFoundError
 
@@ -40,7 +39,7 @@ class SqlAlchemyModernizationRepository:
 
     async def save(self, modernization: Modernization) -> None:
         async with self._sessions() as session:
-            session.add(mapper.to_model(modernization))
+            session.add(ModernizationHistoryModel.from_domain(modernization))
             await session.commit()
 
     async def update(self, modernization: Modernization) -> None:
@@ -48,7 +47,7 @@ class SqlAlchemyModernizationRepository:
             model = await session.get(ModernizationHistoryModel, modernization.id)
             if model is None:
                 raise not_found(modernization.id)
-            mapper.apply_to_model(modernization, model)
+            model.update_from(modernization)
             await session.commit()
 
     async def get(self, modernization_id: UUID) -> Modernization:
@@ -56,4 +55,4 @@ class SqlAlchemyModernizationRepository:
             model = await session.get(ModernizationHistoryModel, modernization_id)
             if model is None:
                 raise not_found(modernization_id)
-            return mapper.to_domain(model)
+            return model.to_domain()

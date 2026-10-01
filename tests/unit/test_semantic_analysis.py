@@ -1,6 +1,7 @@
 from collections.abc import Callable
 from pathlib import Path
 
+from app.features.modernization.analysis.analyzer import SemanticAnalyzer
 from app.features.modernization.domain.enums import GenerationStrategy
 from app.features.modernization.domain.parsing import (
     ExceptionHandler,
@@ -17,7 +18,6 @@ from app.features.modernization.domain.semantic_analysis import (
     RiskSeverity,
     SemanticAnalysis,
 )
-from app.features.modernization.domain.semantic_analyzer import SemanticAnalyzer
 from app.features.modernization.parsing.plpgsql import PglastParser
 
 analyzer = SemanticAnalyzer()

@@ -63,6 +63,7 @@ FORBIDDEN: dict[str, set[str]] = {
         for module in (
             "use_cases",
             "parsing",
+            "analysis",
             "generation",
             "validation",
             "persistence",
@@ -73,6 +74,7 @@ FORBIDDEN: dict[str, set[str]] = {
     "features/modernization/use_cases.py": PURE | ENTRY,
     "features/modernization/generation": PURE | IMPLEMENTATION | {f"{FEATURE}.graph"},
     "features/modernization/parsing/strategy.py": PURE | IMPLEMENTATION,
+    "features/modernization/analysis": PURE | IMPLEMENTATION | {f"{FEATURE}.graph"},
     "features/modernization/validation/validate_code.py": PURE | IMPLEMENTATION,
     "features/modernization/persistence/execution_log.py": PURE
     | IMPLEMENTATION

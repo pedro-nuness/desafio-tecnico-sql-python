@@ -16,7 +16,7 @@ from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
 from app.core.config.settings import Settings
 from app.core.database.engine import create_engine
 from app.core.database.session import create_session_factory
-from app.features.modernization.domain.semantic_analyzer import SemanticAnalyzer
+from app.features.modernization.analysis.analyzer import SemanticAnalyzer
 from app.features.modernization.evaluation.equivalence import (
     BehavioralEquivalence,
     EquivalenceMetric,

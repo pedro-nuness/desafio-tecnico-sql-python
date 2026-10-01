@@ -6,9 +6,9 @@ delegates to the ExecutionLog.
 
 from typing import ClassVar, Protocol
 
+from app.features.modernization.analysis.analyzer import SemanticAnalyzer
 from app.features.modernization.domain.enums import PipelineStep
 from app.features.modernization.domain.generation import RepairFeedback
-from app.features.modernization.domain.semantic_analyzer import SemanticAnalyzer
 from app.features.modernization.generation.generate_code import GenerateCode
 from app.features.modernization.graph.state import ModernizationState, StateUpdate, to_report
 from app.features.modernization.parsing.strategy import SQLParser
