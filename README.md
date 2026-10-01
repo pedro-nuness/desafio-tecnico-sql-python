@@ -159,10 +159,12 @@ flowchart LR
     CodeGenerationService --> LLM
     Validation --> CodeValidator
 
-    RecordStart --> UnitOfWork
-    RecordResult --> UnitOfWork
-    ModernizationService -. leitura .-> UnitOfWork
-    UnitOfWork --> Repository
+    RecordStart --> TransactionManager
+    RecordResult --> TransactionManager
+    ModernizationService -. leitura .-> TransactionManager
+    RecordStart --> Repository
+    RecordResult --> Repository
+    ModernizationService -. leitura .-> Repository
     Repository --> PostgreSQL
 ```
 
@@ -182,7 +184,7 @@ flowchart TB
             P1["SQLParser"]
             P2["LLM (perfil do LLMGateway)"]
             P3["CodeValidator"]
-            P4["UnitOfWork / ModernizationRepository"]
+            P4["TransactionManager (shared) · ModernizationRepository"]
             P5["ModernizationPipeline"]
         end
     end
@@ -191,7 +193,7 @@ flowchart TB
         A1["PglastParser"]
         A2["LLMGateway → OpenAIProvider / OpenRouterProvider (SDKs oficiais)"]
         A3["PythonASTValidator · RuffValidator<br/>CompositeCodeValidator"]
-        A4["SqlAlchemyUnitOfWork<br/>SqlAlchemyModernizationRepository"]
+        A4["SessionTransactionManager (core)<br/>SqlAlchemyModernizationRepository"]
         A5["LangGraphModernizationPipeline"]
     end
 
@@ -232,7 +234,7 @@ features nunca importam providers/bootstrap/server
 | LLM provider/modelo  | `LLM`                                  | `LLMGateway` (routes em ordem → `OpenAIProvider` / `OpenRouterProvider`) |
 | Parser SQL           | `SQLParser`                            | `PglastParser`                                        |
 | Validadores          | `CodeValidator`                        | `PythonASTValidator`, `RuffValidator`, `CompositeCodeValidator` |
-| Persistência         | `UnitOfWork` + `ModernizationRepository` | `SqlAlchemyUnitOfWork`, `SqlAlchemyModernizationRepository` |
+| Persistência         | `TransactionManager` + `ModernizationRepository` | `SessionTransactionManager`, `SqlAlchemyModernizationRepository` |
 | Orquestração         | `ModernizationPipeline`                | `LangGraphModernizationPipeline`                      |
 
 Não há `BaseService`, `BaseRepository`, `GenericDAO` etc. O único "base" é
@@ -417,7 +419,7 @@ uv run ruff check . && uv run ruff format --check .
 - **Unitários (64)**: parser (`pglast`), análise semântica (inclusive sobre IR montado à mão, sem
   parser), `CodeGenerationService` com test double (verifica que o prompt carrega parsing +
   análise; resposta truncada; `strategy` ausente), validadores (AST, Ruff, composite),
-  `ModernizationService` com LangGraph real + UoW em memória (sucesso, falha do LLM, falha de
+  `ModernizationService` com LangGraph real + banco em memória (sucesso, falha do LLM, falha de
   parsing, Python inválido, lint → partial, crash inesperado), graph (loop de reparo com feedback,
   limite de tentativas, orçamento de tempo, retentativa que falha mantém a anterior, run iniciada
   direto no graph — caminho do servidor LangGraph — é persistida), API (`/health`, `/modernize`, `/modernizations/{id}`), factory de providers e
@@ -444,11 +446,13 @@ app/
 │   ├── database/             # SQLAlchemy async engine, session factory e Base declarativa
 │   │   ├── base.py
 │   │   ├── engine.py
-│   │   └── session.py
+│   │   ├── session.py
+│   │   └── transaction.py    # SessionTransactionManager: transação corrente por task (AD-08)
 │   ├── exception_handlers.py # Handlers globais de erro HTTP
 │   └── server.py             # Setup da aplicação FastAPI e lifespan
 ├── shared/                   # Código utilitário compartilhado entre múltiplos contextos
 │   ├── errors.py             # AppError, DomainError, NotFoundError (AD-14)
+│   ├── persistence.py        # TransactionManager / Transaction: port de transação (AD-08)
 │   ├── domain/value_object.py# Base ValueObject imutável (Pydantic frozen)
 │   ├── resilience/           # CircuitBreaker genérico (async, sem dependência de vendor)
 │   └── integrations/
@@ -475,16 +479,17 @@ app/
         │   ├── models/       # IR de parsing, análise semântica, geração e validação
         │   └── services/     # Analisador semântico determinístico
         ├── application/      # Casos de uso e portas abstratas (Protocols)
-        │   ├── ports/        # Parsing, validação, repositórios e pipeline (LLM vem de shared)
+        │   ├── ports/        # parsing, validation, pipeline, repositories
+        │   │                 # (LLM e TransactionManager vêm de shared)
         │   └── services/     # ModernizationService e CodeGenerationService
         ├── graph/            # Workflow LangGraph (pipeline, state, builder e nodes finos)
         │   ├── builder.py
         │   ├── pipeline.py
         │   ├── state.py
         │   └── nodes/
-        ├── infrastructure/   # Driven adapters (parsing pglast, Ruff/AST, persistência UoW/Repo)
+        ├── infrastructure/   # Driven adapters (parsing pglast, Ruff/AST, repositórios SQLAlchemy)
         │   ├── parsing/      # PglastParser
-        │   ├── persistence/  # SqlAlchemyUnitOfWork, repositórios, mappers e models ORM
+        │   ├── persistence/  # repositórios, mappers e models ORM
         │   └── validation/   # PythonASTValidator, RuffValidator e CompositeCodeValidator
         └── prompts/          # Templates de engenharia de prompt (generation_prompt.py)
 migrations/                   # Alembic (env async + versions/)
@@ -769,13 +774,34 @@ FastAPI. Nas rotas FastAPI, `PipelineProgress` só leva o `execution_id` até o 
 que o devolve na resposta de erro. Falha nos próprios nós de persistência não é gravada:
 uma run que não pode ser registrada deve falhar alto.
 
-### AD-08 · Unit of Work + repositories específicos
+### AD-08 · Transação aberta pelo caso de uso, repositórios injetados
 
-`UnitOfWork` expõe `modernizations` e controla `commit/rollback`; repositories só fazem `flush`.
-Sair do `async with` sem `commit()` descarta tudo (testado). Adicionar `evaluation_results` ou
-`llm_calls`: novo model em `app/features/modernization/infrastructure/persistence/models/`, novo repository, novo mapper, um atributo no
-`UnitOfWork` e uma migration — nenhum módulo existente precisa mudar. O port expressa necessidades
-do domínio (`save`, `update`, `find_by_id`), não um CRUD genérico.
+O caso de uso declara **onde** a transação começa e termina; os repositórios são injetados como
+qualquer outra dependência e trabalham dentro da transação em andamento:
+
+```python
+async with self._transactions.transaction() as tx:
+    running = await self._modernizations.find_by_id(execution_id)
+    await self._modernizations.update(running.complete(outcome))
+    await tx.commit()          # explícito: sair sem commit() faz rollback
+```
+
+- **Port** genérico em `app/shared/persistence.py` (`TransactionManager`, `Transaction`), sem
+  SQLAlchemy: nenhuma feature precisa de uma classe de transação própria.
+- **Mecânica** em `app/core/database/transaction.py` (`SessionTransactionManager`): `transaction()`
+  abre uma `AsyncSession` e a torna a sessão *corrente* da task asyncio (`ContextVar`: requests
+  concorrentes nunca compartilham sessão); ao sair, descarta o que não foi commitado e fecha.
+  Transação aninhada e uso de repositório fora de transação falham alto (testado).
+- **Repositório** da feature (`SqlAlchemyModernizationRepository`) recebe o manager e usa
+  `current_session()`: só faz `flush`, nunca `commit`.
+
+Commit é explícito por escolha: nada é gravado por acidente. Uma run usa duas transações curtas
+(AD-07), então nenhuma conexão fica presa durante a chamada ao LLM. Ler, alterar e gravar fica na
+mesma transação, e vários repositórios podem participar da mesma. Adicionar `evaluation_results` ou
+`llm_calls`: novo model em `app/features/modernization/infrastructure/persistence/models/`, novo
+repository, novo mapper, um `provide` em `app/core/providers.py` e uma migration — nenhum módulo
+existente precisa mudar. O port do repositório expressa necessidades do domínio (`save`,
+`update`, `find_by_id`), não um CRUD genérico.
 
 ### AD-09 · `ModernizationPipeline` como port
 
@@ -796,7 +822,7 @@ de serialização.
 `app/core/providers.py` é o único módulo que importa adapters concretos. Cada dependência é
 declarada uma vez como provider [dishka](https://dishka.readthedocs.io/) (`@provide`, escopo
 `APP`): `InfrastructureProvider` (Settings, engine com `dispose` na finalização, `LLM` = gateway)
-e `ModernizationProvider` (UoW, serviços, graph, pipeline). Os construtores continuam explícitos;
+e `ModernizationProvider` (repositórios, serviços, graph, pipeline). Os construtores continuam explícitos;
 o dishka só resolve o grafo de dependências, valida-o ao criar o container (dependência
 faltando quebra no boot) e finaliza recursos no `close()`. `build_container(settings,
 *overrides)` cria o container; `default_container()` (`@cache`) guarda-o **por processo**.
@@ -918,7 +944,7 @@ aplicação (que valida a resposta do LLM); `NotFoundError` nunca no domínio.
 ## Evolução futura
 
 - `AnthropicProvider`/`GeminiProvider` nativos (uma entrada no registry); políticas de roteamento por custo/latência no `LLMGateway`.
-- Tabela `llm_calls` (prompt, resposta, tokens, custo) e `evaluation_results` — via `UnitOfWork`.
+- Tabela `llm_calls` (prompt, resposta, tokens, custo) e `evaluation_results` — repositórios novos, injetados e usados dentro da mesma transação.
 - **Validação dinâmica (prioridade 1):** um validador que roda o código gerado contra um Postgres
   efêmero com o schema informado e compara o estado final com a procedure original instalada no
   mesmo banco (é o procedimento usado, à mão, na seção por anexo). Os erros comportamentais entram

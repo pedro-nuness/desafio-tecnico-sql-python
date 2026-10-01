@@ -1,9 +1,8 @@
 """In-memory test doubles for persistence and LLM ports."""
 
 import json
-from collections.abc import Sequence
-from types import TracebackType
-from typing import Self
+from collections.abc import AsyncIterator, Sequence
+from contextlib import asynccontextmanager
 from uuid import UUID
 
 from app.features.modernization.domain.models.modernization import Modernization
@@ -11,58 +10,66 @@ from app.shared.errors import NotFoundError
 from app.shared.integrations.llm.llm import LLMRequest, LLMResponse
 
 
-class InMemoryModernizationRepository:
-    def __init__(self, committed: dict[UUID, Modernization]) -> None:
-        self._committed = committed
+class InMemoryTransaction:
+    """Buffers writes; only commit() publishes them to the database."""
+
+    def __init__(self, database: InMemoryDatabase) -> None:
+        self._database = database
         self.pending: dict[UUID, Modernization] = {}
 
-    async def save(self, modernization: Modernization) -> None:
-        self.pending[modernization.id] = modernization
-
-    async def update(self, modernization: Modernization) -> None:
-        if modernization.id not in self._committed and modernization.id not in self.pending:
-            raise NotFoundError(f"Modernization {modernization.id} not found")
-        self.pending[modernization.id] = modernization
-
-    async def find_by_id(self, modernization_id: UUID) -> Modernization | None:
-        return self.pending.get(modernization_id) or self._committed.get(modernization_id)
-
-
-class InMemoryUnitOfWork:
-    """Mimics transactional semantics: only commit() publishes pending writes."""
-
-    def __init__(self, store: InMemoryStore) -> None:
-        self._store = store
-        self.modernizations = InMemoryModernizationRepository(store.rows)
-
-    async def __aenter__(self) -> Self:
-        return self
-
-    async def __aexit__(
-        self,
-        exc_type: type[BaseException] | None,
-        exc: BaseException | None,
-        tb: TracebackType | None,
-    ) -> None:
-        await self.rollback()
-
     async def commit(self) -> None:
-        self._store.rows.update(self.modernizations.pending)
-        self._store.history.extend(self.modernizations.pending.values())
-        self.modernizations.pending.clear()
+        self._database.rows.update(self.pending)
+        self._database.history.extend(self.pending.values())
+        self.pending.clear()
 
     async def rollback(self) -> None:
-        self.modernizations.pending.clear()
+        self.pending.clear()
 
 
-class InMemoryStore:
+class InMemoryDatabase:
+    """Fake TransactionManager + storage: committed rows and every committed version."""
+
     def __init__(self) -> None:
         self.rows: dict[UUID, Modernization] = {}
         self.history: list[Modernization] = []
         """Every committed version, in order (lets tests see RUNNING -> final)."""
+        self._active: InMemoryTransaction | None = None
 
-    def uow(self) -> InMemoryUnitOfWork:
-        return InMemoryUnitOfWork(self)
+    @asynccontextmanager
+    async def transaction(self) -> AsyncIterator[InMemoryTransaction]:
+        if self._active is not None:
+            raise RuntimeError("Nested transactions are not supported")
+        self._active = InMemoryTransaction(self)
+        try:
+            yield self._active
+        finally:
+            await self._active.rollback()  # leaving without commit() discards the writes
+            self._active = None
+
+    def current(self) -> InMemoryTransaction:
+        if self._active is None:
+            raise RuntimeError("Repository used outside a transaction")
+        return self._active
+
+
+class InMemoryModernizationRepository:
+    """Same contract as SqlAlchemyModernizationRepository: works in the current transaction."""
+
+    def __init__(self, database: InMemoryDatabase) -> None:
+        self._database = database
+
+    async def save(self, modernization: Modernization) -> None:
+        self._database.current().pending[modernization.id] = modernization
+
+    async def update(self, modernization: Modernization) -> None:
+        pending = self._database.current().pending
+        if modernization.id not in self._database.rows and modernization.id not in pending:
+            raise NotFoundError(f"Modernization {modernization.id} not found")
+        pending[modernization.id] = modernization
+
+    async def find_by_id(self, modernization_id: UUID) -> Modernization | None:
+        pending = self._database.current().pending
+        return pending.get(modernization_id) or self._database.rows.get(modernization_id)
 
 
 DEFAULT_TEST_CODE = """\

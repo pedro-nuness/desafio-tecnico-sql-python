@@ -5,7 +5,11 @@ from app.features.modernization.domain.models.modernization import Modernization
 
 
 class ModernizationRepository(Protocol):
-    """Persistence of Modernization aggregates. Never commits: the UnitOfWork does."""
+    """Persistence of Modernization aggregates.
+
+    Works inside the transaction opened by the caller (app.shared.persistence); flushes,
+    never commits: the caller does.
+    """
 
     async def save(self, modernization: Modernization) -> None: ...
 

@@ -8,17 +8,18 @@ engine (connection pool), one LLM gateway (circuit breakers), one graph.
 
 from collections.abc import AsyncIterator
 
-from dishka import Provider, Scope, from_context, provide
+from dishka import Provider, Scope, alias, from_context, provide
 from sqlalchemy.ext.asyncio import AsyncEngine
 
 from app.core.config.settings import Settings
 from app.core.database.engine import create_engine
 from app.core.database.session import create_session_factory
+from app.core.database.transaction import SessionTransactionManager
 from app.features.modernization.application.ports.pipeline.modernization_pipeline import (
     ModernizationPipeline,
 )
-from app.features.modernization.application.ports.repositories.unit_of_work import (
-    UnitOfWorkFactory,
+from app.features.modernization.application.ports.repositories.modernization_repository import (
+    ModernizationRepository,
 )
 from app.features.modernization.application.services.code_generation_service import (
     CodeGenerationService,
@@ -34,8 +35,8 @@ from app.features.modernization.graph.builder import (
 )
 from app.features.modernization.graph.pipeline import LangGraphModernizationPipeline
 from app.features.modernization.infrastructure.parsing.pglast_parser import PglastParser
-from app.features.modernization.infrastructure.persistence.unit_of_work import (
-    SqlAlchemyUnitOfWork,
+from app.features.modernization.infrastructure.persistence.repositories.sqlalchemy_modernization_repository import (  # noqa: E501
+    SqlAlchemyModernizationRepository,
 )
 from app.features.modernization.infrastructure.validation.composite_validator import (
     CompositeCodeValidator,
@@ -50,6 +51,7 @@ from app.features.modernization.prompts.generation_prompt import GenerationPromp
 from app.shared.integrations.llm.gateway import LLMGateway
 from app.shared.integrations.llm.llm import LLM
 from app.shared.integrations.llm.registry import build_providers
+from app.shared.persistence import TransactionManager
 
 
 class InfrastructureProvider(Provider):
@@ -66,6 +68,13 @@ class InfrastructureProvider(Provider):
         await engine.dispose()
 
     @provide
+    def transactions(self, engine: AsyncEngine) -> SessionTransactionManager:
+        return SessionTransactionManager(create_session_factory(engine))
+
+    # Use cases depend on the port; repositories on the implementation (current_session()).
+    transaction_port = alias(source=SessionTransactionManager, provides=TransactionManager)
+
+    @provide
     def llm(self, settings: Settings) -> LLM:
         llm_settings = settings.llm_settings()
         return LLMGateway(
@@ -80,10 +89,7 @@ class ModernizationProvider(Provider):
 
     scope = Scope.APP
 
-    @provide
-    def uow_factory(self, engine: AsyncEngine) -> UnitOfWorkFactory:
-        session_factory = create_session_factory(engine)
-        return lambda: SqlAlchemyUnitOfWork(session_factory)
+    modernizations = provide(SqlAlchemyModernizationRepository, provides=ModernizationRepository)
 
     @provide
     def generation_service(self, settings: Settings, llm: LLM) -> CodeGenerationService:
@@ -99,7 +105,8 @@ class ModernizationProvider(Provider):
         self,
         settings: Settings,
         generation_service: CodeGenerationService,
-        uow_factory: UnitOfWorkFactory,
+        transactions: TransactionManager,
+        modernizations: ModernizationRepository,
     ) -> ModernizationGraph:
         validator = CompositeCodeValidator(
             [PythonASTValidator(), RuffValidator(timeout_seconds=settings.ruff_timeout_seconds)]
@@ -109,7 +116,8 @@ class ModernizationProvider(Provider):
             analyzer=SemanticAnalyzer(),
             generation_service=generation_service,
             validator=validator,
-            uow_factory=uow_factory,
+            transactions=transactions,
+            modernizations=modernizations,
             retry=RetryPolicy(
                 max_attempts=settings.generation_max_attempts,
                 budget_seconds=settings.generation_retry_budget_seconds,

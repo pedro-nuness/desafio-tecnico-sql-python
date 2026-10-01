@@ -9,7 +9,7 @@ from app.features.modernization.domain.models.modernization import PipelineProgr
 from app.features.modernization.graph.builder import RetryPolicy
 from app.shared.integrations.errors import IntegrationError
 from tests.conftest import VALID_CODE, GraphFactory, ServiceFactory, llm_payload
-from tests.fakes import FakeLLM, InMemoryStore
+from tests.fakes import FakeLLM, InMemoryDatabase
 
 LINT_ONLY = "import os\n\nvalue = 1\n"
 BROKEN = llm_payload(code="def broken(:\n")
@@ -60,7 +60,7 @@ async def test_no_retry_once_the_time_budget_is_spent(
 
 
 async def test_failed_retry_keeps_the_previous_attempt(
-    make_service: ServiceFactory, store: InMemoryStore, load_procedure: Callable[[str], str]
+    make_service: ServiceFactory, store: InMemoryDatabase, load_procedure: Callable[[str], str]
 ) -> None:
     llm = FakeLLM([llm_payload(code=LINT_ONLY), "not json"])
 
@@ -78,7 +78,7 @@ async def test_failed_retry_keeps_the_previous_attempt(
 
 
 async def test_failing_runs_started_on_the_graph_are_recorded(
-    make_graph: GraphFactory, store: InMemoryStore, load_procedure: Callable[[str], str]
+    make_graph: GraphFactory, store: InMemoryDatabase, load_procedure: Callable[[str], str]
 ) -> None:
     """LangGraph API / Studio path: no FastAPI handler around it, the graph records it."""
     llm = FakeLLM(error=RuntimeError("provider exploded"))
@@ -95,7 +95,7 @@ async def test_failing_runs_started_on_the_graph_are_recorded(
 
 
 async def test_runs_started_on_the_graph_are_persisted(
-    make_graph: GraphFactory, store: InMemoryStore, load_procedure: Callable[[str], str]
+    make_graph: GraphFactory, store: InMemoryDatabase, load_procedure: Callable[[str], str]
 ) -> None:
     """The LangGraph API / Studio path: only the input fields, no service around it."""
     final = await make_graph().ainvoke({"source_code": load_procedure("process_orders")})

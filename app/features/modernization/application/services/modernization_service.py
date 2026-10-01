@@ -4,14 +4,15 @@ from uuid import UUID
 from app.features.modernization.application.ports.pipeline.modernization_pipeline import (
     ModernizationPipeline,
 )
-from app.features.modernization.application.ports.repositories.unit_of_work import (
-    UnitOfWorkFactory,
+from app.features.modernization.application.ports.repositories.modernization_repository import (
+    ModernizationRepository,
 )
 from app.features.modernization.domain.models.modernization import (
     Modernization,
     PipelineProgress,
 )
 from app.shared.errors import NotFoundError
+from app.shared.persistence import TransactionManager
 
 logger = logging.getLogger(__name__)
 
@@ -23,9 +24,15 @@ class ModernizationService:
     then propagate to the global HTTP handlers.
     """
 
-    def __init__(self, pipeline: ModernizationPipeline, uow_factory: UnitOfWorkFactory) -> None:
+    def __init__(
+        self,
+        pipeline: ModernizationPipeline,
+        transactions: TransactionManager,
+        modernizations: ModernizationRepository,
+    ) -> None:
         self._pipeline = pipeline
-        self._uow_factory = uow_factory
+        self._transactions = transactions
+        self._modernizations = modernizations
 
     async def modernize(
         self,
@@ -46,8 +53,8 @@ class ModernizationService:
         return finished
 
     async def get(self, modernization_id: UUID) -> Modernization:
-        async with self._uow_factory() as uow:
-            modernization = await uow.modernizations.find_by_id(modernization_id)
+        async with self._transactions.transaction():  # read-only: nothing to commit
+            modernization = await self._modernizations.find_by_id(modernization_id)
         if modernization is None:
             raise NotFoundError(
                 f"Modernization {modernization_id} not found", execution_id=str(modernization_id)

@@ -8,8 +8,8 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from app.features.modernization.application.ports.parsing.sql_parser import SQLParser
-from app.features.modernization.application.ports.repositories.unit_of_work import (
-    UnitOfWorkFactory,
+from app.features.modernization.application.ports.repositories.modernization_repository import (
+    ModernizationRepository,
 )
 from app.features.modernization.application.ports.validation.code_validator import (
     CodeValidator,
@@ -36,6 +36,7 @@ from app.features.modernization.graph.state import (
     ModernizationState,
     StateUpdate,
 )
+from app.shared.persistence import TransactionManager
 
 type ModernizationGraph = CompiledStateGraph[ModernizationState, None, ModernizationInput]
 type Node = Callable[[ModernizationState], StateUpdate | Awaitable[StateUpdate]]
@@ -65,7 +66,8 @@ def build_modernization_graph(
     analyzer: SemanticAnalyzer,
     generation_service: CodeGenerationService,
     validator: CodeValidator,
-    uow_factory: UnitOfWorkFactory,
+    transactions: TransactionManager,
+    modernizations: ModernizationRepository,
     retry: RetryPolicy = DEFAULT_RETRY,
 ) -> ModernizationGraph:
     """START -> record_start -> parsing -> semantic_analysis -> generation -> validation
@@ -76,8 +78,8 @@ def build_modernization_graph(
     Dependencies are injected into node instances (closures), keeping nodes thin.
     """
     graph = StateGraph(ModernizationState, input_schema=ModernizationInput)
-    record_failure = RecordFailure(uow_factory)
-    graph.add_node(RECORD_START, _tracked(None, RecordStartNode(uow_factory)))
+    record_failure = RecordFailure(transactions, modernizations)
+    graph.add_node(RECORD_START, _tracked(None, RecordStartNode(transactions, modernizations)))
     steps: list[tuple[PipelineStep, Node]] = [
         (PipelineStep.PARSING, ParsingNode(parser)),
         (PipelineStep.SEMANTIC_ANALYSIS, SemanticAnalysisNode(analyzer)),
@@ -86,7 +88,7 @@ def build_modernization_graph(
     ]
     for step, node in steps:
         graph.add_node(step.value, _tracked(step, node, record_failure))
-    graph.add_node(RECORD_RESULT, _tracked(None, RecordResultNode(uow_factory)))
+    graph.add_node(RECORD_RESULT, _tracked(None, RecordResultNode(transactions, modernizations)))
 
     graph.add_edge(START, RECORD_START)
     graph.add_edge(RECORD_START, PipelineStep.PARSING.value)

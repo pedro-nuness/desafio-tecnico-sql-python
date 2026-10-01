@@ -32,6 +32,9 @@ LLM_ADAPTERS = {
 # The composition root (core/providers.py + bootstrap.py) wires everything; nothing it builds
 # may reach back into it. Only entry points (core, features/*/api routes) know the DI library.
 COMPOSITION_ROOT = {"app.core.bootstrap", "app.core.providers", "app.core.server"}
+# Use cases and the graph open transactions through the port (app.shared.persistence); only
+# infrastructure (repositories) knows the SQLAlchemy implementation in core/database.
+CORE_INFRASTRUCTURE = {"app.core.database", "app.core.config"}
 DI = {"dishka"}
 
 FORBIDDEN: dict[str, set[str]] = {
@@ -46,6 +49,7 @@ FORBIDDEN: dict[str, set[str]] = {
     "features/modernization/domain": VENDORS
     | LLM_ADAPTERS
     | DI
+    | CORE_INFRASTRUCTURE
     | {
         "langgraph",
         "fastapi",
@@ -57,6 +61,7 @@ FORBIDDEN: dict[str, set[str]] = {
     "features/modernization/application": VENDORS
     | LLM_ADAPTERS
     | DI
+    | CORE_INFRASTRUCTURE
     | {
         "langgraph",
         "fastapi",
@@ -67,6 +72,7 @@ FORBIDDEN: dict[str, set[str]] = {
     "features/modernization/prompts": VENDORS
     | LLM_ADAPTERS
     | DI
+    | CORE_INFRASTRUCTURE
     | {
         "langgraph",
         "fastapi",
@@ -77,6 +83,7 @@ FORBIDDEN: dict[str, set[str]] = {
     "features/modernization/graph": VENDORS
     | LLM_ADAPTERS
     | DI
+    | CORE_INFRASTRUCTURE
     | {
         "fastapi",
         "app.features.modernization.infrastructure",

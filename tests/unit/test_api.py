@@ -17,7 +17,7 @@ from app.features.modernization.domain.enums import ModernizationStatus
 from app.shared.errors import AppError, DomainError, NotFoundError
 from app.shared.integrations.errors import IntegrationError
 from tests.conftest import ServiceFactory
-from tests.fakes import FakeLLM, InMemoryStore
+from tests.fakes import FakeLLM, InMemoryDatabase
 
 type ApiFactory = Callable[..., FastAPI]
 
@@ -155,7 +155,7 @@ async def test_global_handler_maps_error_class_to_status_and_payload_to_body(
 async def test_global_handler_maps_failures_and_points_to_the_recorded_run(
     make_api: ApiFactory,
     client: AsyncClient,
-    store: InMemoryStore,
+    store: InMemoryDatabase,
     load_procedure: Callable[[str], str],
     error: Exception,
     status_code: int,

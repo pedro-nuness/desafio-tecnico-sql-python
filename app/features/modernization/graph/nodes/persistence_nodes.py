@@ -7,8 +7,8 @@ run leaves a trace even if the process dies; the final state is written at the e
 Persistence errors are not caught: a run that cannot be recorded must fail loudly.
 """
 
-from app.features.modernization.application.ports.repositories.unit_of_work import (
-    UnitOfWorkFactory,
+from app.features.modernization.application.ports.repositories.modernization_repository import (
+    ModernizationRepository,
 )
 from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
 from app.features.modernization.domain.models.modernization import Modernization, PipelineError
@@ -18,17 +18,21 @@ from app.features.modernization.graph.state import (
     to_outcome,
 )
 from app.shared.errors import AppError, NotFoundError
+from app.shared.persistence import TransactionManager
 
 
 class RecordStartNode:
-    def __init__(self, uow_factory: UnitOfWorkFactory) -> None:
-        self._uow_factory = uow_factory
+    def __init__(
+        self, transactions: TransactionManager, modernizations: ModernizationRepository
+    ) -> None:
+        self._transactions = transactions
+        self._modernizations = modernizations
 
     async def __call__(self, state: ModernizationState) -> StateUpdate:
         modernization = Modernization.start(state["source_code"], state.get("schema_context"))
-        async with self._uow_factory() as uow:
-            await uow.modernizations.save(modernization)
-            await uow.commit()
+        async with self._transactions.transaction() as tx:
+            await self._modernizations.save(modernization)
+            await tx.commit()
         return StateUpdate(
             execution_id=modernization.id,
             started_at=modernization.created_at,
@@ -38,20 +42,23 @@ class RecordStartNode:
 
 
 class RecordResultNode:
-    def __init__(self, uow_factory: UnitOfWorkFactory) -> None:
-        self._uow_factory = uow_factory
+    def __init__(
+        self, transactions: TransactionManager, modernizations: ModernizationRepository
+    ) -> None:
+        self._transactions = transactions
+        self._modernizations = modernizations
 
     async def __call__(self, state: ModernizationState) -> StateUpdate:
         execution_id = state["execution_id"]
-        async with self._uow_factory() as uow:
-            running = await uow.modernizations.find_by_id(execution_id)
+        async with self._transactions.transaction() as tx:
+            running = await self._modernizations.find_by_id(execution_id)
             if running is None:
                 raise NotFoundError(
                     f"Modernization {execution_id} not found", execution_id=str(execution_id)
                 )
             finished = running.complete(to_outcome(state))
-            await uow.modernizations.update(finished)
-            await uow.commit()
+            await self._modernizations.update(finished)
+            await tx.commit()
         return StateUpdate(modernization=finished, status=finished.status)
 
 
@@ -62,8 +69,11 @@ class RecordFailure:
     not only those coming through the FastAPI handlers.
     """
 
-    def __init__(self, uow_factory: UnitOfWorkFactory) -> None:
-        self._uow_factory = uow_factory
+    def __init__(
+        self, transactions: TransactionManager, modernizations: ModernizationRepository
+    ) -> None:
+        self._transactions = transactions
+        self._modernizations = modernizations
 
     async def __call__(self, state: ModernizationState, step: PipelineStep, exc: Exception) -> None:
         execution_id = state["execution_id"]
@@ -75,8 +85,8 @@ class RecordFailure:
             payload=exc.payload if isinstance(exc, AppError) else {},
         )
         outcome = outcome.model_copy(update={"errors": (*outcome.errors, error)})
-        async with self._uow_factory() as uow:
-            running = await uow.modernizations.find_by_id(execution_id)
+        async with self._transactions.transaction() as tx:
+            running = await self._modernizations.find_by_id(execution_id)
             if running is None:
                 raise NotFoundError(
                     f"Modernization {execution_id} not found", execution_id=str(execution_id)
@@ -84,5 +94,5 @@ class RecordFailure:
             finished = running.complete(outcome).model_copy(
                 update={"status": ModernizationStatus.FAILURE}
             )
-            await uow.modernizations.update(finished)
-            await uow.commit()
+            await self._modernizations.update(finished)
+            await tx.commit()

@@ -35,7 +35,7 @@ from app.features.modernization.infrastructure.validation.ruff_validator import 
 from app.features.modernization.prompts.generation_prompt import (
     GenerationPromptBuilder,
 )
-from tests.fakes import FakeLLM, InMemoryStore
+from tests.fakes import FakeLLM, InMemoryDatabase, InMemoryModernizationRepository
 
 PROCEDURES_DIR = Path(__file__).parent / "fixtures" / "procedures"
 
@@ -84,8 +84,8 @@ def load_procedure() -> Callable[[str], str]:
 
 
 @pytest.fixture
-def store() -> InMemoryStore:
-    return InMemoryStore()
+def store() -> InMemoryDatabase:
+    return InMemoryDatabase()
 
 
 type GraphFactory = Callable[..., ModernizationGraph]
@@ -93,8 +93,8 @@ type ServiceFactory = Callable[..., ModernizationService]
 
 
 @pytest.fixture
-def make_graph(store: InMemoryStore) -> GraphFactory:
-    """Real LangGraph graph + real parser/analyzer; fake LLM and in-memory UoW."""
+def make_graph(store: InMemoryDatabase) -> GraphFactory:
+    """Real LangGraph graph + real parser/analyzer; fake LLM and in-memory database."""
 
     def factory(
         llm: FakeLLM | None = None,
@@ -108,7 +108,8 @@ def make_graph(store: InMemoryStore) -> GraphFactory:
                 llm or FakeLLM([llm_payload()]), GenerationPromptBuilder()
             ),
             validator=validator or CompositeCodeValidator([PythonASTValidator(), RuffValidator()]),
-            uow_factory=store.uow,
+            transactions=store,
+            modernizations=InMemoryModernizationRepository(store),
             retry=retry,
         )
 
@@ -116,10 +117,12 @@ def make_graph(store: InMemoryStore) -> GraphFactory:
 
 
 @pytest.fixture
-def make_service(store: InMemoryStore, make_graph: GraphFactory) -> ServiceFactory:
+def make_service(store: InMemoryDatabase, make_graph: GraphFactory) -> ServiceFactory:
     def factory(**graph_options: Any) -> ModernizationService:
         return ModernizationService(
-            LangGraphModernizationPipeline(make_graph(**graph_options)), store.uow
+            LangGraphModernizationPipeline(make_graph(**graph_options)),
+            store,
+            InMemoryModernizationRepository(store),
         )
 
     return factory

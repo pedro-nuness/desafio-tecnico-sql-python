@@ -8,13 +8,13 @@ from app.features.modernization.domain.models.validation import ValidationResult
 from app.shared.errors import DomainError, NotFoundError
 from app.shared.integrations.errors import IntegrationError
 from tests.conftest import ServiceFactory, llm_payload
-from tests.fakes import FakeLLM, InMemoryStore
+from tests.fakes import FakeLLM, InMemoryDatabase
 
 ALL_STEPS = tuple(PipelineStep)
 
 
 async def test_success_runs_all_four_nodes_and_persists_twice(
-    make_service: ServiceFactory, store: InMemoryStore, load_procedure: Callable[[str], str]
+    make_service: ServiceFactory, store: InMemoryDatabase, load_procedure: Callable[[str], str]
 ) -> None:
     result = await make_service().modernize(load_procedure("process_orders"), "CREATE TABLE t();")
 
@@ -35,7 +35,7 @@ async def test_success_runs_all_four_nodes_and_persists_twice(
 
 
 async def test_llm_failure_is_recorded_then_propagates(
-    make_service: ServiceFactory, store: InMemoryStore, load_procedure: Callable[[str], str]
+    make_service: ServiceFactory, store: InMemoryDatabase, load_procedure: Callable[[str], str]
 ) -> None:
     error = IntegrationError("provider unavailable")
     service = make_service(llm=FakeLLM(error=error))
@@ -98,7 +98,7 @@ class _ExplodingValidator:
 
 
 async def test_unexpected_crash_is_recorded_with_last_known_state(
-    make_service: ServiceFactory, store: InMemoryStore, load_procedure: Callable[[str], str]
+    make_service: ServiceFactory, store: InMemoryDatabase, load_procedure: Callable[[str], str]
 ) -> None:
     progress = PipelineProgress()
     with pytest.raises(RuntimeError, match="unexpected bug"):
