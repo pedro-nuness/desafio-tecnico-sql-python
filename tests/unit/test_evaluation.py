@@ -9,14 +9,20 @@ from uuid import uuid4
 
 import pytest
 
-from app.features.modernization.domain.evaluation import CaseResult, Evaluation, EvaluationSummary
-from app.features.modernization.domain.modernization import (
-    Modernization,
-    ModernizationReport,
-    ParsingSummary,
+from app.features.modernization.domain import Modernization, ModernizationReport, ParsingSummary
+from app.features.modernization.evaluation.domain import Evaluation, EvaluationSummary
+from app.features.modernization.parsing.domain import Parameter, ParameterMode
+from app.features.modernization.parsing.plpgsql import PglastParser
+from app.features.modernization.use_cases import (
+    EvaluateCommand,
+    EvaluateModernization,
+    EvaluationSummaryQuery,
+    GetEvaluationSummary,
+    ModernizeCommand,
 )
-from app.features.modernization.domain.parsing import Parameter, ParameterMode
-from app.features.modernization.evaluation.equivalence import (
+from app.features.modernization.validation.checks.behavior.dataset import Case, Dataset
+from app.features.modernization.validation.checks.behavior.domain import CaseResult
+from app.features.modernization.validation.checks.behavior.harness import (
     INPUT_MODES,
     Observed,
     canonical,
@@ -26,15 +32,6 @@ from app.features.modernization.evaluation.equivalence import (
     defined_in,
     describe_error,
     load_entry_point,
-)
-from app.features.modernization.evaluation.scenarios import Case, Dataset
-from app.features.modernization.parsing.plpgsql import PglastParser
-from app.features.modernization.use_cases import (
-    EvaluateCommand,
-    EvaluateModernization,
-    EvaluationSummaryQuery,
-    GetEvaluationSummary,
-    ModernizeCommand,
 )
 from app.shared.errors import AppError, DomainError, NotFoundError
 from tests.conftest import ModernizeFactory

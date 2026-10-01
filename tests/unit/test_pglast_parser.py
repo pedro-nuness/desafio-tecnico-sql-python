@@ -2,7 +2,7 @@ from collections.abc import Callable
 
 import pytest
 
-from app.features.modernization.domain.parsing import (
+from app.features.modernization.parsing.domain import (
     DeclarationKind,
     ParameterMode,
     RoutineKind,

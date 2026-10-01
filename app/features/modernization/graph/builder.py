@@ -7,11 +7,12 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
-from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
-from app.features.modernization.domain.modernization import (
+from app.features.modernization.domain import (
     Modernization,
+    ModernizationStatus,
     PipelineError,
     PipelineProgress,
+    PipelineStep,
 )
 from app.features.modernization.generation.generate_code import GenerateCode
 from app.features.modernization.graph.nodes import (
@@ -29,7 +30,7 @@ from app.features.modernization.graph.state import (
     StateUpdate,
     to_report,
 )
-from app.features.modernization.parsing.strategy import SQLParser
+from app.features.modernization.parsing.parser import SQLParser
 from app.features.modernization.persistence.execution_log import ExecutionLog
 from app.features.modernization.validation.validate_code import ValidateCode
 

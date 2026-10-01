@@ -9,11 +9,7 @@ recorded must fail loudly.
 
 from uuid import UUID
 
-from app.features.modernization.domain.modernization import (
-    Modernization,
-    ModernizationReport,
-    PipelineError,
-)
+from app.features.modernization.domain import Modernization, ModernizationReport, PipelineError
 from app.features.modernization.persistence.repository import ModernizationRepository
 
 

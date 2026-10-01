@@ -14,28 +14,28 @@ from app.features.modernization.analysis.catalog import (
     STATEMENT_FEATURES,
     is_builtin_function,
 )
+from app.features.modernization.analysis.domain import (
+    Dependency,
+    DependencyKind,
+    DetectedFeature,
+    Feature,
+    GenerationStrategy,
+    ParameterSummary,
+    SemanticAnalysis,
+)
 from app.features.modernization.analysis.risks import (
     detect_risks,
     fragments_with_lines,
     is_dynamic_sql,
     recommend,
 )
-from app.features.modernization.domain.enums import GenerationStrategy
-from app.features.modernization.domain.parsing import (
+from app.features.modernization.parsing.domain import (
     LOOP_KINDS,
     DeclarationKind,
     ParameterMode,
     ParsedProcedure,
     SqlFragment,
     Statement,
-)
-from app.features.modernization.domain.semantic_analysis import (
-    Dependency,
-    DependencyKind,
-    DetectedFeature,
-    Feature,
-    ParameterSummary,
-    SemanticAnalysis,
 )
 
 

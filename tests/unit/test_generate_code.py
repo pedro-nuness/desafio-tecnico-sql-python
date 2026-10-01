@@ -4,15 +4,14 @@ from collections.abc import Callable
 import pytest
 
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
-from app.features.modernization.domain.enums import GenerationStrategy
-from app.features.modernization.domain.generation import GenerationResult
-from app.features.modernization.domain.parsing import ParsedProcedure
-from app.features.modernization.domain.semantic_analysis import SemanticAnalysis
+from app.features.modernization.analysis.domain import GenerationStrategy, SemanticAnalysis
+from app.features.modernization.generation.domain import GenerationResult
 from app.features.modernization.generation.generate_code import GenerateCode
 from app.features.modernization.generation.prompt import (
     PROMPT_VERSION,
     GenerationPromptBuilder,
 )
+from app.features.modernization.parsing.domain import ParsedProcedure
 from app.features.modernization.parsing.plpgsql import PglastParser
 from app.shared.integrations.errors import IntegrationError
 from app.shared.integrations.llm.llm import LLMRequest, LLMResponse, ResponseFormat

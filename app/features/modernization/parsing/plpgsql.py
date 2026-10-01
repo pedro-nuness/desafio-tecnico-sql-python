@@ -24,7 +24,7 @@ from pglast import ast, enums, visitors
 from pglast.parser import ParseError
 from pglast.stream import RawStream
 
-from app.features.modernization.domain.parsing import (
+from app.features.modernization.parsing.domain import (
     Declaration,
     DeclarationKind,
     ExceptionHandler,

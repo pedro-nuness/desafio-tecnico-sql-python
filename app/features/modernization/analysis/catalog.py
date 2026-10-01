@@ -4,8 +4,8 @@ text of every risk and recommendation. Data only (plus the built-in lookup)."""
 from collections.abc import Mapping
 from typing import NamedTuple
 
-from app.features.modernization.domain.parsing import SqlCommand, StatementKind
-from app.features.modernization.domain.semantic_analysis import Feature, RiskSeverity
+from app.features.modernization.analysis.domain import Feature, RiskSeverity
+from app.features.modernization.parsing.domain import SqlCommand, StatementKind
 
 # --------------------------------------------------------------------------- PostgreSQL
 

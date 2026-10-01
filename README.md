@@ -154,16 +154,18 @@ app/
 │       └── llm/                # port LLM, LLMGateway (rotas com failover), providers, TracedLLM
 └── features/
     ├── health/
-    └── modernization/
+    └── modernization/          # domain.py = o que a etapa produz · models.py = tabela no banco
         ├── routes.py · schemas.py · use_cases.py
-        ├── domain/             # IR, análise, relatório, aggregate Modernization (Pydantic)
-        ├── parsing/            # SQLParser (strategy) · PglastParser
-        ├── analysis/           # SemanticAnalyzer · riscos/recomendações · catálogos
-        ├── generation/         # GenerateCode · prompt
-        ├── validation/         # ValidateCode + Rule · checks: AST, Ruff, comportamento
-        ├── evaluation/         # harness de equivalência, dataset, runner, repositório
-        ├── persistence/        # repositório, ExecutionLog, model ORM (com mapeamento)
-        └── graph/              # builder · nodes · state
+        ├── domain.py           # o que a feature produz: a execução (Modernization, relatório, status)
+        ├── graph/              # builder · nodes · state
+        ├── parsing/            # domain.py (o IR) · parser.py (SQLParser) · plpgsql.py
+        ├── analysis/           # domain.py · analyzer.py · risks.py · catalog.py
+        ├── generation/         # domain.py · prompt.py · generate_code.py
+        ├── validation/         # domain.py · validate_code.py (CodeCheck, Rule, ValidateCode)
+        │   └── checks/         # syntax.py (ast.parse) · lint.py (Ruff)
+        │       └── behavior/   # domain.py · check.py · harness.py · dataset.py · runner.py
+        ├── evaluation/         # a métrica: domain.py · models.py · repository.py
+        └── persistence/        # o histórico: models.py · repository.py · execution_log.py
 migrations/  scripts/run_examples.py  examples/  tests/{unit,integration}  docker/
 ```
 
@@ -185,7 +187,7 @@ migrations/  scripts/run_examples.py  examples/  tests/{unit,integration}  docke
 O grafo não fica atrás de interface: só existe um orquestrador, e os testes rodam o grafo real com
 fakes nas bordas (LLM e banco). `tests/unit/test_architecture.py` fixa as regras de dependência:
 cada biblioteca só é importada pelo módulo que a encapsula (`pglast` em `parsing/plpgsql.py`, `ruff`
-em `validation/ruff_check.py`, `langgraph` em `graph/builder.py`), o domínio não importa
+em `validation/checks/lint.py`, `langgraph` em `graph/builder.py`), o domínio não importa
 infraestrutura e as features não importam o composition root.
 
 ---
@@ -281,7 +283,7 @@ rejeita, `begin_nested()` sem `await`, arredondamento `NUMERIC` em cada atribui�
 contra o original isso aparece.
 
 **Dentro do pipeline, com holdout.** O mesmo harness roda como check de validação
-(`validation/behavior_check.py`): uma divergência vira feedback para o loop de reparo. Para a
+(`validation/checks/behavior/check.py`): uma divergência vira feedback para o loop de reparo. Para a
 métrica continuar medindo generalização, o dataset separa **12 casos dev** (rodam no pipeline e
 viram feedback) de **9 holdout** (`holdout: true`, nunca chegam ao prompt). Cada rotina tem os dois
 tipos, e o holdout repete as armadilhas com outros dados. Rotina sem cenário no dataset: o check
@@ -554,26 +556,32 @@ por réplica.
 
 ## Configuração
 
-`app/core/config/settings.py` (pydantic-settings, lê env e `.env`). Principais variáveis:
+Os valores ficam **só no `.env`**. O [`.env.example`](.env.example) é o modelo, com todas as
+variáveis e comentários, e é ele que se copia (`cp .env.example .env`). O
+`app/core/config/settings.py` (pydantic-settings) não tem nenhum default: uma variável ausente
+do `.env` impede o boot e aparece pelo nome. Variáveis de ambiente sobrescrevem o `.env`. Valor
+vazio quer dizer "não definido". No Docker, o compose passa o `.env` ao container e só fixa os
+endereços que mudam lá dentro (host `postgres` e `host.docker.internal`). Os testes usam os
+valores do `.env.example` (sem segredos), para não depender do `.env` de quem roda.
 
-
-| variável                                                            | padrão                                                                 | descrição                                                                 |
-| ------------------------------------------------------------------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------- |
-| `DATABASE_URL`                                                      | `postgresql+asyncpg://modernizer:modernizer@localhost:5432/modernizer` | driver async                                                              |
-| `LLM_PROVIDER` / `LLM_MODEL`                                        | `openrouter` / `anthropic/claude-sonnet-4.5`                           | uma rota; `openai` aceita `LLM_BASE_URL`                                  |
-| `LLM_API_KEY`                                                       | —                                                                      | obrigatória (o boot falha sem ela)                                        |
-| `LLM_REASONING_EFFORT`                                              | não enviado                                                            | `low` para modelos de raciocínio (decisão 4)                              |
-| `LLM_CONFIG_FILE`                                                   | —                                                                      | YAML com várias rotas e providers ([exemplo](config/llm.example.yml))     |
-| `LLM_TEMPERATURE` / `LLM_MAX_OUTPUT_TOKENS`                         | `0` / `8192`                                                           |                                                                           |
-| `LLM_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES`                           | `120` / `2`                                                            |                                                                           |
-| `LLM_CIRCUIT_BREAKER_*`                                             | `5` falhas / `60` s                                                    | abre e fecha o circuito                                                   |
-| `GENERATION_MAX_ATTEMPTS`                                           | `2`                                                                    | tentativas de geração (1 desliga o reparo)                                |
-| `GENERATION_RETRY_BUDGET_SECONDS`                                   | `90`                                                                   | nenhuma retentativa começa depois disso                                   |
-| `EVALUATION_DATABASE_URL`                                           | —                                                                      | banco descartável da avaliação; sem ele o check de comportamento é pulado |
-| `EVALUATION_DATASET_FILE`                                           | `examples/evaluation/scenarios.yml`                                    |                                                                           |
-| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` | — / — / `http://localhost:3000`                                        | as duas chaves ligam o tracing                                            |
-| `TEST_DATABASE_URL`                                                 | —                                                                      | só testes de integração                                                   |
-
+| variável | no `.env.example` | descrição |
+|---|---|---|
+| `APP_NAME` / `LOG_LEVEL` | `plpgsql-modernizer` / `INFO` | |
+| `DATABASE_URL` / `DATABASE_ECHO` | `postgresql+asyncpg://…@localhost:5432/modernizer` / `false` | driver async |
+| `LLM_PROVIDER` / `LLM_MODEL` | `openrouter` / `z-ai/glm-5.3-flash` | uma rota; `openai` aceita `LLM_BASE_URL` |
+| `LLM_API_KEY` | vazio | obrigatória na prática: sem ela o boot falha |
+| `LLM_REASONING_EFFORT` | `low` | vazio = não enviado (decisão 4) |
+| `LLM_CONFIG_FILE` | vazio | YAML com várias rotas e providers ([exemplo](config/llm.example.yml)) |
+| `LLM_TEMPERATURE` / `LLM_MAX_OUTPUT_TOKENS` | `0.0` / `8192` | |
+| `LLM_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` | `120` / `2` | |
+| `LLM_CIRCUIT_BREAKER_*` | `5` falhas / `60` s | abre e fecha o circuito |
+| `GENERATION_MAX_ATTEMPTS` | `2` | tentativas de geração (1 desliga o reparo) |
+| `GENERATION_RETRY_BUDGET_SECONDS` | `90` | nenhuma retentativa começa depois disso |
+| `RUFF_TIMEOUT_SECONDS` | `20` | |
+| `EVALUATION_DATABASE_URL` | `…/modernizer_eval` | banco descartável; vazio = check de comportamento pulado |
+| `EVALUATION_DATASET_FILE` / `EVALUATION_CASE_TIMEOUT_SECONDS` | `examples/evaluation/scenarios.yml` / `10` | |
+| `LANGFUSE_PUBLIC_KEY` / `LANGFUSE_SECRET_KEY` / `LANGFUSE_BASE_URL` | vazio / vazio / `http://localhost:3000` | as duas chaves ligam o tracing |
+| `TEST_DATABASE_URL` | `…/modernizer_test` | só testes de integração (a app não lê) |
 
 ---
 

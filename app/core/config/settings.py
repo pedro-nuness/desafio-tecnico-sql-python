@@ -15,55 +15,60 @@ from app.shared.integrations.llm.config import (
     Route,
 )
 
+ENV_FILE = ".env"
+"""The only place values come from (copied from .env.example); environment variables override
+it. No value is defined in code."""
+
 
 class Settings(BaseSettings):
-    """Single source of configuration (environment variables / .env)."""
+    """Single source of configuration: .env (or environment variables).
 
-    model_config = SettingsConfigDict(env_file=".env", env_file_encoding="utf-8", extra="ignore")
+    No field has a default: a variable missing from .env fails the boot by name.
+    """
 
-    app_name: str = "plpgsql-modernizer"
-    database_url: PostgresDsn = PostgresDsn(
-        "postgresql+asyncpg://modernizer:modernizer@localhost:5432/modernizer"
-    )
-    database_echo: bool = False
+    model_config = SettingsConfigDict(env_file=ENV_FILE, env_file_encoding="utf-8", extra="ignore")
 
-    llm_config_file: Path | None = None
+    app_name: str
+    database_url: PostgresDsn
+    database_echo: bool
+
+    llm_config_file: Path | None
     """YAML with the declared providers and the routes tried in order
     (config/llm.example.yml). When unset, the LLM_* variables below describe one route."""
-    llm_provider: ProviderType = ProviderType.OPENROUTER
-    llm_model: str = "anthropic/claude-sonnet-4.5"
-    llm_api_key: SecretStr | None = None
-    llm_base_url: str | None = None
+    llm_provider: ProviderType
+    llm_model: str
+    llm_api_key: SecretStr | None
+    llm_base_url: str | None
     """Override the provider endpoint (any OpenAI-compatible API)."""
-    llm_temperature: float = Field(default=0.0, ge=0.0, le=2.0)
-    llm_max_output_tokens: int = Field(default=8192, gt=0)
-    llm_timeout_seconds: float = Field(default=120.0, gt=0)
-    llm_max_retries: int = Field(default=2, ge=0)
-    llm_reasoning_effort: ReasoningEffort | None = None
+    llm_temperature: float = Field(ge=0.0, le=2.0)
+    llm_max_output_tokens: int = Field(gt=0)
+    llm_timeout_seconds: float = Field(gt=0)
+    llm_max_retries: int = Field(ge=0)
+    llm_reasoning_effort: ReasoningEffort | None
     """Reasoning models only; unset = provider default (not sent)."""
-    llm_circuit_breaker_failure_threshold: int = Field(default=5, ge=1)
+    llm_circuit_breaker_failure_threshold: int = Field(ge=1)
     """Consecutive LLM failures (after retries) that open the circuit."""
-    llm_circuit_breaker_reset_seconds: float = Field(default=60.0, gt=0)
+    llm_circuit_breaker_reset_seconds: float = Field(gt=0)
     """How long an open circuit fails fast before letting one trial call through."""
 
-    generation_max_attempts: int = Field(default=2, ge=1)
+    generation_max_attempts: int = Field(ge=1)
     """Total generation attempts; >1 regenerates with the validation issues as feedback."""
-    generation_retry_budget_seconds: float = Field(default=90.0, gt=0)
+    generation_retry_budget_seconds: float = Field(gt=0)
     """No retry starts once the run is older than this (bounds the synchronous request)."""
 
-    ruff_timeout_seconds: float = Field(default=20.0, gt=0)
+    ruff_timeout_seconds: float = Field(gt=0)
 
-    langfuse_public_key: str | None = None
-    langfuse_secret_key: SecretStr | None = None
-    langfuse_base_url: str = "http://localhost:3000"
+    langfuse_public_key: str | None
+    langfuse_secret_key: SecretStr | None
+    langfuse_base_url: str
 
-    evaluation_database_url: PostgresDsn | None = None
+    evaluation_database_url: PostgresDsn | None
     """Disposable database where the evaluation executes generated code (never the app's).
     Unset: the evaluation endpoints answer with an error; everything else works."""
-    evaluation_dataset_file: Path = Path("examples/evaluation/scenarios.yml")
-    evaluation_case_timeout_seconds: float = Field(default=10.0, gt=0)
+    evaluation_dataset_file: Path
+    evaluation_case_timeout_seconds: float = Field(gt=0)
 
-    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
+    log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"]
 
     @field_validator(
         "llm_config_file",
@@ -77,7 +82,8 @@ class Settings(BaseSettings):
     )
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:
-        # Docker Compose passes unset variables as empty strings.
+        # Optional values are written empty in .env.example (and Docker Compose passes unset
+        # variables as empty strings): empty means "not set".
         return None if value == "" else value
 
     def llm_settings(self) -> LLMSettings:
@@ -109,10 +115,9 @@ class Settings(BaseSettings):
 
     def read_env(self, name: str) -> str | None:
         """A variable named by a config file (e.g. llm.yml api_key_env), read the way every
-        setting is: process environment first, then the .env file."""
+        setting is: process environment first, then .env."""
         if name in os.environ:
             return os.environ[name]
-        env_file = self.model_config.get("env_file")
-        if isinstance(env_file, str) and Path(env_file).is_file():
-            return dotenv_values(env_file).get(name)
+        if Path(ENV_FILE).is_file():
+            return dotenv_values(ENV_FILE).get(name)
         return None

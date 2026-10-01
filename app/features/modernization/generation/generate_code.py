@@ -3,15 +3,14 @@ import re
 
 from pydantic import BaseModel, ValidationError
 
-from app.features.modernization.domain.enums import GenerationStrategy
-from app.features.modernization.domain.generation import (
+from app.features.modernization.analysis.domain import GenerationStrategy, SemanticAnalysis
+from app.features.modernization.generation.domain import (
     ArchitecturalDecision,
     GenerationResult,
     RepairFeedback,
 )
-from app.features.modernization.domain.parsing import ParsedProcedure
-from app.features.modernization.domain.semantic_analysis import SemanticAnalysis
 from app.features.modernization.generation.prompt import GenerationPromptBuilder
+from app.features.modernization.parsing.domain import ParsedProcedure
 from app.shared.integrations.errors import IntegrationError
 from app.shared.integrations.llm.llm import LLM, LLMRequest, LLMResponse, ResponseFormat
 

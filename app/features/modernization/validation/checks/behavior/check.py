@@ -6,8 +6,8 @@ Routines without a scenario are skipped and reported as not verified: building t
 automatically for any routine is the next step (README, Evolução futura).
 """
 
-from app.features.modernization.domain.validation import ValidationMessage
-from app.features.modernization.evaluation.equivalence import BehavioralEquivalence
+from app.features.modernization.validation.checks.behavior.harness import BehavioralEquivalence
+from app.features.modernization.validation.domain import ValidationMessage
 from app.features.modernization.validation.validate_code import Findings, Routine, Skipped
 
 

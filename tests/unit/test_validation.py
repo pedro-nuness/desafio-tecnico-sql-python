@@ -4,9 +4,9 @@ import asyncio
 
 import pytest
 
-from app.features.modernization.domain.validation import ValidationMessage
-from app.features.modernization.validation.python_ast_check import PythonASTCheck
-from app.features.modernization.validation.ruff_check import RuffCheck
+from app.features.modernization.validation.checks.lint import RuffCheck
+from app.features.modernization.validation.checks.syntax import PythonASTCheck
+from app.features.modernization.validation.domain import ValidationMessage
 from app.features.modernization.validation.validate_code import Rule, ValidateCode
 from app.shared.errors import AppError
 from tests.conftest import VALID_CODE, default_validate_code

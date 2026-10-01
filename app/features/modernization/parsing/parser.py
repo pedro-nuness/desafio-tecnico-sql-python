@@ -1,6 +1,6 @@
 from typing import Protocol
 
-from app.features.modernization.domain.parsing import ParsedProcedure
+from app.features.modernization.parsing.domain import ParsedProcedure
 
 
 class SQLParser(Protocol):

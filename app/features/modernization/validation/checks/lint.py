@@ -7,7 +7,7 @@ from collections.abc import Sequence
 from pydantic import BaseModel, TypeAdapter
 from ruff.__main__ import find_ruff_bin
 
-from app.features.modernization.domain.validation import ValidationMessage
+from app.features.modernization.validation.domain import ValidationMessage
 from app.features.modernization.validation.validate_code import Routine
 from app.shared.errors import AppError
 

@@ -8,12 +8,12 @@ import logging
 from dataclasses import dataclass
 from uuid import UUID
 
-from app.features.modernization.domain.evaluation import Evaluation, EvaluationSummary
-from app.features.modernization.domain.modernization import Modernization, PipelineProgress
-from app.features.modernization.evaluation.equivalence import EquivalenceMetric
+from app.features.modernization.domain import Modernization, PipelineProgress
+from app.features.modernization.evaluation.domain import Evaluation, EvaluationSummary
 from app.features.modernization.evaluation.repository import EvaluationRepository
 from app.features.modernization.graph.builder import ModernizationGraph, run_modernization
 from app.features.modernization.persistence.repository import ModernizationRepository
+from app.features.modernization.validation.checks.behavior.harness import EquivalenceMetric
 
 logger = logging.getLogger(__name__)
 

@@ -4,9 +4,10 @@ import json
 from collections.abc import Sequence
 from uuid import UUID
 
-from app.features.modernization.domain.evaluation import CaseResult, Evaluation
-from app.features.modernization.domain.modernization import Modernization
+from app.features.modernization.domain import Modernization
+from app.features.modernization.evaluation.domain import Evaluation
 from app.features.modernization.persistence.repository import not_found
+from app.features.modernization.validation.checks.behavior.domain import CaseResult
 from app.shared.integrations.llm.llm import LLMRequest, LLMResponse
 
 

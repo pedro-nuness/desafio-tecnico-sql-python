@@ -4,7 +4,7 @@ from sqlalchemy import select
 from sqlalchemy.dialects.postgresql import distinct_on
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.features.modernization.domain.evaluation import Evaluation
+from app.features.modernization.evaluation.domain import Evaluation
 from app.features.modernization.evaluation.models import EvaluationResultModel
 
 

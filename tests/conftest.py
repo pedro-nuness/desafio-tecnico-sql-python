@@ -1,9 +1,11 @@
 import json
+import os
 from collections.abc import Callable
 from pathlib import Path
 from typing import Any
 
 import pytest
+from dotenv import dotenv_values
 
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
 from app.features.modernization.generation.generate_code import GenerateCode
@@ -17,10 +19,26 @@ from app.features.modernization.graph.builder import (
 from app.features.modernization.parsing.plpgsql import PglastParser
 from app.features.modernization.persistence.execution_log import ExecutionLog
 from app.features.modernization.use_cases import GetModernization, ModernizeRoutine
-from app.features.modernization.validation.python_ast_check import PythonASTCheck
-from app.features.modernization.validation.ruff_check import RuffCheck
+from app.features.modernization.validation.checks.lint import RuffCheck
+from app.features.modernization.validation.checks.syntax import PythonASTCheck
 from app.features.modernization.validation.validate_code import Rule, ValidateCode
 from tests.fakes import FakeLLM, InMemoryDatabase, InMemoryModernizationRepository
+
+ENV_TEMPLATE = Path(__file__).parents[1] / ".env.example"
+
+
+def _settings_from_the_template() -> None:
+    """Settings has no defaults and the app reads only .env: tests use the template's values
+    (no secrets) instead of whatever .env the developer has. Runs at import, before any test
+    module imports the app (app.core.server builds Settings at import). Variables already in
+    the environment win (e.g. EVALUATION_DATABASE_URL for the integration tests);
+    TEST_DATABASE_URL stays opt-in, so integration tests still skip without a database."""
+    for name, value in dotenv_values(ENV_TEMPLATE).items():
+        if value is not None and name != "TEST_DATABASE_URL":
+            os.environ.setdefault(name, value)
+
+
+_settings_from_the_template()
 
 
 @pytest.fixture(autouse=True)

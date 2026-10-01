@@ -46,8 +46,20 @@ PURE = (
 )
 # Implementations (strategies, repository, graph) never know the HTTP layer or the DI library.
 IMPLEMENTATION = DI | {"fastapi"} | ENTRY | {f"{FEATURE}.use_cases"}
+# What each step produces (its domain.py) and the execution aggregate: plain data and rules.
+DOMAIN_FILES = (
+    "features/modernization/domain.py",
+    "features/modernization/parsing/domain.py",
+    "features/modernization/analysis/domain.py",
+    "features/modernization/generation/domain.py",
+    "features/modernization/validation/domain.py",
+    "features/modernization/validation/checks/behavior/domain.py",
+    "features/modernization/evaluation/domain.py",
+)
+DOMAIN_MODULES = {"app." + path.removesuffix(".py").replace("/", ".") for path in DOMAIN_FILES}
 
 FORBIDDEN: dict[str, set[str]] = {
+    **{path: PURE | ENTRY for path in DOMAIN_FILES},
     # shared/integrations holds vendor adapters; the rest of shared stays vendor-free.
     "shared": {"fastapi", "langgraph", "app.core", "app.features"} | DI,
     "features": COMPOSITION_ROOT,
@@ -55,25 +67,9 @@ FORBIDDEN: dict[str, set[str]] = {
     "shared/resilience": VENDORS,
     "core/config": VENDORS | {"fastapi", "langgraph", "app.features"},
     "core/database": {"fastapi", "langgraph", "app.features", "openai", "pglast", "ruff"},
-    # The vocabulary every capability shares: depends on nothing else in the feature.
-    "features/modernization/domain": PURE
-    | ENTRY
-    | {
-        f"{FEATURE}.{module}"
-        for module in (
-            "use_cases",
-            "parsing",
-            "analysis",
-            "generation",
-            "validation",
-            "persistence",
-            "evaluation",
-            "graph",
-        )
-    },
     "features/modernization/use_cases.py": PURE | ENTRY,
     "features/modernization/generation": PURE | IMPLEMENTATION | {f"{FEATURE}.graph"},
-    "features/modernization/parsing/strategy.py": PURE | IMPLEMENTATION,
+    "features/modernization/parsing/parser.py": PURE | IMPLEMENTATION,
     "features/modernization/analysis": PURE | IMPLEMENTATION | {f"{FEATURE}.graph"},
     "features/modernization/validation/validate_code.py": PURE | IMPLEMENTATION,
     "features/modernization/persistence/execution_log.py": PURE
@@ -133,13 +129,13 @@ def test_only_the_vendor_adapter_imports_its_sdk(vendor: str) -> None:
 # Inside the feature, each library is known by the implementation that wraps it, only.
 FEATURE_VENDOR_HOMES = {
     "pglast": ("features/modernization/parsing/plpgsql.py",),
-    "ruff": ("features/modernization/validation/ruff_check.py",),
+    "ruff": ("features/modernization/validation/checks/lint.py",),
     "sqlalchemy": (
-        "features/modernization/evaluation/equivalence.py",
         "features/modernization/evaluation/models.py",
         "features/modernization/evaluation/repository.py",
         "features/modernization/persistence/models.py",
         "features/modernization/persistence/repository.py",
+        "features/modernization/validation/checks/behavior/harness.py",
     ),
     "langgraph": ("features/modernization/graph/builder.py",),
     "langchain_core": ("features/modernization/graph/builder.py",),
@@ -164,9 +160,15 @@ def _feature_imports(path: Path) -> set[str]:
 
 @pytest.mark.parametrize("entry", ["routes.py", "schemas.py"])
 def test_http_layer_only_knows_use_cases_schemas_and_domain(entry: str) -> None:
-    allowed = (f"{FEATURE}.use_cases", f"{FEATURE}.schemas", f"{FEATURE}.domain.")
+    allowed = {f"{FEATURE}.use_cases", f"{FEATURE}.schemas"} | DOMAIN_MODULES
     imports = _feature_imports(APP / "features/modernization" / entry)
-    assert [i for i in imports if not i.startswith(allowed)] == []
+    assert sorted(imports - allowed) == []
+
+
+@pytest.mark.parametrize("domain_file", DOMAIN_FILES)
+def test_domain_files_only_import_other_domain_files(domain_file: str) -> None:
+    """A step's domain.py never reaches into another step's logic, only into its data."""
+    assert sorted(_feature_imports(APP / domain_file) - DOMAIN_MODULES) == []
 
 
 def test_every_use_case_exposes_a_single_async_execute() -> None:
@@ -201,12 +203,12 @@ def test_no_init_py_files_exist_in_app() -> None:
 # carry domain meaning (invalid SQL, syntax errors feeding the repair loop, an LLM answer
 # off contract), and the evaluation, where a failing call is the observation.
 LOCAL_EXCEPT_ALLOWED = [
-    "features/modernization/evaluation/equivalence.py",
     "features/modernization/generation/generate_code.py",
     "features/modernization/graph/builder.py",
     "features/modernization/parsing/plpgsql.py",
-    "features/modernization/validation/behavior_check.py",
-    "features/modernization/validation/python_ast_check.py",
+    "features/modernization/validation/checks/behavior/check.py",
+    "features/modernization/validation/checks/behavior/harness.py",
+    "features/modernization/validation/checks/syntax.py",
     "shared/integrations/integration.py",
     "shared/integrations/llm/gateway.py",
     "shared/integrations/llm/tracing.py",

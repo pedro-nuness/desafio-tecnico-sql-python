@@ -2,8 +2,14 @@ from collections.abc import Callable
 from pathlib import Path
 
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
-from app.features.modernization.domain.enums import GenerationStrategy
-from app.features.modernization.domain.parsing import (
+from app.features.modernization.analysis.domain import (
+    DependencyKind,
+    Feature,
+    GenerationStrategy,
+    RiskSeverity,
+    SemanticAnalysis,
+)
+from app.features.modernization.parsing.domain import (
     ExceptionHandler,
     ParsedProcedure,
     RoutineKind,
@@ -11,12 +17,6 @@ from app.features.modernization.domain.parsing import (
     SqlFragment,
     Statement,
     StatementKind,
-)
-from app.features.modernization.domain.semantic_analysis import (
-    DependencyKind,
-    Feature,
-    RiskSeverity,
-    SemanticAnalysis,
 )
 from app.features.modernization.parsing.plpgsql import PglastParser
 

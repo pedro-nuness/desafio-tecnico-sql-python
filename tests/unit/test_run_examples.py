@@ -1,8 +1,9 @@
 import json
 
 from app.core.config.settings import Settings
-from app.features.modernization.domain.evaluation import CaseResult, Evaluation
-from app.features.modernization.domain.modernization import Modernization
+from app.features.modernization.domain import Modernization
+from app.features.modernization.evaluation.domain import Evaluation
+from app.features.modernization.validation.checks.behavior.domain import CaseResult
 from scripts.run_examples import _summary, _write_run
 
 

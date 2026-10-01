@@ -12,7 +12,7 @@ from app.features.modernization.use_cases import ModernizeRoutine
 @pytest.fixture
 async def fresh_default_container(monkeypatch: pytest.MonkeyPatch) -> AsyncIterator[None]:
     monkeypatch.setenv("LLM_API_KEY", "sk-test-key")
-    monkeypatch.delenv("LLM_CONFIG_FILE", raising=False)
+    monkeypatch.setenv("LLM_CONFIG_FILE", "")  # empty = single route from the LLM_* variables
     default_container.cache_clear()
     yield
     await default_container().close()

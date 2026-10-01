@@ -5,16 +5,13 @@ from typing import Any
 
 import pytest
 
-from app.features.modernization.domain.evaluation import CaseResult, Evaluation, EvaluationSummary
-from app.features.modernization.domain.modernization import (
-    Modernization,
-    ModernizationReport,
-    ParsingSummary,
-)
-from app.features.modernization.evaluation.scenarios import Dataset
+from app.features.modernization.domain import Modernization, ModernizationReport, ParsingSummary
+from app.features.modernization.evaluation.domain import Evaluation, EvaluationSummary
 from app.features.modernization.parsing.plpgsql import PglastParser
-from app.features.modernization.validation.behavior_check import BehaviorCheck
-from app.features.modernization.validation.python_ast_check import PythonASTCheck
+from app.features.modernization.validation.checks.behavior.check import BehaviorCheck
+from app.features.modernization.validation.checks.behavior.dataset import Dataset
+from app.features.modernization.validation.checks.behavior.domain import CaseResult
+from app.features.modernization.validation.checks.syntax import PythonASTCheck
 from app.features.modernization.validation.validate_code import (
     Routine,
     Rule,

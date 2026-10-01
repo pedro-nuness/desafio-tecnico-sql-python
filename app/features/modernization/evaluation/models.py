@@ -7,7 +7,8 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database.base import Base
-from app.features.modernization.domain.evaluation import CaseResult, Evaluation
+from app.features.modernization.evaluation.domain import Evaluation
+from app.features.modernization.validation.checks.behavior.domain import CaseResult
 
 
 class EvaluationResultModel(Base):

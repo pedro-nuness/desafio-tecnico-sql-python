@@ -1,4 +1,4 @@
-from app.features.modernization.domain.enums import GenerationStrategy
+from app.features.modernization.analysis.domain import GenerationStrategy
 from app.shared.domain.value_object import ValueObject
 
 

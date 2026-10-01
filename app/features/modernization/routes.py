@@ -3,7 +3,7 @@ from uuid import UUID
 from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Request
 
-from app.features.modernization.domain.modernization import PipelineProgress
+from app.features.modernization.domain import PipelineProgress
 from app.features.modernization.schemas import (
     EvaluationResponse,
     EvaluationSummaryResponse,

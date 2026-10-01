@@ -4,8 +4,7 @@ from collections.abc import Callable
 
 import pytest
 
-from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
-from app.features.modernization.domain.modernization import PipelineProgress
+from app.features.modernization.domain import ModernizationStatus, PipelineProgress, PipelineStep
 from app.features.modernization.graph.builder import RetryPolicy
 from app.features.modernization.use_cases import ModernizeCommand
 from app.shared.integrations.errors import IntegrationError

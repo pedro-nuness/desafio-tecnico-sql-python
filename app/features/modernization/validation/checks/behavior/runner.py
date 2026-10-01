@@ -4,7 +4,7 @@ Generated code is executed here, never in the server process: a crash, a hang or
 module state stay contained. The request comes as JSON on stdin; the result is the last stdout
 line prefixed with RESULT_MARKER (the generated code may print too).
 
-    python -m app.features.modernization.evaluation.runner < request.json
+    python -m app.features.modernization.validation.checks.behavior.runner < request.json
 """
 
 import asyncio
@@ -12,8 +12,8 @@ import json
 import sys
 from pathlib import Path
 
-from app.features.modernization.domain.parsing import Parameter
-from app.features.modernization.evaluation.equivalence import (
+from app.features.modernization.parsing.domain import Parameter
+from app.features.modernization.validation.checks.behavior.harness import (
     RESULT_MARKER,
     BehavioralEquivalence,
 )

@@ -1,22 +1,16 @@
 name: plpgsql-modernizer
 
+# Configuration comes from .env (copy .env.example), passed to the containers as environment.
+# Only the addresses that differ inside the container are set here.
+x-app-env-file: &app-env-file
+  - path: .env
+    required: true
+
 x-app-env: &app-env
   DATABASE_URL: postgresql+asyncpg://modernizer:modernizer@postgres:5432/modernizer
-  LLM_PROVIDER: ${LLM_PROVIDER:-openrouter}
-  LLM_MODEL: ${LLM_MODEL:-z-ai/glm-5.3-flash}
-  LLM_API_KEY: ${LLM_API_KEY:-}
-  LLM_BASE_URL: ${LLM_BASE_URL:-}
-  LLM_REASONING_EFFORT: ${LLM_REASONING_EFFORT:-}
-  # Multi-provider gateway: LLM_CONFIG_FILE=config/llm.yml (mounted below) + the keys it names.
-  LLM_CONFIG_FILE: ${LLM_CONFIG_FILE:-}
-  OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
-  OPENAI_API_KEY: ${OPENAI_API_KEY:-}
-  LOG_LEVEL: ${LOG_LEVEL:-INFO}
-  LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
-  LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
-  LANGFUSE_BASE_URL: ${LANGFUSE_DOCKER_BASE_URL:-http://host.docker.internal:3000}
-  # Evaluation metric (AD-16): runs generated code, so it gets its own throwaway database.
+  # Runs generated code, so it gets its own throwaway database.
   EVALUATION_DATABASE_URL: postgresql+asyncpg://modernizer:modernizer@postgres:5432/modernizer_eval
+  LANGFUSE_BASE_URL: http://host.docker.internal:3000
 
 services:
   postgres:
@@ -40,6 +34,7 @@ services:
   migrate:
     build: .
     command: ["alembic", "upgrade", "head"]
+    env_file: *app-env-file
     environment: *app-env
     depends_on:
       postgres:
@@ -49,6 +44,7 @@ services:
     build: .
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    env_file: *app-env-file
     environment: *app-env
     volumes:
       - ./config:/app/config:ro      # LLM gateway YAML: edit without rebuilding the image

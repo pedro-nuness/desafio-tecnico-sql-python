@@ -1,28 +1,17 @@
-"""Evaluation of a modernization: does the generated module behave like the original routine?"""
+"""Evaluation of a modernization: does the generated module behave like the original routine?
+
+The cases are run by the behavior harness (validation/checks/behavior); this module scores them.
+"""
 
 from collections.abc import Iterable
 from datetime import UTC, datetime
 from uuid import UUID, uuid7
 
-from app.features.modernization.domain.enums import ModernizationStatus
-from app.features.modernization.domain.modernization import Modernization
+from app.features.modernization.domain import Modernization, ModernizationStatus
+from app.features.modernization.validation.checks.behavior.domain import CaseResult
 from app.shared.domain.value_object import ValueObject
 
 BEHAVIORAL_EQUIVALENCE = "behavioral_equivalence"
-
-
-class CaseResult(ValueObject):
-    """One input of the evaluation dataset, run on the original and on the generated code."""
-
-    name: str
-    passed: bool
-    detail: str
-    """Why it is (not) equivalent, e.g. which table differs."""
-    original: str
-    """Observed outcome of the original routine (rows or error), for the report."""
-    generated: str
-    holdout: bool = False
-    """Never shown to the LLM (the repair loop only sees the other cases)."""
 
 
 class Evaluation(ValueObject):

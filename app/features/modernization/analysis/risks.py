@@ -11,17 +11,13 @@ from app.features.modernization.analysis.catalog import (
     RISKS,
     is_builtin_function,
 )
-from app.features.modernization.domain.parsing import (
+from app.features.modernization.analysis.domain import Feature, Recommendation, SemanticRisk
+from app.features.modernization.parsing.domain import (
     LOOP_KINDS,
     ParsedProcedure,
     SqlFragment,
     Statement,
     StatementKind,
-)
-from app.features.modernization.domain.semantic_analysis import (
-    Feature,
-    Recommendation,
-    SemanticRisk,
 )
 
 

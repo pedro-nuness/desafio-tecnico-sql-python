@@ -1,22 +1,42 @@
-"""Modernization aggregate and its structured (JSONB-ready) report."""
+"""One execution of the pipeline: the Modernization aggregate, its status and its
+structured (JSONB-ready) report."""
 
 from dataclasses import dataclass
 from datetime import UTC, datetime
+from enum import StrEnum
 from uuid import UUID, uuid7
 
 from pydantic import Field, JsonValue
 
-from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
-from app.features.modernization.domain.generation import GenerationResult
-from app.features.modernization.domain.parsing import (
-    Parameter,
-    ParsedProcedure,
-    RoutineKind,
-)
-from app.features.modernization.domain.semantic_analysis import SemanticAnalysis
-from app.features.modernization.domain.validation import ValidationResult
+from app.features.modernization.analysis.domain import SemanticAnalysis
+from app.features.modernization.generation.domain import GenerationResult
+from app.features.modernization.parsing.domain import Parameter, ParsedProcedure, RoutineKind
+from app.features.modernization.validation.domain import ValidationResult
 from app.shared.domain.value_object import ValueObject
 from app.shared.errors import AppError
+
+
+class ModernizationStatus(StrEnum):
+    """Lifecycle of a modernization execution.
+
+    RUNNING  -> persisted before the pipeline starts (a crash leaves a visible trace).
+    SUCCESS  -> code generated and every validator passed.
+    PARTIAL  -> code generated and syntactically valid, but non-blocking validators
+                reported issues or a late step failed.
+    FAILURE  -> no usable code (an early step failed or the code is not valid Python).
+    """
+
+    RUNNING = "running"
+    SUCCESS = "success"
+    PARTIAL = "partial"
+    FAILURE = "failure"
+
+
+class PipelineStep(StrEnum):
+    PARSING = "parsing"
+    SEMANTIC_ANALYSIS = "semantic_analysis"
+    GENERATION = "generation"
+    VALIDATION = "validation"
 
 
 class PipelineError(ValueObject):

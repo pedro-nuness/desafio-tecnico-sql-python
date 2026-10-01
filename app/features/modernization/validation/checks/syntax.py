@@ -1,7 +1,7 @@
 import ast
 import asyncio
 
-from app.features.modernization.domain.validation import ValidationMessage
+from app.features.modernization.validation.domain import ValidationMessage
 from app.features.modernization.validation.validate_code import Routine
 
 

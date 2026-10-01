@@ -1,9 +1,8 @@
 """Builds the generation prompt from the deterministic analysis (not just the raw source)."""
 
-from app.features.modernization.domain.enums import GenerationStrategy
-from app.features.modernization.domain.generation import RepairFeedback
-from app.features.modernization.domain.parsing import ParsedProcedure, Statement
-from app.features.modernization.domain.semantic_analysis import SemanticAnalysis
+from app.features.modernization.analysis.domain import GenerationStrategy, SemanticAnalysis
+from app.features.modernization.generation.domain import RepairFeedback
+from app.features.modernization.parsing.domain import ParsedProcedure, Statement
 from app.shared.domain.value_object import ValueObject
 
 PROMPT_VERSION = "generation-v4"

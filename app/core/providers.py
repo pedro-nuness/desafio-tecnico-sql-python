@@ -17,10 +17,6 @@ from app.core.config.settings import Settings
 from app.core.database.engine import create_engine
 from app.core.database.session import create_session_factory
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
-from app.features.modernization.evaluation.equivalence import (
-    BehavioralEquivalence,
-    EquivalenceMetric,
-)
 from app.features.modernization.evaluation.repository import (
     EvaluationRepository,
     SqlAlchemyEvaluationRepository,
@@ -44,9 +40,13 @@ from app.features.modernization.use_cases import (
     GetModernization,
     ModernizeRoutine,
 )
-from app.features.modernization.validation.behavior_check import BehaviorCheck
-from app.features.modernization.validation.python_ast_check import PythonASTCheck
-from app.features.modernization.validation.ruff_check import RuffCheck
+from app.features.modernization.validation.checks.behavior.check import BehaviorCheck
+from app.features.modernization.validation.checks.behavior.harness import (
+    BehavioralEquivalence,
+    EquivalenceMetric,
+)
+from app.features.modernization.validation.checks.lint import RuffCheck
+from app.features.modernization.validation.checks.syntax import PythonASTCheck
 from app.features.modernization.validation.validate_code import Rule, ValidateCode
 from app.shared.integrations.llm.gateway import LLMGateway
 from app.shared.integrations.llm.llm import LLM

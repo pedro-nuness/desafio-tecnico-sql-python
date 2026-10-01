@@ -3,7 +3,7 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.features.modernization.domain.modernization import Modernization
+from app.features.modernization.domain import Modernization
 from app.features.modernization.persistence.models import ModernizationHistoryModel
 from app.shared.errors import NotFoundError
 

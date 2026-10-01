@@ -8,19 +8,20 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.features.modernization.domain.enums import ModernizationStatus
-from app.features.modernization.domain.evaluation import CaseResult, Evaluation
-from app.features.modernization.domain.modernization import (
+from app.features.modernization.domain import (
     Modernization,
     ModernizationReport,
+    ModernizationStatus,
     ParsingSummary,
 )
-from app.features.modernization.evaluation.equivalence import BehavioralEquivalence
+from app.features.modernization.evaluation.domain import Evaluation
 from app.features.modernization.evaluation.repository import SqlAlchemyEvaluationRepository
 from app.features.modernization.parsing.plpgsql import PglastParser
 from app.features.modernization.persistence.repository import SqlAlchemyModernizationRepository
-from app.features.modernization.validation.behavior_check import BehaviorCheck
-from app.features.modernization.validation.python_ast_check import PythonASTCheck
+from app.features.modernization.validation.checks.behavior.check import BehaviorCheck
+from app.features.modernization.validation.checks.behavior.domain import CaseResult
+from app.features.modernization.validation.checks.behavior.harness import BehavioralEquivalence
+from app.features.modernization.validation.checks.syntax import PythonASTCheck
 from app.features.modernization.validation.validate_code import Rule, ValidateCode
 from tests.conftest import GraphFactory, llm_payload
 from tests.fakes import FakeLLM

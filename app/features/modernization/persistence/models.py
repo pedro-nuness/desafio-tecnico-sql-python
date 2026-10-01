@@ -12,10 +12,10 @@ from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column
 
 from app.core.database.base import Base
-from app.features.modernization.domain.enums import ModernizationStatus
-from app.features.modernization.domain.modernization import (
+from app.features.modernization.domain import (
     Modernization,
     ModernizationReport,
+    ModernizationStatus,
 )
 
 STATUSES = ("running", "success", "partial", "failure")

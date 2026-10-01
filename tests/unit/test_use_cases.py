@@ -3,14 +3,13 @@ from uuid import uuid4
 
 import pytest
 
-from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
-from app.features.modernization.domain.modernization import PipelineProgress
-from app.features.modernization.domain.validation import ValidationMessage
+from app.features.modernization.domain import ModernizationStatus, PipelineProgress, PipelineStep
 from app.features.modernization.use_cases import (
     GetModernization,
     GetModernizationQuery,
     ModernizeCommand,
 )
+from app.features.modernization.validation.domain import ValidationMessage
 from app.features.modernization.validation.validate_code import Rule, ValidateCode
 from app.shared.errors import DomainError, NotFoundError
 from app.shared.integrations.errors import IntegrationError

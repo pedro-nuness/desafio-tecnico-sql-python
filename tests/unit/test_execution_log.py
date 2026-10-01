@@ -2,8 +2,12 @@ from uuid import uuid4
 
 import pytest
 
-from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
-from app.features.modernization.domain.modernization import ModernizationReport, PipelineError
+from app.features.modernization.domain import (
+    ModernizationReport,
+    ModernizationStatus,
+    PipelineError,
+    PipelineStep,
+)
 from app.features.modernization.persistence.execution_log import ExecutionLog
 from app.shared.errors import NotFoundError
 from app.shared.integrations.errors import IntegrationError

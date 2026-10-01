@@ -12,7 +12,7 @@ through Python. Equivalent means:
 - same final rows in the compared tables, ignoring new ids and now() timestamps.
 
 This executes LLM-generated code: only against a disposable database (EVALUATION_DATABASE_URL),
-never the application's, and in a subprocess (evaluation/runner.py), never in the server
+never the application's, and in a subprocess (runner.py, next to this module), never in the server
 process: a crash, a hang or leaked module state stay contained. In production it belongs in a
 sandbox (container without network, unprivileged database role).
 """
@@ -38,18 +38,18 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine, create_async_engine
 from sqlalchemy.pool import NullPool
 
-from app.features.modernization.domain.evaluation import CaseResult
-from app.features.modernization.domain.modernization import Modernization
-from app.features.modernization.domain.parsing import Parameter, ParameterMode
-from app.features.modernization.evaluation.scenarios import Case, Dataset, Scenario
+from app.features.modernization.domain import Modernization
+from app.features.modernization.parsing.domain import Parameter, ParameterMode
+from app.features.modernization.validation.checks.behavior.dataset import Case, Dataset, Scenario
+from app.features.modernization.validation.checks.behavior.domain import CaseResult
 from app.shared.errors import AppError, DomainError
 
 INPUT_MODES = frozenset({ParameterMode.IN, ParameterMode.INOUT, ParameterMode.VARIADIC})
 PREVIEW_CHARS = 240
-RUNNER_MODULE = "app.features.modernization.evaluation.runner"
+RUNNER_MODULE = "app.features.modernization.validation.checks.behavior.runner"
 RESULT_MARKER = "@@evaluation-result@@ "
 """Prefix of the runner's result line (generated code may print to stdout too)."""
-PROJECT_ROOT = Path(__file__).resolve().parents[4]
+PROJECT_ROOT = Path(__file__).resolve().parents[6]
 
 type Run = Callable[[AsyncConnection], Awaitable[Any]]
 type EntryPoint = Callable[..., Awaitable[Any]]
@@ -85,7 +85,7 @@ class BehavioralEquivalence:
     """Runs the dataset cases of a routine on the original and on the generated code.
 
     Used twice: as the metric (every case, after the run) and as a validation check inside
-    the pipeline (dev cases only, feeding the repair loop; validation/behavior_check.py).
+    the pipeline (dev cases only, feeding the repair loop; check.py, next to this module).
     """
 
     def __init__(
@@ -194,7 +194,8 @@ class BehavioralEquivalence:
     ) -> tuple[CaseResult, ...] | None:
         # Generous bound: every case may hit its own timeout, plus interpreter start-up.
         timeout = self._case_timeout_seconds * (cases + 1) + 30
-        # subprocess.run in a worker thread: works on every event loop (see ruff_check.py).
+        # subprocess.run in a worker thread: works on every event loop
+        # (see validation/checks/lint.py).
         # Needed: a runner that hangs past the bound is a tool failure, reported as AppError.
         try:
             completed = await asyncio.to_thread(

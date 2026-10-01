@@ -5,14 +5,14 @@ from uuid import UUID
 
 from pydantic import BaseModel, ConfigDict, Field
 
-from app.features.modernization.domain.enums import ModernizationStatus
-from app.features.modernization.domain.evaluation import (
-    CaseResult,
-    Evaluation,
-    EvaluationSummary,
+from app.features.modernization.domain import (
+    Modernization,
+    ModernizationReport,
+    ModernizationStatus,
 )
-from app.features.modernization.domain.modernization import Modernization, ModernizationReport
+from app.features.modernization.evaluation.domain import Evaluation, EvaluationSummary
 from app.features.modernization.use_cases import ModernizeCommand
+from app.features.modernization.validation.checks.behavior.domain import CaseResult
 
 
 class ModernizationRequest(BaseModel):

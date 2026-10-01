@@ -6,12 +6,13 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
-from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
-from app.features.modernization.domain.modernization import (
+from app.features.modernization.domain import (
     Modernization,
     ModernizationReport,
+    ModernizationStatus,
     PipelineError,
     PipelineProgress,
+    PipelineStep,
 )
 from app.features.modernization.generation.generate_code import GenerateCode
 from app.features.modernization.generation.prompt import GenerationPromptBuilder
@@ -25,7 +26,7 @@ from app.features.modernization.use_cases import (
     ModernizeCommand,
     ModernizeRoutine,
 )
-from app.features.modernization.validation.python_ast_check import PythonASTCheck
+from app.features.modernization.validation.checks.syntax import PythonASTCheck
 from app.features.modernization.validation.validate_code import Rule, ValidateCode
 from app.shared.errors import NotFoundError
 from app.shared.integrations.errors import IntegrationError

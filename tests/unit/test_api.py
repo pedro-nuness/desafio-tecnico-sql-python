@@ -10,13 +10,13 @@ from httpx import ASGITransport, AsyncClient
 from app.core.bootstrap import build_container
 from app.core.config.settings import Settings
 from app.core.server import create_app
-from app.features.modernization.domain.enums import ModernizationStatus
-from app.features.modernization.domain.evaluation import CaseResult
-from app.features.modernization.domain.validation import ValidationMessage
-from app.features.modernization.evaluation.equivalence import EquivalenceMetric
+from app.features.modernization.domain import ModernizationStatus
 from app.features.modernization.evaluation.repository import EvaluationRepository
 from app.features.modernization.persistence.repository import ModernizationRepository
 from app.features.modernization.use_cases import ModernizeRoutine
+from app.features.modernization.validation.checks.behavior.domain import CaseResult
+from app.features.modernization.validation.checks.behavior.harness import EquivalenceMetric
+from app.features.modernization.validation.domain import ValidationMessage
 from app.features.modernization.validation.validate_code import Rule, ValidateCode
 from app.shared.errors import AppError, DomainError, NotFoundError
 from app.shared.integrations.errors import IntegrationError

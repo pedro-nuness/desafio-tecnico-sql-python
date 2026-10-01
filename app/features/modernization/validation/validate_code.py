@@ -10,8 +10,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
-from app.features.modernization.domain.parsing import ParsedProcedure
-from app.features.modernization.domain.validation import (
+from app.features.modernization.parsing.domain import ParsedProcedure
+from app.features.modernization.validation.domain import (
     ValidationMessage,
     ValidationResult,
     ValidatorResult,

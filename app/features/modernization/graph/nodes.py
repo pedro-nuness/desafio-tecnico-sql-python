@@ -7,11 +7,11 @@ delegates to the ExecutionLog.
 from typing import ClassVar, Protocol
 
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
-from app.features.modernization.domain.enums import PipelineStep
-from app.features.modernization.domain.generation import RepairFeedback
+from app.features.modernization.domain import PipelineStep
+from app.features.modernization.generation.domain import RepairFeedback
 from app.features.modernization.generation.generate_code import GenerateCode
 from app.features.modernization.graph.state import ModernizationState, StateUpdate, to_report
-from app.features.modernization.parsing.strategy import SQLParser
+from app.features.modernization.parsing.parser import SQLParser
 from app.features.modernization.persistence.execution_log import ExecutionLog
 from app.features.modernization.validation.validate_code import Routine, ValidateCode
 from app.shared.errors import AppError

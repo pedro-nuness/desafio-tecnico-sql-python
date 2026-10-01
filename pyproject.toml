@@ -77,7 +77,7 @@ quote-style = "double"
 [tool.coverage.run]
 source = ["app"]
 branch = true
-# The evaluation runs generated code in a subprocess (evaluation/runner.py); measure it too.
+# The evaluation runs generated code in a subprocess (validation/checks/behavior/runner.py); measure it too.
 patch = ["subprocess"]
 
 [tool.coverage.report]

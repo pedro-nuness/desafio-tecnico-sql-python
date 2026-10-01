@@ -15,8 +15,8 @@ from pathlib import Path
 
 from app.core.bootstrap import build_container
 from app.core.config.settings import Settings
-from app.features.modernization.domain.evaluation import Evaluation, EvaluationSummary
-from app.features.modernization.domain.modernization import Modernization
+from app.features.modernization.domain import Modernization
+from app.features.modernization.evaluation.domain import Evaluation, EvaluationSummary
 from app.features.modernization.use_cases import (
     EvaluateCommand,
     EvaluateModernization,
