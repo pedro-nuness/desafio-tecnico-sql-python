@@ -1,120 +1,39 @@
-"""Composition root: the only place that knows every concrete adapter.
+"""The dishka container shared by every entry point.
 
-Explicit constructor wiring (no DI framework). `build_container` assembles everything once;
-`default_container` caches that per process so both entry points served by `langgraph dev`
-(the FastAPI lifespan and the LangGraph server via `make_graph`) share one engine and one
-graph. Tests and scripts call `build_container` directly (or inject their own Container).
+`default_container` is cached per process, so both entry points served by `langgraph dev`
+(the FastAPI app and the LangGraph server via `make_graph`) resolve the same engine, LLM
+gateway and graph. What gets built, and how, lives in providers.py. Tests and scripts call
+`build_container` (optionally with providers that override some dependencies).
 """
 
-from dataclasses import dataclass
 from functools import cache
 
-from sqlalchemy.ext.asyncio import AsyncEngine
+from dishka import AsyncContainer, Provider, make_async_container
 
 from app.core.config.settings import Settings
-from app.core.database.engine import create_engine
-from app.core.database.session import create_session_factory
-from app.features.modernization.application.ports.repositories.unit_of_work import (
-    UnitOfWorkFactory,
-)
-from app.features.modernization.application.services.code_generation_service import (
-    CodeGenerationService,
-)
-from app.features.modernization.application.services.modernization_service import (
-    ModernizationService,
-)
-from app.features.modernization.domain.services.semantic_analyzer import SemanticAnalyzer
-from app.features.modernization.graph.builder import (
-    ModernizationGraph,
-    RetryPolicy,
-    build_modernization_graph,
-)
-from app.features.modernization.graph.pipeline import LangGraphModernizationPipeline
-from app.features.modernization.infrastructure.parsing.pglast_parser import PglastParser
-from app.features.modernization.infrastructure.persistence.unit_of_work import (
-    SqlAlchemyUnitOfWork,
-)
-from app.features.modernization.infrastructure.validation.composite_validator import (
-    CompositeCodeValidator,
-)
-from app.features.modernization.infrastructure.validation.python_ast_validator import (
-    PythonASTValidator,
-)
-from app.features.modernization.infrastructure.validation.ruff_validator import (
-    RuffValidator,
-)
-from app.features.modernization.prompts.generation_prompt import (
-    GenerationPromptBuilder,
-)
-from app.shared.integrations.llm.gateway import LLMGateway
-from app.shared.integrations.llm.registry import build_providers
+from app.core.providers import InfrastructureProvider, ModernizationProvider
+from app.features.modernization.graph.builder import ModernizationGraph
 
 
-@dataclass(frozen=True, slots=True)
-class Container:
-    settings: Settings
-    graph: ModernizationGraph
-    modernization_service: ModernizationService
-    engine: AsyncEngine | None = None
-
-    async def aclose(self) -> None:
-        if self.engine is not None:
-            await self.engine.dispose()
-
-
-def build_graph(settings: Settings, uow_factory: UnitOfWorkFactory) -> ModernizationGraph:
-    generation_service = CodeGenerationService(
-        _llm_gateway(settings),
-        GenerationPromptBuilder(),
-        temperature=settings.llm_temperature,
-        max_output_tokens=settings.llm_max_output_tokens,
+def build_container(settings: Settings | None = None, *overrides: Provider) -> AsyncContainer:
+    """`overrides` win over the default providers for the types they provide."""
+    return make_async_container(
+        InfrastructureProvider(),
+        ModernizationProvider(),
+        *overrides,
+        context={Settings: settings or Settings()},
     )
-    validator = CompositeCodeValidator(
-        [PythonASTValidator(), RuffValidator(timeout_seconds=settings.ruff_timeout_seconds)]
-    )
-    return build_modernization_graph(
-        parser=PglastParser(),
-        analyzer=SemanticAnalyzer(),
-        generation_service=generation_service,
-        validator=validator,
-        uow_factory=uow_factory,
-        retry=RetryPolicy(
-            max_attempts=settings.generation_max_attempts,
-            budget_seconds=settings.generation_retry_budget_seconds,
-        ),
-    )
-
-
-def _llm_gateway(settings: Settings) -> LLMGateway:
-    llm_settings = settings.llm_settings()
-    providers = build_providers(llm_settings, app_name=settings.app_name)
-    return LLMGateway(providers, llm_settings.routes, budget_seconds=llm_settings.budget_seconds)
-
-
-def _uow_factory(engine: AsyncEngine) -> UnitOfWorkFactory:
-    session_factory = create_session_factory(engine)
-    return lambda: SqlAlchemyUnitOfWork(session_factory)
-
-
-def build_container(settings: Settings) -> Container:
-    engine = create_engine(str(settings.database_url), echo=settings.database_echo)
-    uow_factory = _uow_factory(engine)
-    graph = build_graph(settings, uow_factory)
-    service = ModernizationService(
-        pipeline=LangGraphModernizationPipeline(graph), uow_factory=uow_factory
-    )
-    return Container(settings=settings, graph=graph, modernization_service=service, engine=engine)
 
 
 @cache
-def default_container() -> Container:
+def default_container() -> AsyncContainer:
     """The process-wide container: one engine (connection pool), one graph, one Settings."""
-    return build_container(Settings())
+    return build_container()
 
 
-def make_graph() -> ModernizationGraph:
+async def make_graph() -> ModernizationGraph:
     """Graph factory referenced by langgraph.json (LangGraph API / Studio).
 
     Same graph the FastAPI routes use, so runs started there are persisted the same way.
     """
-    return default_container().graph
+    return await default_container().get(ModernizationGraph)

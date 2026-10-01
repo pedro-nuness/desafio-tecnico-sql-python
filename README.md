@@ -215,13 +215,14 @@ Direção das dependências (verificada por teste — `tests/unit/test_architect
 
 ```
 shared (reutilizável, zero dependências de core ou features)
-core (bootstrap, server, config, database) ──► features (rotas, domínio, ports)
+core (providers, bootstrap, server, config, database) ──► features (rotas, domínio, ports)
 features/modernization:
   api ──► application ──► ports ◄── infrastructure
                │                          │
                └──────► domain ◄──────────┘
   graph (LangGraph) ──► application/ports + domain
-app/core/bootstrap.py = composition root (único lugar que conhece todos os adapters)
+app/core/providers.py = composition root (único lugar que conhece todos os adapters);
+features nunca importam providers/bootstrap/server
 ```
 
 ### Eixos de variação (onde existem abstrações — e só lá)
@@ -437,13 +438,13 @@ A base de código adota a arquitetura **Package by Feature**, organizada em `cor
 app/
 ├── main.py                   # Ponto de entrada FastAPI (reexporta create_app e app)
 ├── core/                     # Fundações transversais, infraestrutura base e composition root
-│   ├── bootstrap.py          # Composition root (build_container, make_graph para langgraph.json)
+│   ├── providers.py          # Composition root: providers dishka (AD-11)
+│   ├── bootstrap.py          # Container dishka por processo, make_graph para langgraph.json
 │   ├── config/settings.py    # Configurações centralizadas com Pydantic Settings
 │   ├── database/             # SQLAlchemy async engine, session factory e Base declarativa
 │   │   ├── base.py
 │   │   ├── engine.py
 │   │   └── session.py
-│   ├── dependencies.py       # FastAPI dependencies transversais (container)
 │   ├── exception_handlers.py # Handlers globais de erro HTTP
 │   └── server.py             # Setup da aplicação FastAPI e lifespan
 ├── shared/                   # Código utilitário compartilhado entre múltiplos contextos
@@ -465,8 +466,7 @@ app/
     │   ├── routes.py
     │   └── schemas.py
     └── modernization/        # Feature principal: modernização de SQL para Python
-        ├── api/              # Driving adapter HTTP (rotas, schemas e deps da feature)
-        │   ├── dependencies.py
+        ├── api/              # Driving adapter HTTP (rotas com FromDishka[...], schemas)
         │   ├── routes.py
         │   └── schemas/
         ├── domain/           # Entidades, agregados, value objects e regras puras
@@ -791,11 +791,22 @@ e serializáveis para JSONB sem camada extra. Pydantic é uma lib de modelagem, 
 infraestrutura; o trade-off é aceitar essa dependência no núcleo em troca de muito menos código
 de serialização.
 
-### AD-11 · Composition root explícito
+### AD-11 · Composition root com dishka
 
-`app/core/bootstrap.py` é o único módulo que importa adapters concretos e monta tudo por construtor
-(sem framework de DI, sem service locator). `build_container(settings)` monta engine, graph e
-service uma vez; `default_container()` (`@cache`) guarda esse container **por processo**.
+`app/core/providers.py` é o único módulo que importa adapters concretos. Cada dependência é
+declarada uma vez como provider [dishka](https://dishka.readthedocs.io/) (`@provide`, escopo
+`APP`): `InfrastructureProvider` (Settings, engine com `dispose` na finalização, `LLM` = gateway)
+e `ModernizationProvider` (UoW, serviços, graph, pipeline). Os construtores continuam explícitos;
+o dishka só resolve o grafo de dependências, valida-o ao criar o container (dependência
+faltando quebra no boot) e finaliza recursos no `close()`. `build_container(settings,
+*overrides)` cria o container; `default_container()` (`@cache`) guarda-o **por processo**.
+
+Antes, cada feature tinha um `api/dependencies.py` lendo um `Container` com um campo por
+service, e a feature importava o `core.bootstrap` (ciclo core ↔ feature). Agora a rota só
+declara o tipo: `service: FromDishka[ModernizationService]` com
+`APIRouter(route_class=DishkaRoute)`; um service novo custa um `provide` em `providers.py`.
+`test_architecture.py` proíbe features de importar `providers`/`bootstrap`/`server` e restringe
+o dishka ao core e às rotas.
 
 O `langgraph dev` serve dois pontos de entrada no mesmo processo — o lifespan da API FastAPI e a
 factory `make_graph()` do `langgraph.json` — e ambos usam `default_container()`: um engine (pool de
@@ -805,9 +816,12 @@ Detalhe necessário: o `langgraph.json` referencia módulos (`app.core.bootstrap
 arquivos (`./app/core/bootstrap.py:...`) — por arquivo, o servidor executa o módulo de novo com outro
 nome, e o cache (e o engine) duplicaria.
 
-A entrega é que varia por ponto de entrada: `Depends` nas rotas (via `app.state`), factory no
-`langgraph.json`, construtor nos services/nodes. Testes e scripts chamam `build_container` ou
-injetam o próprio container por `create_app(container_factory=...)`.
+A entrega é que varia por ponto de entrada: `FromDishka[T]` nas rotas, `async def make_graph()`
+no `langgraph.json` (o servidor LangGraph aguarda factories assíncronas), construtor nos
+services/nodes. O lifespan resolve o caso de uso no startup (chave de LLM ausente falha o boot,
+não a primeira request) e fecha o container no shutdown. Testes passam
+`create_app(build_container(settings, fakes))`, em que `fakes` é um provider que sobrescreve os
+tipos que precisam (o último provider vence); scripts usam `build_container` direto.
 
 ### AD-12 · Docker
 

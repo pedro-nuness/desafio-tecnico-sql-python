@@ -29,19 +29,26 @@ LLM_ADAPTERS = {
     "app.shared.integrations.llm.openrouter",
 }
 
+# The composition root (core/providers.py + bootstrap.py) wires everything; nothing it builds
+# may reach back into it. Only entry points (core, features/*/api routes) know the DI library.
+COMPOSITION_ROOT = {"app.core.bootstrap", "app.core.providers", "app.core.server"}
+DI = {"dishka"}
+
 FORBIDDEN: dict[str, set[str]] = {
     # shared/integrations holds vendor adapters; the rest of shared stays vendor-free.
-    "shared": {"fastapi", "langgraph", "app.core", "app.features"},
+    "shared": {"fastapi", "langgraph", "app.core", "app.features"} | DI,
+    "features": COMPOSITION_ROOT,
     "shared/domain": VENDORS,
     "shared/resilience": VENDORS,
     "core/config": VENDORS | {"fastapi", "langgraph", "app.features"},
     "core/database": {"fastapi", "langgraph", "app.features", "openai", "pglast", "ruff"},
+    "features/modernization/infrastructure": DI,
     "features/modernization/domain": VENDORS
     | LLM_ADAPTERS
+    | DI
     | {
         "langgraph",
         "fastapi",
-        "app.core.bootstrap",
         "app.features.modernization.application",
         "app.features.modernization.infrastructure",
         "app.features.modernization.graph",
@@ -49,29 +56,29 @@ FORBIDDEN: dict[str, set[str]] = {
     },
     "features/modernization/application": VENDORS
     | LLM_ADAPTERS
+    | DI
     | {
         "langgraph",
         "fastapi",
-        "app.core.bootstrap",
         "app.features.modernization.infrastructure",
         "app.features.modernization.graph",
         "app.features.modernization.api",
     },
     "features/modernization/prompts": VENDORS
     | LLM_ADAPTERS
+    | DI
     | {
         "langgraph",
         "fastapi",
-        "app.core.bootstrap",
         "app.features.modernization.infrastructure",
         "app.features.modernization.graph",
         "app.features.modernization.api",
     },
     "features/modernization/graph": VENDORS
     | LLM_ADAPTERS
+    | DI
     | {
         "fastapi",
-        "app.core.bootstrap",
         "app.features.modernization.infrastructure",
         "app.features.modernization.api",
     },

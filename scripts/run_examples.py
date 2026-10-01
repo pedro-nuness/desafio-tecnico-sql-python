@@ -15,6 +15,9 @@ from pathlib import Path
 
 from app.core.bootstrap import build_container
 from app.core.config.settings import Settings
+from app.features.modernization.application.services.modernization_service import (
+    ModernizationService,
+)
 from app.features.modernization.domain.models.modernization import Modernization
 
 EXAMPLES = Path(__file__).parents[1] / "examples"
@@ -28,15 +31,13 @@ async def main() -> None:
     sources = sorted(PROCEDURES.glob("*.sql"))
     container = build_container(settings)
     try:
+        service = await container.get(ModernizationService)
         # Independent executions: run concurrently, like concurrent POST /modernize calls.
         runs = await asyncio.gather(
-            *(
-                container.modernization_service.modernize(path.read_text(encoding="utf-8"), schema)
-                for path in sources
-            )
+            *(service.modernize(path.read_text(encoding="utf-8"), schema) for path in sources)
         )
     finally:
-        await container.aclose()
+        await container.close()
 
     named = [(path.stem, run) for path, run in zip(sources, runs, strict=True)]
     for name, run in named:

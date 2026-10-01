@@ -1,35 +1,43 @@
 from collections.abc import AsyncIterator, Callable
+from typing import Any
 from uuid import uuid4
 
 import pytest
+from dishka import Provider, Scope
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from app.core.bootstrap import Container
+from app.core.bootstrap import build_container
 from app.core.config.settings import Settings
 from app.core.server import create_app
 from app.features.modernization.application.services.modernization_service import (
     ModernizationService,
 )
 from app.features.modernization.domain.enums import ModernizationStatus
-from app.features.modernization.graph.pipeline import LangGraphModernizationPipeline
 from app.shared.errors import AppError, DomainError, NotFoundError
 from app.shared.integrations.errors import IntegrationError
-from tests.conftest import GraphFactory
+from tests.conftest import ServiceFactory
 from tests.fakes import FakeLLM, InMemoryStore
+
+type ApiFactory = Callable[..., FastAPI]
 
 
 @pytest.fixture
-def api(make_graph: GraphFactory, store: InMemoryStore) -> FastAPI:
-    graph = make_graph()
-    container = Container(
-        settings=Settings(_env_file=None),  # type: ignore[call-arg]
-        graph=graph,
-        modernization_service=ModernizationService(
-            LangGraphModernizationPipeline(graph), store.uow
-        ),
-    )
-    return create_app(container_factory=lambda: container)
+def make_api(make_service: ServiceFactory) -> ApiFactory:
+    """The real container (core/providers.py) with the use case overridden by one wired to
+    the in-memory store and fakes; graph options as in `make_graph`."""
+
+    def factory(**graph_options: Any) -> FastAPI:
+        fakes = Provider(scope=Scope.APP)
+        fakes.provide(lambda: make_service(**graph_options), provides=ModernizationService)
+        return create_app(build_container(Settings(_env_file=None), fakes))  # type: ignore[call-arg]
+
+    return factory
+
+
+@pytest.fixture
+def api(make_api: ApiFactory) -> FastAPI:
+    return make_api()
 
 
 @pytest.fixture
@@ -145,19 +153,16 @@ async def test_global_handler_maps_error_class_to_status_and_payload_to_body(
     ],
 )
 async def test_global_handler_maps_failures_and_points_to_the_recorded_run(
-    api: FastAPI,
+    make_api: ApiFactory,
     client: AsyncClient,
-    make_graph: GraphFactory,
     store: InMemoryStore,
     load_procedure: Callable[[str], str],
     error: Exception,
     status_code: int,
 ) -> None:
-    api.state.container.modernization_service._pipeline._graph = make_graph(
-        llm=FakeLLM(error=error)
-    )
+    failing = make_api(llm=FakeLLM(error=error))
     async with AsyncClient(
-        transport=ASGITransport(app=api, raise_app_exceptions=False), base_url="http://test"
+        transport=ASGITransport(app=failing, raise_app_exceptions=False), base_url="http://test"
     ) as http:
         response = await http.post(
             "/modernize", json={"source_code": load_procedure("process_orders")}
@@ -187,18 +192,18 @@ async def test_global_handler_maps_failures_and_points_to_the_recorded_run(
     "response_content", ["no json", '{"python_code":', '{"strategy": "hybrid"}']
 )
 async def test_invalid_llm_payload_reaches_the_handler(
-    api: FastAPI,
+    make_api: ApiFactory,
     client: AsyncClient,
-    make_graph: GraphFactory,
     load_procedure: Callable[[str], str],
     response_content: str,
 ) -> None:
-    api.state.container.modernization_service._pipeline._graph = make_graph(
-        llm=FakeLLM([response_content])
-    )
-    response = await client.post(
-        "/modernize", json={"source_code": load_procedure("process_orders")}
-    )
+    off_contract = make_api(llm=FakeLLM([response_content]))
+    async with AsyncClient(
+        transport=ASGITransport(app=off_contract), base_url="http://test"
+    ) as http:
+        response = await http.post(
+            "/modernize", json={"source_code": load_procedure("process_orders")}
+        )
     assert response.status_code == 502
     stored = (await client.get(f"/modernizations/{response.json()['execution_id']}")).json()
     assert stored["status"] == "failure"
@@ -206,9 +211,8 @@ async def test_invalid_llm_payload_reaches_the_handler(
 
 
 async def test_validation_exception_keeps_generated_code_before_http_response(
-    api: FastAPI,
+    make_api: ApiFactory,
     client: AsyncClient,
-    make_graph: GraphFactory,
     load_procedure: Callable[[str], str],
 ) -> None:
     import json
@@ -220,12 +224,11 @@ async def test_validation_exception_keeps_generated_code_before_http_response(
             raise RuntimeError("validator failed")
 
     code = "def broken(:\n"
-    api.state.container.modernization_service._pipeline._graph = make_graph(
-        llm=FakeLLM([json.dumps({"python_code": code})]),
-        validator=CrashingValidator(),
+    crashing = make_api(
+        llm=FakeLLM([json.dumps({"python_code": code})]), validator=CrashingValidator()
     )
     async with AsyncClient(
-        transport=ASGITransport(app=api, raise_app_exceptions=False), base_url="http://test"
+        transport=ASGITransport(app=crashing, raise_app_exceptions=False), base_url="http://test"
     ) as http:
         response = await http.post(
             "/modernize", json={"source_code": load_procedure("process_orders")}
