@@ -310,6 +310,7 @@ Mesmo modelo, Anexo A como schema, temperatura 0. A [linha de base v2](examples/
 | v4 #1                              | + cerca removida, contrato tolerante | 5/5           | 21/21            | 9/9     | F corrigido na 2ª tentativa                               |
 | v4 #2                              | idem                                 | 4/5           | 20/21            | 8/9     | D: falha num caso holdout                                 |
 | **v4 #3** (em `examples/results/`) | idem                                 | **5/5**       | **21/21**        | **9/9** | C e D: import não usado (Ruff), corrigido na 2ª tentativa |
+| v4 sem source #1–#2 (experimento, [decisão 3](#3-prompt-a-partir-da-análise-contrato-tolerante)) | prompt sem o source bruto | 5/5, 5/5 | 21, 21 de 21 | 9, 9 de 9 | E: arredondamento `NUMERIC(18,2)`, corrigido na 2ª tentativa |
 
 
 A mesma versão do pipeline oscila entre rodadas (temperatura 0 não torna o provider
@@ -446,6 +447,15 @@ referência. As regras incluem as armadilhas de runtime medidas (binds com `CAST
 A resposta é JSON validado com Pydantic. Desvios que não afetam o código são tolerados com warning
 (cerca Markdown dentro do código, decisão arquitetural malformada), porque cada um custava uma
 tentativa ou abortava a execução. `PROMPT_VERSION` vai para o relatório.
+
+**Experimento: prompt sem o source bruto.** Duas rodadas dos Anexos B–F com o prompt sem a seção do source
+original deram 5/5 rotinas, 21/21 casos e 9/9 de holdout nas duas: o contexto estruturado basta
+para gerar código equivalente. O custo apareceu no Anexo E, que nas duas rodadas perdeu na primeira
+tentativa o arredondamento por atribuição de `NUMERIC(18,2)` (994 em vez de 993,99) e só passou
+após o feedback da validação comportamental; com o source ele passou de primeira nas três rodadas
+v4. O tipo da variável e a atribuição estão no prompt, mas em seções separadas; no source estão
+juntos. Sem o source o input cai ~5–20% (B, F), menos do que custa a tentativa extra do E. Por isso
+o source fica, como referência. Amostra pequena (2 contra 3 rodadas), é um sinal, não estatística.
 
 ### 4. LLM atrás de um gateway
 
