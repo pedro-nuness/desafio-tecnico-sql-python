@@ -7,11 +7,12 @@ import pytest
 from openrouter import OpenRouter
 from openrouter.errors import OpenRouterError
 
-from app.shared.integrations.exceptions import IntegrationError
+from app.shared.integrations.errors import IntegrationError
+from app.shared.integrations.integration import Integration
 from app.shared.integrations.llm.config import ReasoningEffort
 from app.shared.integrations.llm.llm_provider import LLMRequest, ResponseFormat
 from app.shared.integrations.llm.openrouter.provider import OpenRouterProvider
-from app.shared.resilience.circuit_breaker import CircuitBreaker, CircuitOpenError, CircuitState
+from app.shared.resilience.circuit_breaker import CircuitState
 
 
 def _completion() -> dict:
@@ -92,7 +93,7 @@ async def test_official_sdk_request_and_response_mapping(
 
 
 @pytest.mark.parametrize("status", [408, 409, 429, 500, 502, 401, "timeout", "network"])
-async def test_retry_limit_and_breaker_count_with_official_sdk(
+async def test_integration_retries_and_counts_transient_sdk_failures(
     monkeypatch: pytest.MonkeyPatch, status: int | str
 ) -> None:
     attempts = 0
@@ -108,27 +109,33 @@ async def test_retry_limit_and_breaker_count_with_official_sdk(
         return httpx.Response(status, json={"error": {"code": status, "message": "provider down"}})
 
     sleep = AsyncMock()
-    monkeypatch.setattr("app.shared.integrations.llm.openrouter.provider.asyncio.sleep", sleep)
-    breaker = CircuitBreaker("openrouter", failure_threshold=1, failure_types=(IntegrationError,))
+    monkeypatch.setattr("app.shared.integrations.integration.asyncio.sleep", sleep)
+    integration = Integration("openrouter", retries=2, failure_threshold=1)
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as http:
         monkeypatch.setattr(
             "app.shared.integrations.llm.openrouter.provider.OpenRouter",
             partial(OpenRouter, async_client=http),
         )
-        provider = OpenRouterProvider(
-            api_key="sk-test", model="model", max_retries=2, breaker=breaker
-        )
+        provider = OpenRouterProvider(api_key="sk-test", model="model", integration=integration)
         with provider._client:
             request = LLMRequest(system_prompt="s", user_prompt="u")
-            with pytest.raises((OpenRouterError, httpx.TransportError), match="provider down"):
+            with pytest.raises(IntegrationError) as exc_info:
                 await provider.generate(request)
+            assert isinstance(exc_info.value.__cause__, (OpenRouterError, httpx.TransportError))
+            assert "provider down" not in exc_info.value.message
+            assert exc_info.value.timeout is (status in (408, "timeout"))
             assert attempts == (3 if retryable else 1)
             assert sleep.await_count == (2 if retryable else 0)
-            assert breaker._failures == 1
-            assert breaker.state is CircuitState.OPEN
-            with pytest.raises(CircuitOpenError):
+            if not retryable:
+                # A caller error (auth, bad request) says nothing about provider health.
+                assert integration.breaker.state is CircuitState.CLOSED
+                return
+            assert integration.breaker._failures == 1
+            assert integration.breaker.state is CircuitState.OPEN
+            with pytest.raises(IntegrationError) as exc_info:
                 await provider.generate(request)
-            assert attempts == (3 if retryable else 1)
+            assert exc_info.value.retry_after is not None
+            assert attempts == 3
 
 
 @pytest.mark.parametrize("content", [None, "missing", []])

@@ -20,7 +20,7 @@ class LLMConfig:
     model: str
     api_key: SecretStr | None = None
     base_url: str | None = None
-    """Override the provider endpoint (any OpenAI-compatible API)."""
+    """Override the provider endpoint (OpenAI: any compatible API; OpenRouter: its server URL)."""
     app_name: str | None = None
     """Sent as attribution where the provider supports it (OpenRouter app title)."""
     timeout_seconds: float = 120.0

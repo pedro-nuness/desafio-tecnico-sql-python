@@ -1,4 +1,4 @@
-"""First and last nodes: record the start and normal completion of a run.
+"""Run persistence: start, normal completion, and interruption by an exception.
 
 Persistence lives in the graph (not only in the HTTP use case) because the graph has more
 than one entry point: POST /modernize, the LangGraph API (/runs) and Studio. Two short
@@ -10,14 +10,14 @@ Persistence errors are not caught: a run that cannot be recorded must fail loudl
 from app.features.modernization.application.ports.repositories.unit_of_work import (
     UnitOfWorkFactory,
 )
-from app.features.modernization.domain.enums import ModernizationStatus
-from app.features.modernization.domain.exceptions import ModernizationNotFoundError
-from app.features.modernization.domain.models.modernization import Modernization
+from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
+from app.features.modernization.domain.models.modernization import Modernization, PipelineError
 from app.features.modernization.graph.state import (
     ModernizationState,
     StateUpdate,
     to_outcome,
 )
+from app.shared.errors import AppError, NotFoundError
 
 
 class RecordStartNode:
@@ -46,8 +46,43 @@ class RecordResultNode:
         async with self._uow_factory() as uow:
             running = await uow.modernizations.find_by_id(execution_id)
             if running is None:
-                raise ModernizationNotFoundError(execution_id)
+                raise NotFoundError(
+                    f"Modernization {execution_id} not found", execution_id=str(execution_id)
+                )
             finished = running.complete(to_outcome(state))
             await uow.modernizations.update(finished)
             await uow.commit()
         return StateUpdate(modernization=finished, status=finished.status)
+
+
+class RecordFailure:
+    """Persists a run interrupted by an exception in `step`; the caller re-raises.
+
+    Lives in the graph so runs started from the LangGraph API / Studio are recorded too,
+    not only those coming through the FastAPI handlers.
+    """
+
+    def __init__(self, uow_factory: UnitOfWorkFactory) -> None:
+        self._uow_factory = uow_factory
+
+    async def __call__(self, state: ModernizationState, step: PipelineStep, exc: Exception) -> None:
+        execution_id = state["execution_id"]
+        outcome = to_outcome(state)
+        error = PipelineError(
+            step=step,
+            error_type=type(exc).__name__,
+            message=str(exc),
+            payload=exc.payload if isinstance(exc, AppError) else {},
+        )
+        outcome = outcome.model_copy(update={"errors": (*outcome.errors, error)})
+        async with self._uow_factory() as uow:
+            running = await uow.modernizations.find_by_id(execution_id)
+            if running is None:
+                raise NotFoundError(
+                    f"Modernization {execution_id} not found", execution_id=str(execution_id)
+                )
+            finished = running.complete(outcome).model_copy(
+                update={"status": ModernizationStatus.FAILURE}
+            )
+            await uow.modernizations.update(finished)
+            await uow.commit()

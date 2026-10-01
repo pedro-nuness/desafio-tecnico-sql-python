@@ -3,7 +3,6 @@ import json
 from pydantic import BaseModel
 
 from app.features.modernization.domain.enums import GenerationStrategy
-from app.features.modernization.domain.exceptions import GenerationError
 from app.features.modernization.domain.models.generation import (
     ArchitecturalDecision,
     GenerationMetadata,
@@ -13,6 +12,7 @@ from app.features.modernization.domain.models.generation import (
 from app.features.modernization.domain.models.parsing import ParsedProcedure
 from app.features.modernization.domain.models.semantic_analysis import SemanticAnalysis
 from app.features.modernization.prompts.generation_prompt import GenerationPromptBuilder
+from app.shared.integrations.errors import IntegrationError
 from app.shared.integrations.llm.llm_provider import (
     LLMProvider,
     LLMRequest,
@@ -76,9 +76,23 @@ class CodeGenerationService:
                 response_format=ResponseFormat.JSON,
             )
         )
-        payload = parse_generation_payload(response)
+        # Needed: the LLM answering outside the contract is an integration failure, not a
+        # raw JSON/pydantic error; a truncated answer says so explicitly (AD-04).
+        try:
+            payload = parse_generation_payload(response)
+        except ValueError as exc:  # JSONDecodeError and pydantic's ValidationError included
+            message = (
+                f"LLM hit the output token limit ({self._max_output_tokens}) before finishing "
+                "the answer (reasoning models count reasoning tokens too): raise "
+                "LLM_MAX_OUTPUT_TOKENS or lower LLM_REASONING_EFFORT"
+                if response.finish_reason == "length"
+                else f"LLM response does not match the expected contract: {exc}"
+            )
+            raise IntegrationError(message, finish_reason=response.finish_reason) from exc
         if not payload.python_code.strip():
-            raise GenerationError("LLM returned empty python_code")
+            raise IntegrationError(
+                "LLM returned empty python_code", finish_reason=response.finish_reason
+            )
 
         warnings = list(payload.warnings)
         if response.finish_reason == "length":
@@ -115,5 +129,5 @@ def parse_generation_payload(response: LLMResponse) -> _GenerationPayload:
     content = response.content
     start, end = content.find("{"), content.rfind("}")
     if start == -1 or end <= start:
-        raise GenerationError("LLM response does not contain a JSON object")
+        raise ValueError("LLM response does not contain a JSON object")
     return _GenerationPayload.model_validate(json.loads(content[start : end + 1]))

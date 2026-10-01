@@ -1,7 +1,7 @@
 from app.features.modernization.domain.enums import PipelineStep
-from app.features.modernization.domain.exceptions import ModernizationError
 from app.features.modernization.domain.services.semantic_analyzer import SemanticAnalyzer
 from app.features.modernization.graph.state import ModernizationState, StateUpdate
+from app.shared.errors import AppError
 
 
 class SemanticAnalysisNode:
@@ -13,7 +13,7 @@ class SemanticAnalysisNode:
     def __call__(self, state: ModernizationState) -> StateUpdate:
         procedure = state.get("parsed_procedure")
         if procedure is None:
-            raise ModernizationError("no parsed procedure in state")
+            raise AppError("no parsed procedure in state")
         analysis = self._analyzer.analyze(procedure)
         warnings = (
             []

@@ -1,9 +1,7 @@
 from collections.abc import Callable
 
 import pytest
-from pglast.parser import ParseError
 
-from app.features.modernization.domain.exceptions import ParsingError
 from app.features.modernization.domain.models.parsing import (
     DeclarationKind,
     ParameterMode,
@@ -15,6 +13,7 @@ from app.features.modernization.infrastructure.parsing.pglast_parser import (
     PglastParser,
     analyze_sql,
 )
+from app.shared.errors import DomainError
 
 parser = PglastParser()
 
@@ -108,12 +107,12 @@ def test_assignment_is_split_with_the_lexer() -> None:
     ],
 )
 def test_unsupported_sources_raise_parsing_error(source: str, message: str) -> None:
-    with pytest.raises(ParsingError, match=message):
+    with pytest.raises(DomainError, match=message):
         parser.parse(source)
 
 
 def test_invalid_body_raises_parsing_error(load_procedure: Callable[[str], str]) -> None:
-    with pytest.raises(ParseError):
+    with pytest.raises(DomainError, match="Invalid SQL"):
         parser.parse(load_procedure("invalid_syntax"))
 
 
@@ -130,11 +129,11 @@ def test_embedded_sql_analysis() -> None:
     assert fragment.locking_clauses == ("FOR UPDATE",)
 
 
-def test_unparseable_embedded_sql_propagates_native_error() -> None:
-    with pytest.raises(ParseError):
-        analyze_sql("SELEC broken")
+def test_unparseable_embedded_sql_is_reported_not_raised() -> None:
+    fragment = analyze_sql("SELEC broken")
+    assert fragment.parse_error is not None
 
 
 def test_invalid_sql_propagates_native_error() -> None:
-    with pytest.raises(ParseError):
+    with pytest.raises(DomainError, match="Invalid SQL"):
         parser.parse("not sql at all")

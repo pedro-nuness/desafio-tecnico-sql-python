@@ -14,26 +14,17 @@ class PythonASTValidator:
     name = "python_ast"
 
     async def validate(self, code: str) -> ValidationResult:
-        (result,) = await asyncio.gather(
-            asyncio.to_thread(self.check, code), return_exceptions=True
-        )
-        if isinstance(result, SyntaxError):
-            result = ValidatorResult(
+        return ValidationResult(results=(await asyncio.to_thread(self.check, code),))
+
+    def check(self, code: str) -> ValidatorResult:
+        # Needed: invalid syntax is a validation result (it feeds the repair loop), not an error.
+        try:
+            ast.parse(code, filename="generated_module.py", type_comments=False)
+        except SyntaxError as exc:
+            return ValidatorResult(
                 validator=self.name,
                 success=False,
                 blocking=True,
-                messages=(
-                    ValidationMessage(
-                        message=result.msg,
-                        line=result.lineno,
-                        column=result.offset,
-                    ),
-                ),
+                messages=(ValidationMessage(message=exc.msg, line=exc.lineno, column=exc.offset),),
             )
-        elif isinstance(result, BaseException):
-            raise result
-        return ValidationResult(results=(result,))
-
-    def check(self, code: str) -> ValidatorResult:
-        ast.parse(code, filename="generated_module.py", type_comments=False)
         return ValidatorResult(validator=self.name, success=True, blocking=True)

@@ -21,9 +21,9 @@ from dataclasses import dataclass, field
 
 import pglast
 from pglast import ast, enums, visitors
+from pglast.parser import ParseError
 from pglast.stream import RawStream
 
-from app.features.modernization.domain.exceptions import ParsingError
 from app.features.modernization.domain.models.parsing import (
     Declaration,
     DeclarationKind,
@@ -37,6 +37,7 @@ from app.features.modernization.domain.models.parsing import (
     Statement,
     StatementKind,
 )
+from app.shared.errors import DomainError
 
 PARSER_NAME = "pglast"
 
@@ -66,10 +67,19 @@ _TYPE_PLACEHOLDER = "text"
 
 class PglastParser:
     def parse(self, source_code: str) -> ParsedProcedure:
+        # Needed: libpg_query rejecting the source is the caller's input error.
+        try:
+            return self._parse(source_code)
+        except ParseError as exc:
+            raise DomainError(f"Invalid SQL or PL/pgSQL: {exc}") from exc
+
+    def _parse(self, source_code: str) -> ParsedProcedure:
         statement_sql, create = _find_create_function(source_code)
         language = _language(create)
         if language != "plpgsql":
-            raise ParsingError(f"Only LANGUAGE plpgsql is supported (got {language!r})")
+            raise DomainError(
+                f"Only LANGUAGE plpgsql is supported (got {language!r})", language=language
+            )
 
         warnings: list[str] = []
         tree = _parse_plpgsql(statement_sql, create, warnings)
@@ -109,7 +119,7 @@ def _find_create_function(source_code: str) -> tuple[str, ast.CreateFunctionStmt
         raw = pglast.parse_sql(statement_sql)[0].stmt
         if isinstance(raw, ast.CreateFunctionStmt):
             return statement_sql, raw
-    raise ParsingError("No CREATE FUNCTION / CREATE PROCEDURE statement found")
+    raise DomainError("No CREATE FUNCTION / CREATE PROCEDURE statement found")
 
 
 def _body_line_offset(source_code: str, statement_sql: str, create: ast.CreateFunctionStmt) -> int:
@@ -184,7 +194,7 @@ def _parse_plpgsql(
     )
     function = tree[0].get("PLpgSQL_function") if tree else None
     if not isinstance(function, dict):
-        raise ParsingError("pglast returned no PL/pgSQL function tree")
+        raise DomainError("pglast returned no PL/pgSQL function tree")
     return function
 
 
@@ -312,7 +322,7 @@ class _BodyBuilder:
     def block_body(self, action: JsonValue) -> tuple[Statement, ...]:
         tag, payload = _unwrap(action)
         if tag != "PLpgSQL_stmt_block":
-            raise ParsingError("PL/pgSQL function has no top-level block")
+            raise DomainError("PL/pgSQL function has no top-level block")
         block = self._block(payload)
         body = block.body if not block.exception_handlers else (block,)
         return _drop_implicit_return(body)
@@ -681,7 +691,12 @@ _LOCK_NAMES: Mapping[enums.LockClauseStrength, str] = {
 
 
 def analyze_sql(text: str) -> SqlFragment:
-    statements = pglast.parse_sql(text)
+    # Needed: embedded-SQL analysis is best effort; an unparsable fragment becomes a
+    # warning / UNPARSED fact (SqlFragment.parse_error) instead of aborting the whole run.
+    try:
+        statements = pglast.parse_sql(text)
+    except ParseError as exc:
+        return SqlFragment(text=text, parse_error=str(exc))
     visitor = _SqlVisitor()
     visitor(statements)
     first = statements[0].stmt if statements else None

@@ -262,8 +262,8 @@ flowchart LR
 - **Nodes finos** (`app/features/modernization/graph/nodes/`): cada um chama um port/serviço e
   devolve `StateUpdate`; exceções propagam sem tratamento HTTP local.
 - **Persistência**: `record_start` commita `running` antes do LLM; `record_result` grava a
-  conclusão normal. Nas rotas FastAPI, o handler global grava `failure` com o progresso
-  já realizado antes de devolver o erro HTTP e o `execution_id` para consulta.
+  conclusão normal. Se um passo lança exceção, o wrapper `_tracked` grava `failure` com o
+  progresso já realizado e relança — vale para `POST /modernize`, API do LangGraph e Studio.
 - **Loop de reparo** (`validation → generation`, AD-13): se a validação reprova (AST ou Ruff), a
   geração roda de novo com o código anterior e a lista de problemas no prompt, até
   `GENERATION_MAX_ATTEMPTS` (default 2) e só se a run tiver menos de
@@ -272,10 +272,12 @@ flowchart LR
   tentativa produziu o código final.
 - **Dependências injetadas nos nodes** (instâncias callable construídas no builder), não via
   `config`/`context` — assim o mesmo graph roda no uvicorn e no servidor LangGraph.
-- **Tratamento global**: não há `try/except` em `app`. O breaker mantém seu controle de
-  estados e os retries continuam ativos; ambos observam resultados assíncronos com
-  `asyncio.gather(return_exceptions=True)`. O erro final propaga para o handler HTTP.
-  `try/finally` permanece para liberar recursos e garantir rollback.
+- **Tratamento global** (AD-14): erros viram resposta HTTP só em
+  `app/core/exception_handlers.py`, que não conhece nenhum vendor. `try/except` local existe
+  apenas onde o resultado precisa ser observado ali mesmo: tradução de erros de SDK + retries
+  (`Integration`), estado do breaker, gravação da falha no graph, e erros nativos com
+  significado de domínio (SQL inválido, sintaxe inválida que alimenta o reparo, resposta do
+  LLM fora do contrato). A lista é fixada em `test_architecture.py`.
 
 ---
 
@@ -309,14 +311,14 @@ flowchart LR
 }
 ```
 
-Exceções do pipeline viram erros HTTP: parsing/SQL inválido → 400; falhas de integração
-ou resposta gerada inválida → 502; circuito aberto → 503 com `Retry-After`; timeout de
-upstream → 504; erro inesperado → 500. O handler grava `failure` e o progresso, incluindo
-código já gerado, antes de responder com `detail` e `execution_id`. O relatório fica
-disponível no GET da execução. Resultados de validação continuam alimentando o loop de
-reparo; erros de execução dos validadores propagam. Entrada inválida → 422.
-Se o banco não permitir gravar a falha, o handler registra o erro de persistência e
-responde 500 sem anunciar um resultado gravado.
+Erros do pipeline viram erros HTTP pela classe (AD-14): `DomainError` (SQL/PL/pgSQL inválido
+ou não suportado) → 400; `NotFoundError` → 404; `IntegrationError` → 502, 503 com `Retry-After`
+(circuito aberto) ou 504 (timeout); `AppError` → 500 com a mensagem; qualquer outra exceção →
+500 genérico. O corpo é `{"detail": mensagem, ...payload, "execution_id": ...}`. O graph já
+gravou `failure` e o progresso (incluindo código já gerado, e o mesmo payload em
+`report.errors[].payload`); o relatório fica disponível no GET da execução. Resultados de validação continuam alimentando
+o loop de reparo; erros de execução dos validadores propagam. Entrada inválida → 422.
+Se o banco não permitir gravar a falha, o erro de persistência propaga (500).
 
 ---
 
@@ -444,14 +446,17 @@ app/
 │   ├── exception_handlers.py # Handlers globais de erro HTTP
 │   └── server.py             # Setup da aplicação FastAPI e lifespan
 ├── shared/                   # Código utilitário compartilhado entre múltiplos contextos
-│   ├── client.py             # HTTP client base reutilizável
+│   ├── errors.py             # AppError, DomainError, NotFoundError (AD-14)
 │   ├── domain/value_object.py# Base ValueObject imutável (Pydantic frozen)
 │   ├── resilience/           # CircuitBreaker genérico (async, sem dependência de vendor)
-│   └── integrations/llm/     # Port LLMProvider, LLMConfig, factory e adapters reutilizáveis
-│       ├── llm_provider.py   # LLMProvider (Protocol), LLMRequest/LLMResponse
-│       ├── factory.py        # create_llm_provider (match + circuit breaker)
-│       ├── openai/           # OpenAIProvider (Chat Completions, qualquer endpoint compatível)
-│       └── openrouter/       # OpenRouterProvider (SDK oficial, chat.send_async)
+│   └── integrations/
+│       ├── errors.py         # IntegrationError (transient, timeout, retry_after)
+│       ├── integration.py    # Integration: tradução de erros de SDK + retries + breaker
+│       └── llm/              # Port LLMProvider, LLMConfig, factory e adapters reutilizáveis
+│           ├── llm_provider.py # LLMProvider (Protocol), LLMRequest/LLMResponse
+│           ├── factory.py    # create_llm_provider (match + um Integration por provider)
+│           ├── openai/       # OpenAIProvider (Chat Completions, qualquer endpoint compatível)
+│           └── openrouter/   # OpenRouterProvider (SDK oficial, chat.send_async)
 └── features/                 # Módulos verticais autocontidos por capacidade de negócio
     ├── health/               # Feature de monitoramento e liveness check
     │   ├── routes.py
@@ -680,23 +685,26 @@ Python coordena validação, fluxo, erros e composição; a transação pertence
 `finish_reason`). `OpenAIProvider` usa o SDK OpenAI e aceita `base_url` para endpoints
 compatíveis. `OpenRouterProvider` é independente e usa o [SDK oficial OpenRouter](https://openrouter.ai/docs/client-sdks/python/overview),
 com `chat.send_async` (uma chave → Claude, Gemini, GPT, Llama só trocando `LLM_MODEL`). Tudo vive em
-`app/shared/integrations/llm/` para ser reutilizado por qualquer feature. Erros dos SDKs propagam
-com seu tipo original até `app/core/exception_handlers.py`; violações do contrato do
-próprio adapter usam `IntegrationError`. O breaker também conta as exceções nativas
-informadas pelo adapter, mantendo erros de programação fora dessa contagem.
+`app/shared/integrations/llm/` para ser reutilizado por qualquer feature. Cada provider recebe
+um `Integration` (AD-14), que traduz qualquer erro do SDK em `IntegrationError` com mensagem
+própria (o texto do SDK fica só no `__cause__`/log). O breaker e os retries usam só o flag
+`transient` (transporte, timeout, HTTP 408/409/429 e 5xx); erros do chamador (400, 401, 422:
+prompt grande demais, chave inválida) não são retentados nem abrem o circuito. Resposta fora
+do contrato do LLM vira `IntegrationError` com a causa (e, se `finish_reason=length`, a dica
+de `LLM_MAX_OUTPUT_TOKENS`/`LLM_REASONING_EFFORT`).
 A seleção acontece em `app/shared/integrations/llm/factory.py` (um `match`), chamada só pelo
 composition root com `Settings.llm_config()`. Adicionar `AnthropicProvider`/`GeminiProvider` =
 um pacote novo + um `case`; nodes e services não mudam.
 
-Todo provider sai da factory com um `CircuitBreaker` injetado (breaker genérico em
-`app/shared/resilience/`): após N falhas consecutivas (cada uma já com os retries
-esgotados) o circuito abre e as chamadas falham na hora com `CircuitOpenError`, que o
-handler global converte em HTTP 503; depois do reset,
-uma única chamada de teste decide se fecha ou reabre.
+O `Integration` de cada provider tem um `CircuitBreaker` (genérico, em
+`app/shared/resilience/`): após N falhas transitórias consecutivas (cada uma já com os retries
+esgotados) o circuito abre e as chamadas falham na hora com `IntegrationError(retry_after=…)`,
+que o handler global responde como HTTP 503 + `Retry-After`; depois do reset, uma única
+chamada de teste decide se fecha ou reabre.
 
-OpenAI faz retries pelo SDK. O SDK OpenRouter limita retries por tempo, sem limite de
-tentativas; por isso o adapter desativa os retries internos e preserva `LLM_MAX_RETRIES`
-com tentativas adicionais para falhas de transporte, HTTP 408/409/429 e 5xx. O circuito
+OpenAI faz retries pelo SDK (`Integration(retries=0)`). O SDK OpenRouter limita retries por
+tempo, sem limite de tentativas; por isso o adapter desativa os retries internos e o
+`Integration` faz `LLM_MAX_RETRIES` tentativas adicionais para falhas transitórias. O circuito
 conta uma falha somente após essas tentativas se esgotarem. URL, título do app e timeout
 são configurados no SDK OpenRouter (`server_url`, `x_open_router_title`, `timeout_ms`).
 
@@ -724,20 +732,18 @@ binário do Ruff isolado (`--isolated`, stdin, regras de correção `E4,E7,E9,F,
 `subprocess.run` numa worker thread: funciona em qualquer event loop (o `SelectorEventLoop` do
 Windows, usado pelo `langgraph dev`, não suporta subprocess async). `CompositeCodeValidator` roda
 os validadores em paralelo e propaga erros de execução. Sintaxe inválida continua sendo
-um resultado bloqueante que pode provocar reparo; a conversão desse resultado usa
-`asyncio.gather`, sem `try/except`.
+um resultado bloqueante que pode provocar reparo.
 
-### AD-07 · Progresso e persistência de falhas HTTP
+### AD-07 · Toda execução é persistida, dentro do graph
 
 `record_start` grava `running` e commita antes da chamada ao LLM; `record_result` grava a
-conclusão normal. Antes de cada node, `_tracked` atualiza um `PipelineProgress` por requisição
-com o ID, o passo atual e o resultado já produzido, sem interceptar exceções.
-O handler global usa esse snapshot para gravar `failure` em uma transação curta antes
-da resposta HTTP, preservando código e etapas concluídas.
-
-A API/Studio do LangGraph registra início e conclusões normais pelo mesmo graph. Exceções
-nessa entrada são tratadas pelo servidor LangGraph, não pelo handler FastAPI; sem esse
-handler, a linha interrompida permanece `running`.
+conclusão normal. Se um passo lança exceção, `_tracked` (o wrapper de cada node) grava
+`failure` com tudo o que foi produzido até ali (`RecordFailure`, transação curta) e relança
+a exceção, sem engoli-la. A persistência fica **no graph** porque ele tem mais de uma porta de
+entrada: `POST /modernize` e a API/Studio do servidor LangGraph, que não passa pelos handlers
+FastAPI. Nas rotas FastAPI, `PipelineProgress` só leva o `execution_id` até o handler global,
+que o devolve na resposta de erro. Falha nos próprios nós de persistência não é gravada:
+uma run que não pode ser registrada deve falhar alto.
 
 ### AD-08 · Unit of Work + repositories específicos
 
@@ -752,7 +758,7 @@ do domínio (`save`, `update`, `find_by_id`), não um CRUD genérico.
 O caso de uso depende de um Protocol, não de LangGraph. O graph (`app/features/modernization/graph`) é um adapter que
 implementa esse port. Isso mantém o service testável e o framework de orquestração trocável.
 O contrato do port inclui registrar a run (AD-07): qualquer implementação deve persistir
-`running` antes e a conclusão normal depois; erros propagam, com progresso opcional para o handler HTTP.
+`running` antes, a conclusão (normal ou `failure`) depois; erros propagam após serem gravados.
 
 ### AD-10 · Pydantic no domínio
 
@@ -810,22 +816,44 @@ síncrono e cada tentativa é outra chamada ao LLM:
   ≈ 2× a latência de geração.
 - `GENERATION_RETRY_BUDGET_SECONDS=90`: não inicia retentativa em run que já passou do orçamento
   (uma chamada lenta de 140 s ao provider não vira 280 s de espera).
-- Retentativa que falha na geração (ex.: JSON inválido) não apaga a anterior: o relatório mantém o
-  código da tentativa anterior no snapshot; o handler HTTP registra `failure` preservando esse código.
+- Retentativa que falha na geração (ex.: JSON inválido) não apaga a anterior: o graph registra
+  `failure` preservando o código da tentativa anterior no relatório.
 
 Trade-off: retentar também por lint (não bloqueante) custa uma chamada a mais em troca de código
 limpo; `GENERATION_MAX_ATTEMPTS=1` desliga o loop. Para requests que não podem esperar, o caminho é
 assíncrono (ver Evolução futura).
 
+### AD-14 · Erros: uma classe por papel, mensagem + payload
+
+Não há uma classe por caso de erro. `app/shared/errors.py` define `AppError` (falha nossa, 500),
+`DomainError` (a entrada viola uma regra, 400) e `NotFoundError` (404);
+`app/shared/integrations/errors.py` define `IntegrationError` (dependência falhou: 502, 503 se
+`retry_after`, 504 se `timeout`). A classe diz **quem é o culpado** e o handler deriva o status
+dela; a **mensagem** diz o que aconteceu; o **payload** (`**kwargs` JSON) leva dados públicos
+para o cliente e para `report.errors[].payload`:
+
+```python
+raise DomainError(f"Only LANGUAGE plpgsql is supported (got {language!r})", language=language)
+raise NotFoundError(f"Modernization {id} not found", execution_id=str(id))
+raise self._integration.error("returned no choices")  # dentro de um adapter
+```
+
+Mensagem e payload são públicos: nada de texto de SDK, segredos ou stack (isso fica no
+`__cause__`, que é logado). Erros de vendor nunca sobem crus: o `Integration`, instanciado uma
+vez por dependência, os traduz de forma genérica (status HTTP exposto pelo SDK, ou timeout /
+transporte na cadeia de causas), então o core não importa nenhum SDK. `test_architecture.py`
+fixa quem pode criar cada classe: `IntegrationError` só em `shared/integrations` e na camada de
+aplicação (que valida a resposta do LLM); `NotFoundError` nunca no domínio.
+
 ---
 
 ## Limitações conhecidas
 
-- **Só `LANGUAGE plpgsql`**; funções `LANGUAGE sql` são rejeitadas com `ParsingError`.
+- **Só `LANGUAGE plpgsql`**; funções `LANGUAGE sql` são rejeitadas com `DomainError` (400).
   Arquivos com vários `CREATE FUNCTION` usam o primeiro.
 - **Sem catálogo**: tipos `%TYPE`/`%ROWTYPE` não são resolvidos. Parâmetros `%TYPE` são
   reescritos com um placeholder antes da compilação, preservando o tipo original no IR e
-  emitindo um warning. Erros de parsing propagam para o handler global.
+  emitindo um warning. SQL inválido vira `DomainError` (400).
 - **Builtins vs routines do usuário** é heurística (lista de funções conhecidas + `pg_catalog.`);
   sem acesso ao banco não dá para ter certeza.
 - **SQL dinâmico** (`EXECUTE`) não é analisável estaticamente: vira risco `DYNAMIC_SQL`.

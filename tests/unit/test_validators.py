@@ -1,6 +1,5 @@
 import pytest
 
-from app.features.modernization.domain.exceptions import ValidationExecutionError
 from app.features.modernization.domain.models.validation import ValidationResult
 from app.features.modernization.infrastructure.validation.composite_validator import (
     CompositeCodeValidator,
@@ -11,6 +10,7 @@ from app.features.modernization.infrastructure.validation.python_ast_validator i
 from app.features.modernization.infrastructure.validation.ruff_validator import (
     RuffValidator,
 )
+from app.shared.errors import AppError
 from tests.conftest import VALID_CODE
 
 
@@ -59,10 +59,10 @@ class _BrokenValidator:
     name = "broken"
 
     async def validate(self, code: str) -> ValidationResult:
-        raise ValidationExecutionError("binary missing")
+        raise AppError("binary missing")
 
 
 async def test_composite_propagates_validator_errors() -> None:
     composite = CompositeCodeValidator([PythonASTValidator(), _BrokenValidator()])
-    with pytest.raises(ValidationExecutionError, match="binary missing"):
+    with pytest.raises(AppError, match="binary missing"):
         await composite.validate(VALID_CODE)

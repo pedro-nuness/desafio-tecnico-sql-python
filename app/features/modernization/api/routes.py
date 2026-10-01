@@ -18,7 +18,8 @@ router = APIRouter(tags=["modernization"])
 async def modernize(
     request: ModernizationRequest, http_request: Request, service: ModernizationServiceDep
 ) -> ModernizationResponse:
-    """Runs synchronously; exceptions reach the global handler with a progress snapshot."""
+    """Runs synchronously; on failure the run is already recorded and the global handler
+    answers with its execution_id."""
     progress = PipelineProgress()
     http_request.state.modernization_progress = progress
     modernization = await service.modernize(

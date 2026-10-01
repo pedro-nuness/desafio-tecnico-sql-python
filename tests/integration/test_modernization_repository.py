@@ -12,9 +12,6 @@ from app.features.modernization.application.services.modernization_service impor
     ModernizationService,
 )
 from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
-from app.features.modernization.domain.exceptions import (
-    ModernizationNotFoundError,
-)
 from app.features.modernization.domain.models.modernization import (
     Modernization,
     PipelineError,
@@ -37,7 +34,8 @@ from app.features.modernization.infrastructure.validation.python_ast_validator i
 from app.features.modernization.prompts.generation_prompt import (
     GenerationPromptBuilder,
 )
-from app.shared.integrations.exceptions import IntegrationError
+from app.shared.errors import NotFoundError
+from app.shared.integrations.errors import IntegrationError
 from tests.conftest import llm_payload
 from tests.fakes import FakeLLMProvider
 
@@ -104,7 +102,7 @@ async def test_nothing_is_written_without_commit(session_factory: SessionFactory
 
 async def test_update_of_unknown_aggregate_raises(session_factory: SessionFactory) -> None:
     async with SqlAlchemyUnitOfWork(session_factory) as uow:
-        with pytest.raises(ModernizationNotFoundError):
+        with pytest.raises(NotFoundError):
             await uow.modernizations.update(
                 Modernization.start("src").model_copy(update={"id": uuid4()})
             )
@@ -134,8 +132,8 @@ async def test_every_execution_is_persisted_including_failures(
     progress = PipelineProgress()
     with pytest.raises(IntegrationError):
         await service.modernize(source, progress=progress)
-    ko = await service.record_failure(progress, error)
-    assert ko is not None
+    assert progress.execution_id is not None
+    ko = await service.get(progress.execution_id)  # recorded by the graph before re-raising
 
     async with session_factory() as session:
         result = await session.execute(text("SELECT id, status FROM modernization_history"))

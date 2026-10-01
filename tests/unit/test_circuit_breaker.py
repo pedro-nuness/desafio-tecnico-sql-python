@@ -2,7 +2,6 @@ import asyncio
 
 import pytest
 
-from app.shared.integrations.exceptions import IntegrationError
 from app.shared.resilience.circuit_breaker import (
     CircuitBreaker,
     CircuitOpenError,
@@ -46,7 +45,6 @@ async def test_opens_after_consecutive_failures_and_fails_fast() -> None:
     clock.now = 10
     with pytest.raises(CircuitOpenError, match=r"retry in 20.0s") as exc_info:
         await breaker.call(_ok)
-    assert isinstance(exc_info.value, IntegrationError)
     assert exc_info.value.name == "dep"
     assert exc_info.value.retry_after_seconds == 20
 
@@ -105,8 +103,10 @@ async def test_half_open_lets_a_single_trial_through() -> None:
     assert breaker.state is CircuitState.CLOSED
 
 
-async def test_exceptions_outside_failure_types_are_neutral() -> None:
-    breaker = CircuitBreaker("dep", failure_threshold=1, failure_types=(IntegrationError,))
+async def test_exceptions_rejected_by_is_failure_are_neutral() -> None:
+    breaker = CircuitBreaker(
+        "dep", failure_threshold=1, is_failure=lambda exc: isinstance(exc, ValueError)
+    )
 
     with pytest.raises(RuntimeError):
         await breaker.call(_boom)

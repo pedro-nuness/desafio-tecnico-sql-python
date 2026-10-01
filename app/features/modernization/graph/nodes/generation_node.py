@@ -2,14 +2,12 @@ from app.features.modernization.application.services.code_generation_service imp
     CodeGenerationService,
 )
 from app.features.modernization.domain.enums import PipelineStep
-from app.features.modernization.domain.exceptions import (
-    ModernizationError,
-)
 from app.features.modernization.domain.models.generation import RepairFeedback
 from app.features.modernization.graph.state import (
     ModernizationState,
     StateUpdate,
 )
+from app.shared.errors import AppError
 
 
 class GenerationNode:
@@ -26,7 +24,7 @@ class GenerationNode:
         procedure = state.get("parsed_procedure")
         analysis = state.get("semantic_analysis")
         if procedure is None or analysis is None:
-            raise ModernizationError("generation requires parse + analysis")
+            raise AppError("generation requires parse + analysis")
         attempt = state.get("generation_attempts", 0) + 1
         feedback = _feedback(state, attempt)
         result = await self._generation_service.generate(

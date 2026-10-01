@@ -6,8 +6,8 @@ from types import TracebackType
 from typing import Self
 from uuid import UUID
 
-from app.features.modernization.domain.exceptions import ModernizationNotFoundError
 from app.features.modernization.domain.models.modernization import Modernization
+from app.shared.errors import NotFoundError
 from app.shared.integrations.llm.llm_provider import LLMRequest, LLMResponse
 
 
@@ -21,7 +21,7 @@ class InMemoryModernizationRepository:
 
     async def update(self, modernization: Modernization) -> None:
         if modernization.id not in self._committed and modernization.id not in self.pending:
-            raise ModernizationNotFoundError(modernization.id)
+            raise NotFoundError(f"Modernization {modernization.id} not found")
         self.pending[modernization.id] = modernization
 
     async def find_by_id(self, modernization_id: UUID) -> Modernization | None:

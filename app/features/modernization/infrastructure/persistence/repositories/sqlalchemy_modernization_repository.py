@@ -2,7 +2,6 @@ from uuid import UUID
 
 from sqlalchemy.ext.asyncio import AsyncSession
 
-from app.features.modernization.domain.exceptions import ModernizationNotFoundError
 from app.features.modernization.domain.models.modernization import Modernization
 from app.features.modernization.infrastructure.persistence.mappers import (
     modernization_mapper as mapper,
@@ -10,6 +9,7 @@ from app.features.modernization.infrastructure.persistence.mappers import (
 from app.features.modernization.infrastructure.persistence.models import (
     ModernizationHistoryModel,
 )
+from app.shared.errors import NotFoundError
 
 
 class SqlAlchemyModernizationRepository:
@@ -25,7 +25,9 @@ class SqlAlchemyModernizationRepository:
     async def update(self, modernization: Modernization) -> None:
         model = await self._session.get(ModernizationHistoryModel, modernization.id)
         if model is None:
-            raise ModernizationNotFoundError(modernization.id)
+            raise NotFoundError(
+                f"Modernization {modernization.id} not found", execution_id=str(modernization.id)
+            )
         mapper.apply_to_model(modernization, model)
         await self._session.flush()
 

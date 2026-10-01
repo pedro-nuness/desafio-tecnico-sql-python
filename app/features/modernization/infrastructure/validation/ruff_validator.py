@@ -7,12 +7,12 @@ from collections.abc import Sequence
 from pydantic import BaseModel, TypeAdapter
 from ruff.__main__ import find_ruff_bin
 
-from app.features.modernization.domain.exceptions import ValidationExecutionError
 from app.features.modernization.domain.models.validation import (
     ValidationMessage,
     ValidationResult,
     ValidatorResult,
 )
+from app.shared.errors import AppError
 
 DEFAULT_RULES = ("E4", "E7", "E9", "F", "B", "ASYNC", "S608")
 """Correctness-oriented rules; style (line length, import order) is not a blocker."""
@@ -93,5 +93,5 @@ class RuffValidator:
         # 0 = clean, 1 = violations found, anything else = Ruff itself failed
         if completed.returncode not in (0, 1):
             stderr = completed.stderr.decode(errors="replace")
-            raise ValidationExecutionError(f"Ruff failed: {stderr}")
+            raise AppError(f"Ruff failed to run: {stderr}", returncode=completed.returncode)
         return completed.stdout

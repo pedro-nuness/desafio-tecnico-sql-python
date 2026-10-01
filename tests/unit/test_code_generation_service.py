@@ -1,13 +1,11 @@
 from collections.abc import Callable
 
 import pytest
-from pydantic import ValidationError
 
 from app.features.modernization.application.services.code_generation_service import (
     CodeGenerationService,
 )
 from app.features.modernization.domain.enums import GenerationStrategy
-from app.features.modernization.domain.exceptions import GenerationError
 from app.features.modernization.domain.models.generation import GenerationResult
 from app.features.modernization.domain.models.parsing import ParsedProcedure
 from app.features.modernization.domain.models.semantic_analysis import SemanticAnalysis
@@ -17,7 +15,7 @@ from app.features.modernization.prompts.generation_prompt import (
     PROMPT_VERSION,
     GenerationPromptBuilder,
 )
-from app.shared.integrations.exceptions import IntegrationError
+from app.shared.integrations.errors import IntegrationError
 from app.shared.integrations.llm.llm_provider import LLMRequest, LLMResponse, ResponseFormat
 from tests.conftest import VALID_CODE, llm_payload
 from tests.fakes import FakeLLMProvider
@@ -84,12 +82,12 @@ async def test_accepts_json_wrapped_in_markdown_fences(analyzed: Analyzed) -> No
 @pytest.mark.parametrize(
     ("content", "error_type"),
     [
-        ("no json here", GenerationError),
-        ('{"strategy": "hybrid"}', ValidationError),  # missing code
-        ('{"python_code": "   ", "strategy": "hybrid"}', GenerationError),  # empty code
+        ("no json here", IntegrationError),
+        ('{"strategy": "hybrid"}', IntegrationError),  # missing code
+        ('{"python_code": "   ", "strategy": "hybrid"}', IntegrationError),  # empty code
         (
             '{"python_code": "x = 1", "strategy": "rewrite_everything"}',
-            ValidationError,
+            IntegrationError,
         ),  # unknown strategy
     ],
 )
@@ -114,7 +112,7 @@ async def test_truncated_answer_reports_token_limit(analyzed: Analyzed) -> None:
             # Reasoning model that spent the whole budget thinking: no content at all.
             return response.model_copy(update={"content": "", "finish_reason": "length"})
 
-    with pytest.raises(GenerationError, match="does not contain a JSON object"):
+    with pytest.raises(IntegrationError, match="LLM_MAX_OUTPUT_TOKENS"):
         await _generate(TruncatingLLM(), analyzed)
 
 

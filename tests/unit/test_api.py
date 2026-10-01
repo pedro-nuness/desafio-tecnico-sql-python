@@ -3,9 +3,7 @@ from uuid import uuid4
 
 import pytest
 from fastapi import FastAPI
-from httpx import ASGITransport, AsyncClient, ConnectError, ReadTimeout, Request, Response
-from openai import APIError, APITimeoutError
-from openrouter.errors import OpenRouterError
+from httpx import ASGITransport, AsyncClient
 
 from app.core.bootstrap import Container
 from app.core.config.settings import Settings
@@ -15,8 +13,8 @@ from app.features.modernization.application.services.modernization_service impor
 )
 from app.features.modernization.domain.enums import ModernizationStatus
 from app.features.modernization.graph.pipeline import LangGraphModernizationPipeline
-from app.shared.integrations.exceptions import IntegrationError
-from app.shared.resilience.circuit_breaker import CircuitOpenError
+from app.shared.errors import AppError, DomainError, NotFoundError
+from app.shared.integrations.errors import IntegrationError
 from tests.conftest import GraphFactory
 from tests.fakes import FakeLLMProvider, InMemoryStore
 
@@ -87,7 +85,7 @@ async def test_parsing_failure_returns_http_error_and_is_persisted(
     assert report["status"] == "failure"
     assert report["generated_code"] is None
     assert report["report"]["errors"][0]["step"] == "parsing"
-    assert report["report"]["errors"][0]["error_type"] == "ParseError"
+    assert report["report"]["errors"][0]["error_type"] == "DomainError"
 
 
 async def test_empty_source_is_rejected(client: AsyncClient) -> None:
@@ -103,58 +101,50 @@ async def test_unknown_execution_returns_404(client: AsyncClient) -> None:
     assert "not found" in response.json()["detail"].lower()
 
 
-async def test_global_interceptor_handles_http_client_errors(
-    api: FastAPI, client: AsyncClient
+@pytest.mark.parametrize(
+    ("error", "status_code", "body"),
+    [
+        (DomainError("Bad input", line=3), 400, {"detail": "Bad input", "line": 3}),
+        (NotFoundError("Nothing here"), 404, {"detail": "Nothing here"}),
+        (IntegrationError("llm failed"), 502, {"detail": "llm failed"}),
+        (IntegrationError("llm timed out", timeout=True), 504, {"detail": "llm timed out"}),
+        (IntegrationError("llm down", retry_after=29.2), 503, {"detail": "llm down"}),
+        (
+            AppError("Ruff failed to run", returncode=2),
+            500,
+            {"detail": "Ruff failed to run", "returncode": 2},
+        ),
+        (RuntimeError("private failure"), 500, {"detail": "Internal Server Error"}),
+    ],
+)
+async def test_global_handler_maps_error_class_to_status_and_payload_to_body(
+    api: FastAPI, error: Exception, status_code: int, body: dict
 ) -> None:
-    @api.get("/test-timeout")
-    async def route_timeout() -> None:
-        raise ReadTimeout("External service timeout")
-
-    @api.get("/test-connection")
-    async def route_connection() -> None:
-        raise ConnectError("Failed to connect")
-
-    @api.get("/test-upstream-500")
-    async def route_upstream() -> None:
-        Response(500, request=Request("GET", "https://example.com")).raise_for_status()
-
-    @api.get("/test-unhandled")
-    async def route_unhandled() -> None:
-        raise RuntimeError("Unexpected failure")
-
-    timeout_resp = await client.get("/test-timeout")
-    assert timeout_resp.status_code == 504
-    assert timeout_resp.json() == {"detail": "Gateway Timeout: upstream service timed out"}
-
-    conn_resp = await client.get("/test-connection")
-    assert conn_resp.status_code == 502
-    assert conn_resp.json() == {"detail": "Bad Gateway: failed to connect to upstream service"}
-
-    upstream_resp = await client.get("/test-upstream-500")
-    assert upstream_resp.status_code == 502
-    assert "upstream service error (500)" in upstream_resp.json()["detail"]
+    @api.get("/boom")
+    async def boom() -> None:
+        raise error
 
     async with AsyncClient(
         transport=ASGITransport(app=api, raise_app_exceptions=False), base_url="http://test"
-    ) as unhandled_client:
-        unhandled_resp = await unhandled_client.get("/test-unhandled")
-        assert unhandled_resp.status_code == 500
-        assert unhandled_resp.json() == {"detail": "Internal Server Error"}
+    ) as http:
+        response = await http.get("/boom")
+
+    assert response.status_code == status_code
+    assert response.json() == body
+    if status_code == 503:
+        assert response.headers["Retry-After"] == "30"
 
 
 @pytest.mark.parametrize(
     ("error", "status_code"),
     [
-        (IntegrationError("private failure"), 502),
-        (CircuitOpenError("llm", 30), 503),
-        (APIError("private failure", Request("POST", "https://example.com"), body=None), 502),
-        (APITimeoutError(Request("POST", "https://example.com")), 504),
-        (OpenRouterError("private failure", Response(500, text="private failure")), 502),
-        (OpenRouterError("private failure", Response(408, text="private failure")), 504),
+        (IntegrationError("openrouter answered HTTP 500", upstream_status=500), 502),
+        (IntegrationError("openrouter is unavailable", retry_after=30), 503),
+        (IntegrationError("openrouter timed out", timeout=True), 504),
         (RuntimeError("private failure"), 500),
     ],
 )
-async def test_global_handler_persists_sdk_failures_with_progress(
+async def test_global_handler_maps_failures_and_points_to_the_recorded_run(
     api: FastAPI,
     client: AsyncClient,
     make_graph: GraphFactory,
@@ -173,7 +163,7 @@ async def test_global_handler_persists_sdk_failures_with_progress(
             "/modernize", json={"source_code": load_procedure("process_orders")}
         )
     assert response.status_code == status_code
-    if isinstance(error, CircuitOpenError):
+    if status_code == 503:
         assert response.headers["Retry-After"] == "30"
     body = response.json()
     assert "private failure" not in body["detail"]
@@ -182,8 +172,11 @@ async def test_global_handler_persists_sdk_failures_with_progress(
     assert stored_response.status_code == 200
     assert stored["status"] == "failure"
     assert stored["report"]["completed_steps"] == ["parsing", "semantic_analysis"]
-    assert stored["report"]["errors"][0]["error_type"] == type(error).__name__
-    assert stored["report"]["errors"][0]["step"] == "generation"
+    [recorded_error] = stored["report"]["errors"]
+    assert recorded_error["error_type"] == type(error).__name__
+    assert recorded_error["step"] == "generation"
+    if isinstance(error, IntegrationError):
+        assert recorded_error["payload"] == error.payload
     assert [m.status for m in store.history] == [
         ModernizationStatus.RUNNING,
         ModernizationStatus.FAILURE,

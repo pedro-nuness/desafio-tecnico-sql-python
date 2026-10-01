@@ -1,8 +1,10 @@
 """Modernization aggregate, pipeline outcome and the structured (JSONB-ready) report."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from uuid import UUID, uuid7
+
+from pydantic import Field, JsonValue
 
 from app.features.modernization.domain.enums import (
     GenerationStrategy,
@@ -37,6 +39,8 @@ class PipelineError(ValueObject):
     """None when the failure happened outside a known step (orchestration crash)."""
     error_type: str
     message: str
+    payload: dict[str, JsonValue] = Field(default_factory=dict)
+    """Structured data of an AppError (same payload the HTTP error response carries)."""
 
 
 class PipelineOutcome(ValueObject):
@@ -68,11 +72,9 @@ class PipelineOutcome(ValueObject):
 
 @dataclass(slots=True)
 class PipelineProgress:
-    """Per-request snapshot consumed by the global handler if a step raises."""
+    """Per-request channel: lets the global handler point to the recorded execution."""
 
     execution_id: UUID | None = None
-    step: PipelineStep | None = None
-    outcome: PipelineOutcome = field(default_factory=PipelineOutcome)
 
 
 # --------------------------------------------------------------------------- report

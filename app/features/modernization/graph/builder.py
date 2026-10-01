@@ -23,6 +23,7 @@ from app.features.modernization.domain.services.semantic_analyzer import Semanti
 from app.features.modernization.graph.nodes.generation_node import GenerationNode
 from app.features.modernization.graph.nodes.parsing_node import ParsingNode
 from app.features.modernization.graph.nodes.persistence_nodes import (
+    RecordFailure,
     RecordResultNode,
     RecordStartNode,
 )
@@ -34,7 +35,6 @@ from app.features.modernization.graph.state import (
     ModernizationInput,
     ModernizationState,
     StateUpdate,
-    to_outcome,
 )
 
 type ModernizationGraph = CompiledStateGraph[ModernizationState, None, ModernizationInput]
@@ -71,10 +71,12 @@ def build_modernization_graph(
     """START -> record_start -> parsing -> semantic_analysis -> generation -> validation
     -> record_result -> END, with validation -> generation while retries remain.
 
-    Exceptions propagate with per-request progress available to the global HTTP handler.
+    A step that raises is recorded as FAILURE (with everything produced so far) and the
+    exception propagates to the caller: the global HTTP handler maps it to a response.
     Dependencies are injected into node instances (closures), keeping nodes thin.
     """
     graph = StateGraph(ModernizationState, input_schema=ModernizationInput)
+    record_failure = RecordFailure(uow_factory)
     graph.add_node(RECORD_START, _tracked(None, RecordStartNode(uow_factory)))
     steps: list[tuple[PipelineStep, Node]] = [
         (PipelineStep.PARSING, ParsingNode(parser)),
@@ -83,7 +85,7 @@ def build_modernization_graph(
         (PipelineStep.VALIDATION, ValidationNode(validator)),
     ]
     for step, node in steps:
-        graph.add_node(step.value, _tracked(step, node))
+        graph.add_node(step.value, _tracked(step, node, record_failure))
     graph.add_node(RECORD_RESULT, _tracked(None, RecordResultNode(uow_factory)))
 
     graph.add_edge(START, RECORD_START)
@@ -100,17 +102,27 @@ def build_modernization_graph(
     return graph.compile(name=GRAPH_NAME)
 
 
-def _tracked(step: PipelineStep | None, node: Node) -> AsyncNode:
-    """Snapshot completed work before calling a node; do not intercept its exceptions."""
+def _tracked(
+    step: PipelineStep | None, node: Node, record_failure: RecordFailure | None = None
+) -> AsyncNode:
+    """Expose the execution id to the caller and record a failing step before re-raising.
+
+    Persistence nodes (step=None) are not recorded: a run that cannot be persisted must
+    fail loudly.
+    """
 
     async def run(state: ModernizationState, config: RunnableConfig) -> StateUpdate:
         progress = config.get("configurable", {}).get("progress")
         if isinstance(progress, PipelineProgress):
             progress.execution_id = state.get("execution_id")
-            progress.step = step
-            progress.outcome = to_outcome(state)
-        update = node(state)
-        return await update if inspect.isawaitable(update) else update
+        # Needed: the only local handler of the pipeline. It persists, never swallows.
+        try:
+            update = node(state)
+            return await update if inspect.isawaitable(update) else update
+        except Exception as exc:
+            if step is not None and record_failure is not None:
+                await record_failure(state, step, exc)
+            raise
 
     return run
 

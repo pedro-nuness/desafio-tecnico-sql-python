@@ -1,13 +1,12 @@
 from collections.abc import Callable
 
 import pytest
-from pglast.parser import ParseError
 
 from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
-from app.features.modernization.domain.exceptions import ModernizationNotFoundError
 from app.features.modernization.domain.models.modernization import PipelineProgress
 from app.features.modernization.domain.models.validation import ValidationResult
-from app.shared.integrations.exceptions import IntegrationError
+from app.shared.errors import DomainError, NotFoundError
+from app.shared.integrations.errors import IntegrationError
 from tests.conftest import ServiceFactory, llm_payload
 from tests.fakes import FakeLLMProvider, InMemoryStore
 
@@ -35,7 +34,7 @@ async def test_success_runs_all_four_nodes_and_persists_twice(
     assert store.rows[result.id] == result
 
 
-async def test_llm_failure_propagates_with_progress_for_the_handler(
+async def test_llm_failure_is_recorded_then_propagates(
     make_service: ServiceFactory, store: InMemoryStore, load_procedure: Callable[[str], str]
 ) -> None:
     error = IntegrationError("provider unavailable")
@@ -44,19 +43,25 @@ async def test_llm_failure_propagates_with_progress_for_the_handler(
     with pytest.raises(IntegrationError) as exc_info:
         await service.modernize(load_procedure("process_orders"), progress=progress)
     assert exc_info.value is error
-    assert progress.step is PipelineStep.GENERATION
-    assert progress.outcome.completed_steps == (
+    assert progress.execution_id is not None
+    recorded = store.rows[progress.execution_id]
+    assert recorded.status is ModernizationStatus.FAILURE
+    assert recorded.report.completed_steps == (
         PipelineStep.PARSING,
         PipelineStep.SEMANTIC_ANALYSIS,
     )
-    assert store.rows[progress.execution_id].status is ModernizationStatus.RUNNING
+    [recorded_error] = recorded.report.errors
+    assert (recorded_error.step, recorded_error.error_type) == (
+        PipelineStep.GENERATION,
+        "IntegrationError",
+    )
 
 
 async def test_parsing_failure_propagates_without_calling_the_llm(
     make_service: ServiceFactory, load_procedure: Callable[[str], str]
 ) -> None:
     llm = FakeLLMProvider()
-    with pytest.raises(ParseError):
+    with pytest.raises(DomainError):
         await make_service(llm=llm).modernize(load_procedure("invalid_syntax"))
     assert not llm.requests
 
@@ -92,8 +97,8 @@ class _ExplodingValidator:
         raise RuntimeError("unexpected bug")
 
 
-async def test_unexpected_crash_propagates_with_last_known_state(
-    make_service: ServiceFactory, load_procedure: Callable[[str], str]
+async def test_unexpected_crash_is_recorded_with_last_known_state(
+    make_service: ServiceFactory, store: InMemoryStore, load_procedure: Callable[[str], str]
 ) -> None:
     progress = PipelineProgress()
     with pytest.raises(RuntimeError, match="unexpected bug"):
@@ -101,9 +106,13 @@ async def test_unexpected_crash_propagates_with_last_known_state(
             load_procedure("process_orders"),
             progress=progress,
         )
-    assert progress.outcome.generated_code is not None
-    assert progress.outcome.completed_steps == ALL_STEPS[:3]
-    assert progress.step is PipelineStep.VALIDATION
+    assert progress.execution_id is not None
+    recorded = store.rows[progress.execution_id]
+    assert recorded.status is ModernizationStatus.FAILURE
+    assert recorded.generated_code is not None
+    assert recorded.report.completed_steps == ALL_STEPS[:3]
+    [error] = recorded.report.errors
+    assert error.step is PipelineStep.VALIDATION
 
 
 async def test_get_returns_persisted_execution(
@@ -118,5 +127,5 @@ async def test_get_returns_persisted_execution(
 async def test_get_unknown_execution_raises(make_service: ServiceFactory) -> None:
     from uuid import uuid4
 
-    with pytest.raises(ModernizationNotFoundError):
+    with pytest.raises(NotFoundError):
         await make_service().get(uuid4())

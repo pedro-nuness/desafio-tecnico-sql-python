@@ -5,9 +5,9 @@ from collections.abc import Callable
 import pytest
 
 from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
-from app.features.modernization.domain.exceptions import GenerationError
 from app.features.modernization.domain.models.modernization import PipelineProgress
 from app.features.modernization.graph.builder import RetryPolicy
+from app.shared.integrations.errors import IntegrationError
 from tests.conftest import VALID_CODE, GraphFactory, ServiceFactory, llm_payload
 from tests.fakes import FakeLLMProvider, InMemoryStore
 
@@ -60,17 +60,38 @@ async def test_no_retry_once_the_time_budget_is_spent(
 
 
 async def test_failed_retry_keeps_the_previous_attempt(
-    make_service: ServiceFactory, load_procedure: Callable[[str], str]
+    make_service: ServiceFactory, store: InMemoryStore, load_procedure: Callable[[str], str]
 ) -> None:
     llm = FakeLLMProvider([llm_payload(code=LINT_ONLY), "not json"])
 
     progress = PipelineProgress()
-    with pytest.raises(GenerationError):
+    with pytest.raises(IntegrationError):
         await make_service(llm=llm).modernize(
             load_procedure("calculate_discount"), progress=progress
         )
-    assert progress.outcome.generated_code == LINT_ONLY
-    assert progress.step is PipelineStep.GENERATION
+    assert progress.execution_id is not None
+    recorded = store.rows[progress.execution_id]
+    assert recorded.status is ModernizationStatus.FAILURE
+    assert recorded.generated_code == LINT_ONLY
+    [error] = recorded.report.errors
+    assert (error.step, error.error_type) == (PipelineStep.GENERATION, "IntegrationError")
+
+
+async def test_failing_runs_started_on_the_graph_are_recorded(
+    make_graph: GraphFactory, store: InMemoryStore, load_procedure: Callable[[str], str]
+) -> None:
+    """LangGraph API / Studio path: no FastAPI handler around it, the graph records it."""
+    llm = FakeLLMProvider(error=RuntimeError("provider exploded"))
+
+    with pytest.raises(RuntimeError, match="provider exploded"):
+        await make_graph(llm=llm).ainvoke({"source_code": load_procedure("process_orders")})
+
+    assert [m.status for m in store.history] == [
+        ModernizationStatus.RUNNING,
+        ModernizationStatus.FAILURE,
+    ]
+    [error] = store.history[-1].report.errors
+    assert (error.step, error.error_type) == (PipelineStep.GENERATION, "RuntimeError")
 
 
 async def test_runs_started_on_the_graph_are_persisted(

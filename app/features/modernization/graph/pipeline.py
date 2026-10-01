@@ -6,8 +6,8 @@ from app.features.modernization.graph.state import ModernizationInput
 class LangGraphModernizationPipeline:
     """ModernizationPipeline port implemented with a compiled LangGraph graph.
 
-    The graph records normal results and snapshots progress for HTTP error handlers.
-    Exceptions propagate without local recovery.
+    The graph records every run (normal result or the failing step) and exposes the
+    execution id through `progress`. Exceptions propagate after being recorded.
     """
 
     def __init__(self, graph: ModernizationGraph) -> None:

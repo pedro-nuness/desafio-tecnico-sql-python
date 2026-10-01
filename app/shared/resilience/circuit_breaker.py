@@ -1,11 +1,8 @@
 """Generic async circuit breaker: fail fast while a dependency is known to be down."""
 
-import asyncio
 import time
 from collections.abc import Awaitable, Callable
 from enum import StrEnum
-
-from app.shared.integrations.exceptions import IntegrationError
 
 
 class CircuitState(StrEnum):
@@ -14,7 +11,7 @@ class CircuitState(StrEnum):
     HALF_OPEN = "half_open"
 
 
-class CircuitOpenError(IntegrationError):
+class CircuitOpenError(Exception):
     """Raised instead of calling the dependency while the circuit is open."""
 
     def __init__(self, name: str, retry_after_seconds: float) -> None:
@@ -28,7 +25,8 @@ class CircuitBreaker:
 
     OPEN rejects calls until `reset_timeout_seconds` pass, then HALF_OPEN lets a single
     trial call through: success closes the circuit, failure reopens it. Only exceptions
-    in `failure_types` count as failures; anything else (e.g. cancellation) is neutral.
+    accepted by `is_failure` count as failures; anything else (bad requests, programming
+    errors, cancellation) is neutral.
 
     Meant for one event loop: state is checked and updated with no await in between.
     """
@@ -39,7 +37,7 @@ class CircuitBreaker:
         *,
         failure_threshold: int = 5,
         reset_timeout_seconds: float = 60.0,
-        failure_types: tuple[type[BaseException], ...] = (Exception,),
+        is_failure: Callable[[Exception], bool] = lambda exc: True,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if failure_threshold < 1:
@@ -49,7 +47,7 @@ class CircuitBreaker:
         self.name = name
         self._failure_threshold = failure_threshold
         self._reset_timeout = reset_timeout_seconds
-        self._failure_types = failure_types
+        self._is_failure = is_failure
         self._clock = clock
         self._failures = 0
         self._opened_at: float | None = None
@@ -63,28 +61,17 @@ class CircuitBreaker:
             return CircuitState.HALF_OPEN
         return CircuitState.OPEN
 
-    async def call[T](
-        self,
-        func: Callable[[], Awaitable[T]],
-        *,
-        failure_types: tuple[type[BaseException], ...] = (),
-    ) -> T:
+    async def call[T](self, func: Callable[[], Awaitable[T]]) -> T:
         self._before_call()
-
-        async def invoke() -> T:
-            return await func()
-
-        task = asyncio.create_task(invoke())
+        # Needed: the breaker must observe the outcome to update its state, then re-raise.
         try:
-            await asyncio.gather(task, return_exceptions=True)
-        finally:
-            self._trial_in_flight = False
-        error = None if task.cancelled() else task.exception()
-        if isinstance(error, (*self._failure_types, *failure_types)):
-            self._on_failure()
-        if error is not None:
-            raise error
-        result = task.result()
+            result = await func()
+        except BaseException as exc:
+            if isinstance(exc, Exception) and self._is_failure(exc):
+                self._on_failure()
+            else:
+                self._trial_in_flight = False
+            raise
         self._on_success()
         return result
 
