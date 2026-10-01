@@ -100,12 +100,12 @@ uv run langgraph dev --allow-blocking
 ```
 
 (Alternativa só com as rotas FastAPI, sem API/Studio do LangGraph:
-`uv run uvicorn app.api.main:app --reload`.)
+`uv run uvicorn app.main:app --reload`.)
 
 ### Servidor LangGraph (`langgraph dev` + Studio)
 
-É o mesmo servidor do container `app`. O `langgraph.json` registra o graph `modernization` (factory `app.bootstrap:make_graph`) e monta
-a própria API FastAPI via `http.app` (`app.api.main:app`), então o mesmo servidor expõe:
+É o mesmo servidor do container `app`. O `langgraph.json` registra o graph `modernization` (factory `app.core.bootstrap:make_graph`) e monta
+a própria API FastAPI via `http.app` (`app.main:app`), então o mesmo servidor expõe:
 
 - API do LangGraph (`/assistants`, `/threads`, `/runs/...`) e o Studio — runs disparadas por aqui
   (input `{"source_code": "...", "schema_context": "..."}`) também são gravadas em
@@ -171,7 +171,7 @@ flowchart LR
 ```mermaid
 flowchart TB
     subgraph Driving["Driving adapters"]
-        FASTAPI["FastAPI routes<br/>app/api"]
+        FASTAPI["FastAPI routes<br/>app/core/server.py · app/features"]
         LGCLI["LangGraph server / Studio<br/>langgraph.json"]
     end
 
@@ -187,7 +187,7 @@ flowchart TB
         end
     end
 
-    subgraph Driven["Driven adapters (app/infrastructure, app/graph)"]
+    subgraph Driven["Driven adapters (app/features/modernization/infrastructure, graph)"]
         A1["PglastParser"]
         A2["OpenAIProvider (openai / openrouter)"]
         A3["PythonASTValidator · RuffValidator<br/>CompositeCodeValidator"]
@@ -214,11 +214,14 @@ flowchart TB
 Direção das dependências (verificada por teste — `tests/unit/test_architecture.py`):
 
 ```
-api ──► application ──► ports ◄── infrastructure
-             │                          │
-             └──────► domain ◄──────────┘
-graph (LangGraph) ──► application/ports + domain
-bootstrap.py = composition root (único lugar que conhece todos os adapters)
+shared (reutilizável, zero dependências de core ou features)
+core (bootstrap, server, config, database) ──► features (rotas, domínio, ports)
+features/modernization:
+  api ──► application ──► ports ◄── infrastructure
+               │                          │
+               └──────► domain ◄──────────┘
+  graph (LangGraph) ──► application/ports + domain
+app/core/bootstrap.py = composition root (único lugar que conhece todos os adapters)
 ```
 
 ### Eixos de variação (onde existem abstrações — e só lá)
@@ -253,10 +256,10 @@ flowchart LR
     record_result --> END((END))
 ```
 
-- **Estado tipado** (`app/graph/state.py`): `ModernizationState` (`TypedDict`) com modelos de domínio
+- **Estado tipado** (`app/features/modernization/graph/state.py`): `ModernizationState` (`TypedDict`) com modelos de domínio
   explícitos (`ParsedProcedure`, `SemanticAnalysis`, `GenerationResult`, `ValidationResult`) e canais
   append-only (`completed_steps`, `warnings`, `errors`) via reducer `operator.add`.
-- **Nodes finos** (`app/graph/nodes/`): cada um chama um port/serviço, converte erros *esperados*
+- **Nodes finos** (`app/features/modernization/graph/nodes/`): cada um chama um port/serviço, converte erros *esperados*
   do domínio em `PipelineError` e devolve um `StateUpdate` parcial. Nenhum node monta prompt,
   conhece vendor ou chama `ast`/Ruff diretamente.
 - **Persistência como nós** (`record_start` / `record_result`): toda run é gravada, entre pela
@@ -340,7 +343,7 @@ A regra fica em `PipelineOutcome.status()` (domínio), testada isoladamente.
 
 ## Configuração
 
-Centralizada em `app/config/settings.py` (`pydantic-settings`; lê env vars e `.env`). Nenhum
+Centralizada em `app/core/config/settings.py` (`pydantic-settings`; lê env vars e `.env`). Nenhum
 `os.getenv` espalhado. Copie `.env.example` para `.env` (git-ignored).
 
 | variável                | default                                                       | descrição                                  |
@@ -419,41 +422,57 @@ uv run ruff check . && uv run ruff format --check .
 
 ## Estrutura de pastas
 
+A base de código adota a arquitetura **Package by Feature**, organizada em `core/`, `shared/` e `features/`, utilizando *native namespace packages* do Python 3 (sem arquivos `__init__.py`):
+
 ```
 app/
-├── api/                      # FastAPI (driving adapter)
-│   ├── main.py               # create_app + lifespan; também montado pelo LangGraph (http.app)
-│   ├── dependencies.py
-│   ├── routes/               # health.py, modernization.py
-│   └── schemas/              # modernization_request.py, modernization_response.py
-├── application/
-│   ├── ports/                # Protocols: llm/, parsing/, validation/, repositories/, pipeline/
-│   └── services/             # modernization_service.py, code_generation_service.py
-├── domain/
-│   ├── enums.py              # ModernizationStatus, GenerationStrategy, PipelineStep
-│   ├── exceptions.py         # hierarquia de exceções de domínio
-│   ├── models/               # parsing (IR), semantic_analysis, generation, validation, modernization (+report)
-│   └── services/             # semantic_analyzer.py (puro, determinístico)
-├── graph/
-│   ├── state.py · builder.py · pipeline.py
-│   └── nodes/                # parsing, semantic_analysis, generation, validation
-├── infrastructure/
-│   ├── llm/                  # openai_provider.py, provider_factory.py
-│   ├── parsing/              # pglast_parser.py (único import de pglast)
-│   ├── validation/           # python_ast_validator.py, ruff_validator.py, composite_validator.py
-│   └── persistence/
-│       ├── database/         # base, engine, session, unit_of_work
-│       ├── models.py         # classes ORM
-│       ├── repositories/     # um repository por aggregate
-│       └── mappers/          # ORM <-> domínio
-├── prompts/generation_prompt.py
-├── config/settings.py
-└── bootstrap.py              # composition root: build_container, default_container, make_graph() para o langgraph.json
+├── main.py                   # Ponto de entrada FastAPI (reexporta create_app e app)
+├── core/                     # Fundações transversais, infraestrutura base e composition root
+│   ├── bootstrap.py          # Composition root (build_container, make_graph para langgraph.json)
+│   ├── config/settings.py    # Configurações centralizadas com Pydantic Settings
+│   ├── database/             # SQLAlchemy async engine, session factory e Base declarativa
+│   │   ├── base.py
+│   │   ├── engine.py
+│   │   └── session.py
+│   ├── dependencies.py       # FastAPI dependencies transversais (container)
+│   ├── exception_handlers.py # Handlers globais de erro HTTP
+│   └── server.py             # Setup da aplicação FastAPI e lifespan
+├── shared/                   # Código utilitário compartilhado entre múltiplos contextos
+│   ├── client.py             # HTTP client base reutilizável
+│   └── domain/value_object.py# Base ValueObject imutável (Pydantic frozen)
+└── features/                 # Módulos verticais autocontidos por capacidade de negócio
+    ├── health/               # Feature de monitoramento e liveness check
+    │   ├── routes.py
+    │   └── schemas.py
+    └── modernization/        # Feature principal: modernização de SQL para Python
+        ├── api/              # Driving adapter HTTP (rotas, schemas e deps da feature)
+        │   ├── dependencies.py
+        │   ├── routes.py
+        │   └── schemas/
+        ├── domain/           # Entidades, agregados, value objects e regras puras
+        │   ├── enums.py
+        │   ├── exceptions.py
+        │   ├── models/       # IR de parsing, análise semântica, geração e validação
+        │   └── services/     # Analisador semântico determinístico
+        ├── application/      # Casos de uso e portas abstratas (Protocols)
+        │   ├── ports/        # LLM, parsing, validação, repositórios e pipeline
+        │   └── services/     # ModernizationService e CodeGenerationService
+        ├── graph/            # Workflow LangGraph (pipeline, state, builder e nodes finos)
+        │   ├── builder.py
+        │   ├── pipeline.py
+        │   ├── state.py
+        │   └── nodes/
+        ├── infrastructure/   # Driven adapters (LLM, parsing pglast, Ruff/AST, persistência UoW/Repo)
+        │   ├── llm/          # OpenAIProvider e provider_factory
+        │   ├── parsing/      # PglastParser
+        │   ├── persistence/  # SqlAlchemyUnitOfWork, repositórios, mappers e models ORM
+        │   └── validation/   # PythonASTValidator, RuffValidator e CompositeCodeValidator
+        └── prompts/          # Templates de engenharia de prompt (generation_prompt.py)
 migrations/                   # Alembic (env async + versions/)
 examples/                     # Anexo A (schema.sql), Anexos B–F (procedures/) e results/
-scripts/run_examples.py       # roda os anexos pelo ModernizationService e grava results/
+scripts/run_examples.py       # Roda os anexos pelo ModernizationService e grava results/
 tests/{unit,integration,fixtures/procedures}
-docker/postgres/init/         # cria o banco de testes
+docker/postgres/init/         # Cria o banco de testes
 ```
 
 ---
@@ -650,7 +669,7 @@ Python coordena validação, fluxo, erros e composição; a transação pertence
 `finish_reason`). `OpenAIProvider` fala Chat Completions e aceita `base_url`, então serve OpenAI,
 **OpenRouter** (uma chave → Claude, Gemini, GPT, Llama só trocando `LLM_MODEL`) e endpoints
 self-hosted. Erros do SDK viram `LLMProviderError`. A seleção acontece em
-`infrastructure/llm/provider_factory.py` (um `match`), chamada só pelo composition root.
+`app/features/modernization/infrastructure/llm/provider_factory.py` (um `match`), chamada só pelo composition root.
 Adicionar `AnthropicProvider`/`GeminiProvider` = um arquivo novo + um `case`; nodes e services
 não mudam.
 
@@ -696,13 +715,13 @@ com ressalvas"; um `running` antigo é detectável como execução abortada.
 
 `UnitOfWork` expõe `modernizations` e controla `commit/rollback`; repositories só fazem `flush`.
 Sair do `async with` sem `commit()` descarta tudo (testado). Adicionar `evaluation_results` ou
-`llm_calls`: novo model em `persistence/models/`, novo repository, novo mapper, um atributo no
+`llm_calls`: novo model em `app/features/modernization/infrastructure/persistence/models/`, novo repository, novo mapper, um atributo no
 `UnitOfWork` e uma migration — nenhum módulo existente precisa mudar. O port expressa necessidades
 do domínio (`save`, `update`, `find_by_id`), não um CRUD genérico.
 
 ### AD-09 · `ModernizationPipeline` como port
 
-O caso de uso depende de um Protocol, não de LangGraph. O graph (`app/graph`) é um adapter que
+O caso de uso depende de um Protocol, não de LangGraph. O graph (`app/features/modernization/graph`) é um adapter que
 implementa esse port. Isso mantém o service testável e o framework de orquestração trocável.
 O contrato do port inclui registrar a run (AD-07): qualquer implementação deve persistir
 `running` antes e o resultado final depois, e só lança se a persistência falhar.
@@ -716,7 +735,7 @@ de serialização.
 
 ### AD-11 · Composition root explícito
 
-`app/bootstrap.py` é o único módulo que importa adapters concretos e monta tudo por construtor
+`app/core/bootstrap.py` é o único módulo que importa adapters concretos e monta tudo por construtor
 (sem framework de DI, sem service locator). `build_container(settings)` monta engine, graph e
 service uma vez; `default_container()` (`@cache`) guarda esse container **por processo**.
 
@@ -724,8 +743,8 @@ O `langgraph dev` serve dois pontos de entrada no mesmo processo — o lifespan 
 factory `make_graph()` do `langgraph.json` — e ambos usam `default_container()`: um engine (pool de
 conexões), um graph, uma leitura de `Settings`. Verificado no container: após uma execução por
 `/modernize` e outra por `/runs/wait`, o app mantém **1** conexão no Postgres (eram 2 pools).
-Detalhe necessário: o `langgraph.json` referencia módulos (`app.bootstrap:make_graph`), não
-arquivos (`./app/bootstrap.py:...`) — por arquivo, o servidor executa o módulo de novo com outro
+Detalhe necessário: o `langgraph.json` referencia módulos (`app.core.bootstrap:make_graph`), não
+arquivos (`./app/core/bootstrap.py:...`) — por arquivo, o servidor executa o módulo de novo com outro
 nome, e o cache (e o engine) duplicaria.
 
 A entrega é que varia por ponto de entrada: `Depends` nas rotas (via `app.state`), factory no

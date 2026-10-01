@@ -5,22 +5,36 @@ from typing import Any
 
 import pytest
 
-from app.application.ports.validation.code_validator import CodeValidator
-from app.application.services.code_generation_service import CodeGenerationService
-from app.application.services.modernization_service import ModernizationService
-from app.domain.services.semantic_analyzer import SemanticAnalyzer
-from app.graph.builder import (
+from app.features.modernization.application.ports.validation.code_validator import (
+    CodeValidator,
+)
+from app.features.modernization.application.services.code_generation_service import (
+    CodeGenerationService,
+)
+from app.features.modernization.application.services.modernization_service import (
+    ModernizationService,
+)
+from app.features.modernization.domain.services.semantic_analyzer import SemanticAnalyzer
+from app.features.modernization.graph.builder import (
     DEFAULT_RETRY,
     ModernizationGraph,
     RetryPolicy,
     build_modernization_graph,
 )
-from app.graph.pipeline import LangGraphModernizationPipeline
-from app.infrastructure.parsing.pglast_parser import PglastParser
-from app.infrastructure.validation.composite_validator import CompositeCodeValidator
-from app.infrastructure.validation.python_ast_validator import PythonASTValidator
-from app.infrastructure.validation.ruff_validator import RuffValidator
-from app.prompts.generation_prompt import GenerationPromptBuilder
+from app.features.modernization.graph.pipeline import LangGraphModernizationPipeline
+from app.features.modernization.infrastructure.parsing.pglast_parser import PglastParser
+from app.features.modernization.infrastructure.validation.composite_validator import (
+    CompositeCodeValidator,
+)
+from app.features.modernization.infrastructure.validation.python_ast_validator import (
+    PythonASTValidator,
+)
+from app.features.modernization.infrastructure.validation.ruff_validator import (
+    RuffValidator,
+)
+from app.features.modernization.prompts.generation_prompt import (
+    GenerationPromptBuilder,
+)
 from tests.fakes import FakeLLMProvider, InMemoryStore
 
 PROCEDURES_DIR = Path(__file__).parent / "fixtures" / "procedures"

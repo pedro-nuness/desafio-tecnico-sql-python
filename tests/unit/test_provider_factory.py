@@ -1,10 +1,13 @@
 import pytest
 from pydantic import SecretStr, ValidationError
 
-from app.config.settings import LLMProviderName, Settings
-from app.domain.exceptions import ConfigurationError
-from app.infrastructure.llm.openai_provider import OpenAIProvider
-from app.infrastructure.llm.provider_factory import OPENROUTER_BASE_URL, create_llm_provider
+from app.core.config.settings import LLMProviderName, Settings
+from app.features.modernization.domain.exceptions import ConfigurationError
+from app.features.modernization.infrastructure.llm.openai_provider import OpenAIProvider
+from app.features.modernization.infrastructure.llm.provider_factory import (
+    OPENROUTER_BASE_URL,
+    create_llm_provider,
+)
 
 
 def _settings(provider: LLMProviderName, api_key: str | None = "sk-test") -> Settings:

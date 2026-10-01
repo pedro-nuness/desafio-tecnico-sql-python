@@ -5,19 +5,38 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from app.application.services.code_generation_service import CodeGenerationService
-from app.application.services.modernization_service import ModernizationService
-from app.domain.enums import ModernizationStatus, PipelineStep
-from app.domain.exceptions import LLMProviderError, ModernizationNotFoundError
-from app.domain.models.modernization import Modernization, PipelineError, PipelineOutcome
-from app.domain.services.semantic_analyzer import SemanticAnalyzer
-from app.graph.builder import build_modernization_graph
-from app.graph.pipeline import LangGraphModernizationPipeline
-from app.infrastructure.parsing.pglast_parser import PglastParser
-from app.infrastructure.persistence.database.unit_of_work import SqlAlchemyUnitOfWork
-from app.infrastructure.validation.composite_validator import CompositeCodeValidator
-from app.infrastructure.validation.python_ast_validator import PythonASTValidator
-from app.prompts.generation_prompt import GenerationPromptBuilder
+from app.features.modernization.application.services.code_generation_service import (
+    CodeGenerationService,
+)
+from app.features.modernization.application.services.modernization_service import (
+    ModernizationService,
+)
+from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
+from app.features.modernization.domain.exceptions import (
+    LLMProviderError,
+    ModernizationNotFoundError,
+)
+from app.features.modernization.domain.models.modernization import (
+    Modernization,
+    PipelineError,
+    PipelineOutcome,
+)
+from app.features.modernization.domain.services.semantic_analyzer import SemanticAnalyzer
+from app.features.modernization.graph.builder import build_modernization_graph
+from app.features.modernization.graph.pipeline import LangGraphModernizationPipeline
+from app.features.modernization.infrastructure.parsing.pglast_parser import PglastParser
+from app.features.modernization.infrastructure.persistence.unit_of_work import (
+    SqlAlchemyUnitOfWork,
+)
+from app.features.modernization.infrastructure.validation.composite_validator import (
+    CompositeCodeValidator,
+)
+from app.features.modernization.infrastructure.validation.python_ast_validator import (
+    PythonASTValidator,
+)
+from app.features.modernization.prompts.generation_prompt import (
+    GenerationPromptBuilder,
+)
 from tests.conftest import llm_payload
 from tests.fakes import FakeLLMProvider
 

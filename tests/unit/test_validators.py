@@ -1,8 +1,14 @@
-from app.domain.exceptions import ValidationExecutionError
-from app.domain.models.validation import ValidationResult
-from app.infrastructure.validation.composite_validator import CompositeCodeValidator
-from app.infrastructure.validation.python_ast_validator import PythonASTValidator
-from app.infrastructure.validation.ruff_validator import RuffValidator
+from app.features.modernization.domain.exceptions import ValidationExecutionError
+from app.features.modernization.domain.models.validation import ValidationResult
+from app.features.modernization.infrastructure.validation.composite_validator import (
+    CompositeCodeValidator,
+)
+from app.features.modernization.infrastructure.validation.python_ast_validator import (
+    PythonASTValidator,
+)
+from app.features.modernization.infrastructure.validation.ruff_validator import (
+    RuffValidator,
+)
 from tests.conftest import VALID_CODE
 
 

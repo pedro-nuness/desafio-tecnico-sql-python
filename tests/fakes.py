@@ -6,9 +6,12 @@ from types import TracebackType
 from typing import Self
 from uuid import UUID
 
-from app.application.ports.llm.llm_provider import LLMRequest, LLMResponse
-from app.domain.exceptions import ModernizationNotFoundError
-from app.domain.models.modernization import Modernization
+from app.features.modernization.application.ports.llm.llm_provider import (
+    LLMRequest,
+    LLMResponse,
+)
+from app.features.modernization.domain.exceptions import ModernizationNotFoundError
+from app.features.modernization.domain.models.modernization import Modernization
 
 
 class InMemoryModernizationRepository:

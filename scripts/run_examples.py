@@ -13,9 +13,9 @@ import asyncio
 import json
 from pathlib import Path
 
-from app.bootstrap import build_container
-from app.config.settings import Settings
-from app.domain.models.modernization import Modernization
+from app.core.bootstrap import build_container
+from app.core.config.settings import Settings
+from app.features.modernization.domain.models.modernization import Modernization
 
 EXAMPLES = Path(__file__).parents[1] / "examples"
 PROCEDURES = EXAMPLES / "procedures"

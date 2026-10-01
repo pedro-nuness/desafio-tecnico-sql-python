@@ -2,9 +2,12 @@ from collections.abc import Callable
 
 import pytest
 
-from app.domain.enums import ModernizationStatus, PipelineStep
-from app.domain.exceptions import LLMProviderError, ModernizationNotFoundError
-from app.domain.models.validation import ValidationResult
+from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
+from app.features.modernization.domain.exceptions import (
+    LLMProviderError,
+    ModernizationNotFoundError,
+)
+from app.features.modernization.domain.models.validation import ValidationResult
 from tests.conftest import ServiceFactory, llm_payload
 from tests.fakes import FakeLLMProvider, InMemoryStore
 

@@ -6,9 +6,9 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import app.infrastructure.persistence.models  # noqa: F401  (registers every ORM model)
-from app.config.settings import Settings
-from app.infrastructure.persistence.database.base import Base
+import app.features.modernization.infrastructure.persistence.models  # noqa: F401  (registers every ORM model)
+from app.core.config.settings import Settings
+from app.core.database.base import Base
 
 config = context.config
 if config.config_file_name is not None:

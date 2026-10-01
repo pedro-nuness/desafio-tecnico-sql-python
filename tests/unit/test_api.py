@@ -5,11 +5,13 @@ import pytest
 from fastapi import FastAPI
 from httpx import ASGITransport, AsyncClient
 
-from app.api.main import create_app
-from app.application.services.modernization_service import ModernizationService
-from app.bootstrap import Container
-from app.config.settings import Settings
-from app.graph.pipeline import LangGraphModernizationPipeline
+from app.core.bootstrap import Container
+from app.core.config.settings import Settings
+from app.core.server import create_app
+from app.features.modernization.application.services.modernization_service import (
+    ModernizationService,
+)
+from app.features.modernization.graph.pipeline import LangGraphModernizationPipeline
 from tests.conftest import GraphFactory
 from tests.fakes import InMemoryStore
 

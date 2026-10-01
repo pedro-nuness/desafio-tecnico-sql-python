@@ -2,15 +2,18 @@ from collections.abc import Callable
 
 import pytest
 
-from app.domain.exceptions import ParsingError
-from app.domain.models.parsing import (
+from app.features.modernization.domain.exceptions import ParsingError
+from app.features.modernization.domain.models.parsing import (
     DeclarationKind,
     ParameterMode,
     RoutineKind,
     SqlCommand,
     StatementKind,
 )
-from app.infrastructure.parsing.pglast_parser import PglastParser, analyze_sql
+from app.features.modernization.infrastructure.parsing.pglast_parser import (
+    PglastParser,
+    analyze_sql,
+)
 
 parser = PglastParser()
 

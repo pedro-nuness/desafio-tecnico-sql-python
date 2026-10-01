@@ -2,16 +2,25 @@ from collections.abc import Callable
 
 import pytest
 
-from app.application.ports.llm.llm_provider import LLMRequest, LLMResponse, ResponseFormat
-from app.application.services.code_generation_service import CodeGenerationService
-from app.domain.enums import GenerationStrategy
-from app.domain.exceptions import GenerationError, LLMProviderError
-from app.domain.models.generation import GenerationResult
-from app.domain.models.parsing import ParsedProcedure
-from app.domain.models.semantic_analysis import SemanticAnalysis
-from app.domain.services.semantic_analyzer import SemanticAnalyzer
-from app.infrastructure.parsing.pglast_parser import PglastParser
-from app.prompts.generation_prompt import PROMPT_VERSION, GenerationPromptBuilder
+from app.features.modernization.application.ports.llm.llm_provider import (
+    LLMRequest,
+    LLMResponse,
+    ResponseFormat,
+)
+from app.features.modernization.application.services.code_generation_service import (
+    CodeGenerationService,
+)
+from app.features.modernization.domain.enums import GenerationStrategy
+from app.features.modernization.domain.exceptions import GenerationError, LLMProviderError
+from app.features.modernization.domain.models.generation import GenerationResult
+from app.features.modernization.domain.models.parsing import ParsedProcedure
+from app.features.modernization.domain.models.semantic_analysis import SemanticAnalysis
+from app.features.modernization.domain.services.semantic_analyzer import SemanticAnalyzer
+from app.features.modernization.infrastructure.parsing.pglast_parser import PglastParser
+from app.features.modernization.prompts.generation_prompt import (
+    PROMPT_VERSION,
+    GenerationPromptBuilder,
+)
 from tests.conftest import VALID_CODE, llm_payload
 from tests.fakes import FakeLLMProvider
 

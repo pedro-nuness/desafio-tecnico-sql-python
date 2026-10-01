@@ -4,7 +4,7 @@ from collections.abc import Iterator
 
 import pytest
 
-from app.bootstrap import default_container, make_graph
+from app.core.bootstrap import default_container, make_graph
 
 
 @pytest.fixture

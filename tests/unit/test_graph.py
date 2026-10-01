@@ -2,8 +2,8 @@
 
 from collections.abc import Callable
 
-from app.domain.enums import ModernizationStatus, PipelineStep
-from app.graph.builder import RetryPolicy
+from app.features.modernization.domain.enums import ModernizationStatus, PipelineStep
+from app.features.modernization.graph.builder import RetryPolicy
 from tests.conftest import VALID_CODE, GraphFactory, ServiceFactory, llm_payload
 from tests.fakes import FakeLLMProvider, InMemoryStore
 

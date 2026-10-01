@@ -1,7 +1,7 @@
 from collections.abc import Callable
 
-from app.domain.enums import GenerationStrategy
-from app.domain.models.parsing import (
+from app.features.modernization.domain.enums import GenerationStrategy
+from app.features.modernization.domain.models.parsing import (
     ExceptionHandler,
     ParsedProcedure,
     RoutineKind,
@@ -10,14 +10,14 @@ from app.domain.models.parsing import (
     Statement,
     StatementKind,
 )
-from app.domain.models.semantic_analysis import (
+from app.features.modernization.domain.models.semantic_analysis import (
     DependencyKind,
     Feature,
     RiskSeverity,
     SemanticAnalysis,
 )
-from app.domain.services.semantic_analyzer import SemanticAnalyzer
-from app.infrastructure.parsing.pglast_parser import PglastParser
+from app.features.modernization.domain.services.semantic_analyzer import SemanticAnalyzer
+from app.features.modernization.infrastructure.parsing.pglast_parser import PglastParser
 
 analyzer = SemanticAnalyzer()
 parser = PglastParser()
