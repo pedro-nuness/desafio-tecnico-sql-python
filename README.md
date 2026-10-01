@@ -1,23 +1,5 @@
 # PL/pgSQL Modernizer
 
-Pipeline híbrido (LLM + regras) que moderniza stored procedures **PL/pgSQL** para **Python 3.14**,
-orquestrado com **LangGraph** e exposto pelo servidor do **LangGraph CLI**:
-
-```
-PL/pgSQL → parsing (pglast) → análise semântica → geração (LLM) → validação → Python 3.14 + relatório
-                                                       ▲                │
-                                                       └── reparo ──────┘
-```
-
-As etapas determinísticas dão contexto e garantias à etapa não determinística: o prompt é montado a
-partir do parsing e da análise (não da procedure bruta), e a validação checa o código gerado
-estaticamente (AST, Ruff) e por comportamento (executa original e gerado num banco descartável).
-Toda execução é gravada em `modernization_history`, qualquer que seja o desfecho.
-
-**Resultado atual sobre os Anexos B–F:** 5/5 rotinas equivalentes, 21/21 casos; nos casos *holdout*
-(nunca mostrados ao LLM), 9/9. Linha de base sem a validação por comportamento: 1/5 rotinas, 8/19
-casos. Detalhes em [Métrica de evaluation](#métrica-de-evaluation).
-
 ## Sumário
 
 - [Como rodar](#como-rodar)
