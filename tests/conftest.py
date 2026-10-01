@@ -22,6 +22,13 @@ from app.features.modernization.validation.ruff_check import RuffCheck
 from app.features.modernization.validation.validate_code import Rule, ValidateCode
 from tests.fakes import FakeLLM, InMemoryDatabase, InMemoryModernizationRepository
 
+
+@pytest.fixture(autouse=True)
+def disable_external_tracing(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "")
+    monkeypatch.setenv("LANGFUSE_SECRET_KEY", "")
+
+
 PROCEDURES_DIR = Path(__file__).parent / "fixtures" / "procedures"
 
 VALID_CODE = """\

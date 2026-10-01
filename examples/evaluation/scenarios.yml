@@ -1,0 +1,105 @@
+# Behavioral-equivalence dataset for annexes B–F (README, AD-16).
+#
+# Each case runs twice on a fresh copy of the seeded schema: the original routine through
+# `sql`, and the generated Python entry point (`async def <routine>(conn, *args)`) with `args`
+# converted to the routine's IN parameter types. Equivalent = same outcome (both return, or
+# both raise — the Python side with an exception class it defines), same result rows (when
+# the routine returns any) and the same final rows in `compare_tables`.
+#
+# `holdout: true` cases never reach the LLM: the behavior check inside the pipeline (repair
+# loop) only runs the other ("dev") cases, so the holdout pass rate measures whether a fix
+# generalizes instead of being fitted to the cases it was shown.
+
+schema: ../schema.sql
+seed: seed.sql
+compare_tables: [clientes, contas, transacoes, taxas, log_auditoria]
+ignore_columns: [id, data_transacao, criado_em]  # new ids / now() differ between the two runs
+
+scenarios:
+  fn_saldo_cliente:
+    cases:
+      - name: active accounts only (inactive one is not summed)
+        sql: SELECT fn_saldo_cliente(1)
+        args: [1]
+      - name: client without active accounts
+        sql: SELECT fn_saldo_cliente(3)
+        args: [3]
+        holdout: true
+      - name: unknown client
+        sql: SELECT fn_saldo_cliente(999)
+        args: [999]
+
+  sp_atualizar_status_contas_inativas:
+    cases:
+      - name: 30 days inactivates the idle and the never-moved accounts
+        sql: CALL sp_atualizar_status_contas_inativas(30, NULL)
+        args: [30]
+      - name: 3650 days only inactivates the never-moved account
+        sql: CALL sp_atualizar_status_contas_inativas(3650, NULL)
+        args: [3650]
+        holdout: true
+      - name: zero days is rejected
+        sql: CALL sp_atualizar_status_contas_inativas(0, NULL)
+        args: [0]
+      - name: null days is rejected
+        sql: CALL sp_atualizar_status_contas_inativas(NULL, NULL)
+        args: [null]
+        holdout: true
+
+  sp_transferir_entre_contas:
+    cases:
+      - name: transfer between active accounts
+        sql: CALL sp_transferir_entre_contas(10, 20, 50.00)
+        args: [10, 20, "50.00"]
+      - name: transfer of the whole balance
+        sql: CALL sp_transferir_entre_contas(11, 10, 500.00)
+        args: [11, 10, "500.00"]
+        holdout: true
+      - name: insufficient balance
+        sql: CALL sp_transferir_entre_contas(20, 10, 9999.00)
+        args: [20, 10, "9999.00"]
+      - name: same account
+        sql: CALL sp_transferir_entre_contas(10, 10, 1.00)
+        args: [10, 10, "1.00"]
+      - name: inactive destination
+        sql: CALL sp_transferir_entre_contas(10, 12, 1.00)
+        args: [10, 12, "1.00"]
+        holdout: true
+      - name: unknown origin
+        sql: CALL sp_transferir_entre_contas(999, 10, 1.00)
+        args: [999, 10, "1.00"]
+        holdout: true
+      - name: negative amount
+        sql: CALL sp_transferir_entre_contas(10, 20, -5.00)
+        args: [10, 20, "-5.00"]
+
+  sp_processar_lote_taxas:
+    cases:
+      - name: batch with two fees on the same account, rounding and skipped rows
+        sql: CALL sp_processar_lote_taxas('2026-09-15')
+        args: [2026-09-15]
+      - name: day without transactions still logs the batch
+        sql: CALL sp_processar_lote_taxas('2026-01-01')
+        args: [2026-01-01]
+      - name: another batch with the same traps on another account
+        sql: CALL sp_processar_lote_taxas('2026-09-17')
+        args: [2026-09-17]
+        holdout: true
+
+  sp_relatorio_mensal_cliente:
+    requires: [../procedures/b_fn_saldo_cliente.sql]  # calls fn_saldo_cliente
+    cases:
+      - name: four months, one without movement
+        sql: SELECT * FROM sp_relatorio_mensal_cliente(1, '2026-06-01', '2026-09-30')
+        args: [1, 2026-06-01, 2026-09-30]
+      - name: client without active accounts
+        sql: SELECT * FROM sp_relatorio_mensal_cliente(3, '2026-07-01', '2026-09-30')
+        args: [3, 2026-07-01, 2026-09-30]
+        holdout: true
+      - name: another client, three months
+        sql: SELECT * FROM sp_relatorio_mensal_cliente(2, '2026-07-01', '2026-09-30')
+        args: [2, 2026-07-01, 2026-09-30]
+        holdout: true
+      - name: inverted period returns the degraded fallback row
+        sql: SELECT * FROM sp_relatorio_mensal_cliente(1, '2026-09-30', '2026-06-01')
+        args: [1, 2026-09-30, 2026-06-01]

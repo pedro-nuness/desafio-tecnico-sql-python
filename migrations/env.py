@@ -6,7 +6,9 @@ from sqlalchemy import pool
 from sqlalchemy.engine import Connection
 from sqlalchemy.ext.asyncio import create_async_engine
 
-import app.features.modernization.persistence.models  # noqa: F401  (registers every ORM model)
+# Importing the ORM modules registers every table in Base.metadata (autogenerate).
+import app.features.modernization.evaluation.models
+import app.features.modernization.persistence.models  # noqa: F401
 from app.core.config.settings import Settings
 from app.core.database.base import Base
 

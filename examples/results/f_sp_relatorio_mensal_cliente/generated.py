@@ -1,14 +1,17 @@
-"""Modernization of sp_relatorio_mensal_cliente (PL/pgSQL -> Python 3.14).
+"""Modernized port of sp_relatorio_mensal_cliente (PL/pgSQL -> Python 3.14).
 
-Relational work (recursive month CTE, aggregations, joins) stays in SQL.
-Python handles validation, orchestration, logging and degraded-mode fallback.
-The caller owns the transaction; no COMMIT/ROLLBACK is issued here.
+Generates a monthly movement report for a client. The recursive CTE, the
+aggregation and the joins stay in SQL; Python only validates inputs, fetches
+the current balance (fn_saldo_cliente), coordinates the degraded fallback and
+shapes the typed result rows.
 """
 
-import datetime as dt
-import decimal
+from __future__ import annotations
+
 import logging
 from dataclasses import dataclass
+from datetime import date
+from decimal import Decimal, ROUND_HALF_UP
 
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncConnection
@@ -16,140 +19,154 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 logger = logging.getLogger(__name__)
 
 
-class RelatorioError(Exception):
-    """Maps PL/pgSQL RAISE EXCEPTION."""
-
-    def __init__(self, mensagem: str) -> None:
-        super().__init__(mensagem)
-        self.message = mensagem
+class PeriodoInvalidoError(ValueError):
+    """Raised when p_data_inicio > p_data_fim (original RAISE EXCEPTION)."""
 
 
-@dataclass(frozen=True, slots=True)
-class LinhaRelatorioMensal:
-    """Row returned by the monthly client movement report."""
+@dataclass(frozen=True)
+class RelatorioMensalRow:
+    """One row of the SETOF returned by the original routine."""
 
-    mes_referencia: dt.date
-    total_creditos: decimal.Decimal
-    total_debitos: decimal.Decimal
-    saldo_consolidado: decimal.Decimal | None
+    mes_referencia: date
+    total_creditos: Decimal
+    total_debitos: Decimal
+    saldo_consolidado: Decimal
     qtd_transacoes: int
 
 
-_MAIN_REPORT_SQL = text("""
-WITH RECURSIVE meses AS (
-    SELECT DATE_TRUNC('month', :p_data_inicio)::DATE AS mes
-    UNION ALL
-    SELECT (mes + INTERVAL '1 month')::DATE
-      FROM meses
-     WHERE mes < DATE_TRUNC('month', :p_data_fim)
-),
-movimento AS (
-    SELECT
-        DATE_TRUNC('month', t.data_transacao)::DATE AS mes,
-        SUM(CASE WHEN t.conta_destino_id IN (
-                SELECT id FROM contas WHERE cliente_id = :p_cliente_id
-            ) THEN t.valor ELSE 0 END) AS creditos,
-        SUM(CASE WHEN t.conta_origem_id IN (
-                SELECT id FROM contas WHERE cliente_id = :p_cliente_id
-            ) THEN t.valor ELSE 0 END) AS debitos,
-        COUNT(*) AS qtd
-      FROM transacoes t
-     WHERE t.status = 'EFETIVADA'
-       AND t.data_transacao >= :p_data_inicio
-       AND t.data_transacao <  (:p_data_fim + INTERVAL '1 day')
-       AND (
-           t.conta_origem_id  IN (SELECT id FROM contas WHERE cliente_id = :p_cliente_id)
-        OR t.conta_destino_id IN (SELECT id FROM contas WHERE cliente_id = :p_cliente_id)
-       )
-     GROUP BY 1
-)
-SELECT
-    m.mes                                        AS mes_referencia,
-    COALESCE(mv.creditos, 0)                     AS total_creditos,
-    COALESCE(mv.debitos, 0)                      AS total_debitos,
-    :v_saldo_atual + COALESCE(mv.creditos, 0)
-                 - COALESCE(mv.debitos, 0)       AS saldo_consolidado,
-    COALESCE(mv.qtd, 0)::INT                     AS qtd_transacoes
-  FROM meses m
-  LEFT JOIN movimento mv ON mv.mes = m.mes
- ORDER BY m.mes
-""")
-
-_FALLBACK_ROW_SQL = text("""
-SELECT
-    DATE_TRUNC('month', :p_data_inicio)::DATE AS mes_referencia,
-    0::NUMERIC(18,2)                          AS total_creditos,
-    0::NUMERIC(18,2)                          AS total_debitos,
-    COALESCE(:v_saldo_atual, 0)               AS saldo_consolidado,
-    0::INT                                    AS qtd_transacoes
-""")
-
-_SALDO_ATUAL_SQL = text(
-    "SELECT fn_saldo_cliente(:p_cliente_id) AS saldo"
-)
-
-
-async def _obter_saldo_atual(conn: AsyncConnection, cliente_id: int) -> decimal.Decimal | None:
-    """Calls legacy fn_saldo_cliente (kept in DB per external-routine rule)."""
-    resultado = await conn.execute(_SALDO_ATUAL_SQL, {"p_cliente_id": cliente_id})
-    return resultado.scalar_one_or_none()
+def _quantize_2(value: Decimal) -> Decimal:
+    """Reproduce NUMERIC(18,2) assignment rounding (half away from zero)."""
+    return value.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
 
 
 async def sp_relatorio_mensal_cliente(
     conn: AsyncConnection,
     p_cliente_id: int,
-    p_data_inicio: dt.date,
-    p_data_fim: dt.date,
-) -> list[LinhaRelatorioMensal]:
-    """Generates the monthly movement report for a client.
+    p_data_inicio: date,
+    p_data_fim: date,
+) -> list[RelatorioMensalRow]:
+    """Port of sp_relatorio_mensal_cliente.
 
-    Mirrors the legacy PL/pgSQL behavior including the degraded fallback row.
-    Transaction ownership belongs to the caller.
+    The caller owns the transaction; the original EXCEPTION ... WHEN OTHERS
+    block is reproduced with a savepoint (begin_nested) so a failure inside
+    the protected statements does not abort the surrounding transaction.
     """
-    if p_data_inicio > p_data_fim:
-        msg = f"Periodo invalido: inicio {p_data_inicio} > fim {p_data_fim}"
-        raise RelatorioError(msg)
+    v_saldo_atual: Decimal | None = None
 
-    params_base: dict[str, object] = {
-        "p_cliente_id": p_cliente_id,
-        "p_data_inicio": p_data_inicio,
-        "p_data_fim": p_data_fim,
-    }
-
+    # L26 BLOCK protected by EXCEPTION WHEN OTHERS -> savepoint.
     try:
-        v_saldo_atual = await _obter_saldo_atual(conn, p_cliente_id)
-        logger.info("Saldo atual do cliente %s: %s", p_cliente_id, v_saldo_atual)
+        async with conn.begin_nested():
+            # L27-L29: validation RAISE inside the protected block (the original
+            # WHEN OTHERS handler also catches it and returns the fallback row).
+            if p_data_inicio > p_data_fim:
+                raise PeriodoInvalidoError(
+                    f"Periodo invalido: inicio {p_data_inicio} > fim {p_data_fim}"
+                )
 
-        params = {**params_base, "v_saldo_atual": v_saldo_atual}
-        resultado = await conn.execute(_MAIN_REPORT_SQL, params)
-        linhas: list[LinhaRelatorioMensal] = [
-            LinhaRelatorioMensal(
-                mes_referencia=row[0],
-                total_creditos=row[1],
-                total_debitos=row[2],
-                saldo_consolidado=row[3],
-                qtd_transacoes=int(row[4]),
+            # L31: v_saldo_atual := fn_saldo_cliente(p_cliente_id)
+            # NUMERIC(18,2) assignment rounds to 2 decimal places.
+            row = (
+                await conn.execute(
+                    text("SELECT fn_saldo_cliente(CAST(:cliente_id AS BIGINT)) AS saldo"),
+                    {"cliente_id": p_cliente_id},
+                )
+            ).one()
+            v_saldo_atual = _quantize_2(Decimal(str(row.saldo)))
+
+            # L32: RAISE NOTICE
+            logger.info(
+                "Saldo atual do cliente %s: %s", p_cliente_id, v_saldo_atual
             )
-            for row in resultado.fetchall()
-        ]
-        return linhas
-    except Exception as exc:  # noqa: BLE001 -- mirrors legacy WHEN OTHERS handler
+
+            # L34: RETURN QUERY - recursive CTE + aggregation stay in SQL.
+            result = await conn.execute(
+                text(
+                    """
+                    WITH RECURSIVE meses AS (
+                        SELECT DATE_TRUNC('month', CAST(:data_inicio AS DATE))::DATE AS mes
+                        UNION ALL
+                        SELECT (mes + INTERVAL '1 month')::DATE
+                          FROM meses
+                         WHERE mes < DATE_TRUNC('month', CAST(:data_fim AS DATE))
+                    ),
+                    movimento AS (
+                        SELECT
+                            DATE_TRUNC('month', t.data_transacao)::DATE AS mes,
+                            SUM(CASE WHEN t.conta_destino_id IN (
+                                    SELECT id FROM contas WHERE cliente_id = CAST(:cliente_id AS BIGINT)
+                                ) THEN t.valor ELSE 0 END) AS creditos,
+                            SUM(CASE WHEN t.conta_origem_id IN (
+                                    SELECT id FROM contas WHERE cliente_id = CAST(:cliente_id AS BIGINT)
+                                ) THEN t.valor ELSE 0 END) AS debitos,
+                            COUNT(*) AS qtd
+                          FROM transacoes t
+                         WHERE t.status = 'EFETIVADA'
+                           AND t.data_transacao >= CAST(:data_inicio AS DATE)
+                           AND t.data_transacao <  CAST(:data_fim AS DATE) + INTERVAL '1 day'
+                           AND (
+                               t.conta_origem_id  IN (SELECT id FROM contas WHERE cliente_id = CAST(:cliente_id AS BIGINT))
+                            OR t.conta_destino_id IN (SELECT id FROM contas WHERE cliente_id = CAST(:cliente_id AS BIGINT))
+                           )
+                         GROUP BY 1
+                    )
+                    SELECT
+                        m.mes                                                    AS mes_referencia,
+                        CAST(COALESCE(mv.creditos, 0) AS NUMERIC(18, 2))         AS total_creditos,
+                        CAST(COALESCE(mv.debitos, 0) AS NUMERIC(18, 2))          AS total_debitos,
+                        CAST(CAST(:saldo_atual AS NUMERIC)
+                             + COALESCE(mv.creditos, 0)
+                             - COALESCE(mv.debitos, 0) AS NUMERIC(18, 2))        AS saldo_consolidado,
+                        CAST(COALESCE(mv.qtd, 0) AS INT)                         AS qtd_transacoes
+                      FROM meses m
+                      LEFT JOIN movimento mv ON mv.mes = m.mes
+                      ORDER BY m.mes
+                    """
+                ),
+                {
+                    "cliente_id": p_cliente_id,
+                    "data_inicio": p_data_inicio,
+                    "data_fim": p_data_fim,
+                    "saldo_atual": v_saldo_atual,
+                },
+            )
+            return [
+                RelatorioMensalRow(
+                    mes_referencia=r.mes_referencia,
+                    total_creditos=r.total_creditos,
+                    total_debitos=r.total_debitos,
+                    saldo_consolidado=r.saldo_consolidado,
+                    qtd_transacoes=r.qtd_transacoes,
+                )
+                for r in result.mappings()
+            ]
+    except Exception as exc:  # original WHEN OTHERS: swallow and degrade
+        # L75: RAISE WARNING
         logger.warning(
-            "Falha ao gerar relatorio: %s. Retornando linha de fallback.",
-            exc,
+            "Falha ao gerar relatorio: %s. Retornando linha de fallback.", exc
         )
-        resultado_fb = await conn.execute(
-            _FALLBACK_ROW_SQL,
-            {"p_data_inicio": p_data_inicio, "v_saldo_atual": v_saldo_atual},
+
+        # L77: fallback RETURN QUERY (v_saldo_atual may still be None -> COALESCE 0).
+        fallback = await conn.execute(
+            text(
+                """
+                SELECT
+                    DATE_TRUNC('month', CAST(:data_inicio AS DATE))::DATE AS mes_referencia,
+                    CAST(0 AS NUMERIC(18, 2))  AS total_creditos,
+                    CAST(0 AS NUMERIC(18, 2))  AS total_debitos,
+                    CAST(COALESCE(CAST(:saldo_atual AS NUMERIC), 0) AS NUMERIC(18, 2))
+                                               AS saldo_consolidado,
+                    CAST(0 AS INT)             AS qtd_transacoes
+                """
+            ),
+            {"data_inicio": p_data_inicio, "saldo_atual": v_saldo_atual},
         )
-        fb_row = resultado_fb.fetchone()
-        assert fb_row is not None  # single-row literal SELECT always yields one row
+        r = fallback.mappings().one()
         return [
-            LinhaRelatorioMensal(
-                mes_referencia=fb_row[0],
-                total_creditos=fb_row[1],
-                total_debitos=fb_row[2],
-                saldo_consolidado=fb_row[3],
-                qtd_transacoes=int(fb_row[4]),
+            RelatorioMensalRow(
+                mes_referencia=r.mes_referencia,
+                total_creditos=r.total_creditos,
+                total_debitos=r.total_debitos,
+                saldo_consolidado=r.saldo_consolidado,
+                qtd_transacoes=r.qtd_transacoes,
             )
         ]

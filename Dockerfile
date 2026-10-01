@@ -21,6 +21,10 @@ RUN --mount=type=cache,target=/root/.cache/uv \
 COPY alembic.ini langgraph.json ./
 COPY migrations ./migrations
 COPY app ./app
+# Evaluation dataset (examples/evaluation) + the annexes it installs as the original routines.
+COPY examples/schema.sql ./examples/schema.sql
+COPY examples/procedures ./examples/procedures
+COPY examples/evaluation ./examples/evaluation
 
 # /app writable by appuser: `langgraph dev` keeps its local state in /app/.langgraph_api.
 RUN useradd --create-home --uid 10001 appuser && chown appuser /app

@@ -14,6 +14,9 @@ class ValidatorResult(ValueObject):
     blocking: bool
     """A failing blocking validator means the code is unusable (e.g. syntax error)."""
     messages: tuple[ValidationMessage, ...] = ()
+    skipped: str | None = None
+    """Why the check could not run (e.g. no evaluation scenario for the routine). A skipped
+    check passes, and the reason is reported as a warning."""
 
 
 class ValidationResult(ValueObject):

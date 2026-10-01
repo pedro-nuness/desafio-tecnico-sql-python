@@ -13,7 +13,7 @@ from app.features.modernization.generation.generate_code import GenerateCode
 from app.features.modernization.graph.state import ModernizationState, StateUpdate, to_outcome
 from app.features.modernization.parsing.strategy import SQLParser
 from app.features.modernization.persistence.execution_log import ExecutionLog
-from app.features.modernization.validation.validate_code import ValidateCode
+from app.features.modernization.validation.validate_code import Routine, ValidateCode
 from app.shared.errors import AppError
 
 
@@ -118,7 +118,11 @@ class ValidationNode:
 
     async def __call__(self, state: ModernizationState) -> StateUpdate:
         code = require(state.get("generated_code"), "generated_code")
-        result = await self._validate_code.execute(code)
+        routine = Routine(
+            source_code=state["source_code"],
+            procedure=require(state.get("parsed_procedure"), "parsed_procedure"),
+        )
+        result = await self._validate_code.execute(code, routine)
         return StateUpdate(validation_result=result, completed_steps=[self.step])
 
 

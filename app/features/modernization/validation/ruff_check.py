@@ -8,6 +8,7 @@ from pydantic import BaseModel, TypeAdapter
 from ruff.__main__ import find_ruff_bin
 
 from app.features.modernization.domain.validation import ValidationMessage
+from app.features.modernization.validation.validate_code import Routine
 from app.shared.errors import AppError
 
 DEFAULT_RULES = ("E4", "E7", "E9", "F", "B", "ASYNC", "S608")
@@ -44,7 +45,9 @@ class RuffCheck:
         self._target_version = target_version
         self._timeout_seconds = timeout_seconds
 
-    async def check(self, code: str) -> tuple[ValidationMessage, ...]:
+    async def check(
+        self, code: str, routine: Routine | None = None
+    ) -> tuple[ValidationMessage, ...]:
         stdout = await self._run(code)
         diagnostics = _DIAGNOSTICS.validate_json(stdout or b"[]")
         return tuple(

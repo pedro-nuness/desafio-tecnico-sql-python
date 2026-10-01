@@ -1,7 +1,7 @@
 {
-  "execution_id": "01a0f43f-305b-7070-9aef-96fe0e92eb34",
+  "execution_id": "01a0f7ab-e474-7647-be14-2a5719a521e2",
   "status": "success",
-  "created_at": "2026-09-30T21:36:16.987232+00:00",
+  "created_at": "2026-10-01T13:33:52.628690+00:00",
   "report": {
     "parsing": {
       "success": true,
@@ -132,37 +132,38 @@
       "recommended_strategy": "hybrid",
       "provider": "openrouter",
       "model": "z-ai/glm-5.3-flash",
-      "prompt_version": "generation-v2",
-      "input_tokens": 2762,
-      "output_tokens": 1002,
-      "latency_ms": 4578.24,
+      "prompt_version": "generation-v4",
+      "input_tokens": 3309,
+      "output_tokens": 1069,
+      "latency_ms": 3926.89,
       "finish_reason": "stop",
       "attempt": 2,
       "architectural_decisions": [
         {
-          "topic": "DML permanece em SQL",
-          "decision": "UPDATE em lote e INSERT de auditoria mantidos como SQL parametrizado via sqlalchemy.text()",
-          "rationale": "Regra 7: DML em massa deve permanecer set-based no banco; Python apenas valida entrada e coordena."
+          "topic": "set-based DML",
+          "decision": "O UPDATE com NOT EXISTS permanece como uma única instrução SQL parametrizada; Python apenas valida parâmetros e orquestra.",
+          "rationale": "Operação em lote relacional deve ficar no banco, evitando N+1."
         },
         {
-          "topic": "Intervalo de dias",
-          "decision": "Substituído (p_dias || ' days')::INTERVAL por make_interval(days => :p_dias) com bind param",
-          "rationale": "Evita concatenação de string no SQL e mantém o parâmetro totalmente ligado; semanticamente equivalente."
+          "topic": "transação",
+          "decision": "Sem commit/rollback no módulo.",
+          "rationale": "A procedure original não controla transações; o chamador é o dono da transação."
         },
         {
-          "topic": "Transação",
-          "decision": "Nenhum commit/rollback no módulo",
-          "rationale": "A procedure legada não controla transações; o chamador é o dono da transação (regra 3)."
+          "topic": "OUT parameter",
+          "decision": "p_afetadas é retornado como dataclass frozen AtualizarStatusContasInativasResult.",
+          "rationale": "Regra de mapeamento de parâmetros OUT."
         },
         {
-          "topic": "OUT param",
-          "decision": "p_afetadas retornado como frozen dataclass ResultadoInativacao",
-          "rationale": "Regra 6: parâmetros OUT viram tipo de resultado imutável."
+          "topic": "intervalo",
+          "decision": "Intervalo calculado como CAST(:p_dias AS INT) * INTERVAL '1 day' com CAST explícito.",
+          "rationale": "asyncpg não infere o tipo do parâmetro em aritmética de data/intervalo; CAST evita erro de preparação de statement."
         }
       ],
       "warnings": [
-        "rowcount em SQLAlchemy/asyncpg reflete linhas afetadas pelo UPDATE, equivalente a GET DIAGNOSTICS ROW_COUNT; verifique se o driver não reporta -1 em casos de server-side cursors (não aplicável a UPDATE simples).",
-        "A checagem p_dias is None é redundante com a type hint int, mas preservada para fidelidade ao comportamento legado (NULL era rejeitado)."
+        "GET DIAGNOSTICS ROW_COUNT mapeado para result.rowcount do SQLAlchemy; para UPDATE/DELETE/INSERT o rowcount reflete as linhas afetadas, equivalente ao PL/pgSQL.",
+        "jsonb_build_object recebe todos os valores com CAST explícito (INT) porque asyncpg não infere tipos em posições polimórficas.",
+        "A validação de p_dias é feita em Python antes de qualquer SQL; a mensagem de erro é idêntica à do RAISE EXCEPTION original."
       ]
     },
     "validation": {
@@ -173,13 +174,22 @@
           "validator": "python_ast",
           "success": true,
           "blocking": true,
-          "messages": []
+          "messages": [],
+          "skipped": null
         },
         {
           "validator": "ruff",
           "success": true,
           "blocking": false,
-          "messages": []
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "behavior",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
         }
       ],
       "warnings": []

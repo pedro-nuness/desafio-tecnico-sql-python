@@ -1,7 +1,7 @@
 {
-  "execution_id": "01a0f43f-3060-744b-bf1d-da2f36188f3a",
+  "execution_id": "01a0f7ab-e479-7546-9bee-a080d0e63a0b",
   "status": "success",
-  "created_at": "2026-09-30T21:36:16.992122+00:00",
+  "created_at": "2026-10-01T13:33:52.633654+00:00",
   "report": {
     "parsing": {
       "success": true,
@@ -153,6 +153,12 @@
       ],
       "risks": [
         {
+          "code": "SWALLOWED_EXCEPTION",
+          "severity": "medium",
+          "message": "WHEN OTHERS handler does not re-raise: errors are swallowed.",
+          "line": 26
+        },
+        {
           "code": "RECURSIVE_CTE",
           "severity": "low",
           "message": "Recursive CTE should stay in SQL; re-implementing it in Python is costly.",
@@ -205,35 +211,44 @@
       "recommended_strategy": "hybrid",
       "provider": "openrouter",
       "model": "z-ai/glm-5.3-flash",
-      "prompt_version": "generation-v2",
-      "input_tokens": 3483,
-      "output_tokens": 2092,
-      "latency_ms": 109727.79,
+      "prompt_version": "generation-v4",
+      "input_tokens": 4067,
+      "output_tokens": 3021,
+      "latency_ms": 36225.52,
       "finish_reason": "stop",
       "attempt": 1,
       "architectural_decisions": [
         {
-          "topic": "Recursive CTE and aggregation placement",
-          "decision": "Kept the recursive months CTE, the movimento aggregate and the final join/order entirely as parameterized SQL via sqlalchemy.text().",
-          "rationale": "Set-based relational logic performs best and stays closest to the database; reimplementing a recursive month generator in Python would be costlier and slower."
+          "topic": "Set-based SQL kept in database",
+          "decision": "The recursive CTE (meses), the aggregation (movimento) and the final LEFT JOIN remain a single parameterized SQL statement executed by Python.",
+          "rationale": "Re-implementing a recursive month generator plus aggregation in Python would be costly and slower; rule 7/9 favor keeping relational logic close to the database."
         },
         {
-          "topic": "External dependency fn_saldo_cliente",
-          "decision": "Called once up front via a small scalar query and passed back into the main SQL as a bind parameter.",
-          "rationale": "The routine depends on a database-defined function whose implementation lives outside this migration scope; calling it once avoids evaluating it inside every output row while preserving results."
+          "topic": "Exception block as savepoint",
+          "decision": "The whole original BEGIN block (validation, fn_saldo_cliente call, main query) runs inside `async with conn.begin_nested():`; the WHEN OTHERS handler logic runs outside it, after the savepoint rollback.",
+          "rationale": "Rule 14: without the savepoint the transaction stays aborted and the fallback query would fail too."
         },
         {
-          "topic": "Exception/fallback semantics",
-          "decision": "RAISE EXCEPTION became RelatorioError raised before any SQL; the WHEN OTHERS block became a broad except that logs a warning and executes the fallback-row SQL against the same connection.",
-          "rationale": "Preserves the legacy degraded-mode contract (always returning at least one row) without swallowing the invalid-period case, which was an intentional hard failure."
+          "topic": "Swallowed exception preserved",
+          "decision": "The handler catches `Exception` (WHEN OTHERS), logs a WARNING and returns the degraded fallback row instead of re-raising, exactly like the original.",
+          "rationale": "Rule 14 requires keeping the original control flow, including the fallback row return."
+        },
+        {
+          "topic": "fn_saldo_cliente dependency",
+          "decision": "Called as `SELECT fn_saldo_cliente(...)` on the same connection/transaction, with the result quantized to 2 decimals in Python to reproduce the NUMERIC(18,2) variable assignment rounding.",
+          "rationale": "The routine is not provided; keeping the call in SQL preserves its semantics, and rule 12 requires reproducing per-assignment rounding."
+        },
+        {
+          "topic": "Typed exception",
+          "decision": "RAISE EXCEPTION mapped to PeriodoInvalidoError, raised inside the protected block; RAISE NOTICE mapped to logging.info and RAISE WARNING to logging.warning.",
+          "rationale": "Rules 5 and 14: the validation RAISE sits inside the block covered by WHEN OTHERS, so it is caught and degrades to the fallback row, as in the original."
         }
       ],
       "warnings": [
-        "In PL/pgSQL, an exception aborts the current transaction's changes within the block; here the caller owns the transaction, so after a failed main-query execution the connection state depends on how SQLAlchemy/the driver handled the error — verify whether the fallback SELECT can still execute on the same transaction or needs a savepoint/nested transaction around the main query attempt.",
-        "saldo_consolidado in the fallback path is computed from fn_saldo_cliente even though its own evaluation could have been what failed; in the worst case v_saldo_atual remains unset (None) and COALESCE(...,0) applies, matching the legacy variable default but masking the underlying balance failure.",
-        "qtd_transacoes counts all EFETIVADAS transactions touching either account side, meaning transfers between two accounts of the same client count twice toward credits/debits sums relative to net position — preserved verbatim from the legacy SQL.",
-        "If fn_saldo_cliente does not exist in the migrated schema, replace _SALDO_ATUAL_SQL with equivalent inline SQL computing the balance from contas.saldo/transacoes.",
-        "No row locking exists in the original routine; none were added. Report reflects committed/current snapshot consistent with the caller's isolation level."
+        "The original WHEN OTHERS swallows every error, including the period-validation RAISE EXCEPTION: an invalid period returns the fallback row instead of raising PeriodoInvalidoError outward. This mirrors the legacy behaviour; if callers should see the error, move the validation outside the begin_nested block.",
+        "The routine depends on fn_saldo_cliente, which was not provided; it is invoked in SQL and assumed to return a numeric value.",
+        "The fallback row is computed with a fresh SELECT after the savepoint rollback; if the original failure was a connection-level error (not a statement error), the fallback query may also fail, as in the original.",
+        "saldo_consolidado is rounded to NUMERIC(18,2) in SQL after summing, matching the RETURNS TABLE column type; v_saldo_atual is quantized in Python to reproduce the PL/pgSQL variable declaration rounding."
       ]
     },
     "validation": {
@@ -244,13 +259,22 @@
           "validator": "python_ast",
           "success": true,
           "blocking": true,
-          "messages": []
+          "messages": [],
+          "skipped": null
         },
         {
           "validator": "ruff",
           "success": true,
           "blocking": false,
-          "messages": []
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "behavior",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
         }
       ],
       "warnings": []

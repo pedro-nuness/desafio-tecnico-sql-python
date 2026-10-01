@@ -187,6 +187,10 @@ class ValidationReport(ValueObject):
             for validator in result.results
             if not validator.success and not validator.blocking
             for message in validator.messages
+        ) + tuple(
+            f"[{validator.validator}] not run: {validator.skipped}"
+            for validator in result.results
+            if validator.skipped
         )
         return cls(
             valid_python=result.is_valid,

@@ -74,7 +74,7 @@ async def test_checks_run_concurrently() -> None:
         def __init__(self, name: str) -> None:
             self.name = name
 
-        async def check(self, code: str) -> tuple[ValidationMessage, ...]:
+        async def check(self, code: str, routine: object = None) -> tuple[ValidationMessage, ...]:
             await asyncio.wait_for(both_running.wait(), timeout=1)
             return ()
 
@@ -86,7 +86,7 @@ async def test_checks_run_concurrently() -> None:
 class _BrokenCheck:
     name = "broken"
 
-    async def check(self, code: str) -> tuple[ValidationMessage, ...]:
+    async def check(self, code: str, routine: object = None) -> tuple[ValidationMessage, ...]:
         raise AppError("binary missing")
 
 

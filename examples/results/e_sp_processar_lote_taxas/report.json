@@ -1,7 +1,7 @@
 {
-  "execution_id": "01a0f43f-305e-750f-a669-33bf1b98dd74",
+  "execution_id": "01a0f7ab-e47c-7242-afbb-163be7f0c301",
   "status": "success",
-  "created_at": "2026-09-30T21:36:16.990561+00:00",
+  "created_at": "2026-10-01T13:33:52.636840+00:00",
   "report": {
     "parsing": {
       "success": true,
@@ -64,13 +64,6 @@
           ]
         },
         {
-          "feature": "function_calls",
-          "occurrences": 1,
-          "lines": [
-            15
-          ]
-        },
-        {
           "feature": "in_parameters",
           "occurrences": 1,
           "lines": []
@@ -110,32 +103,8 @@
         {
           "code": "N_PLUS_ONE",
           "severity": "high",
-          "message": "SQL executed inside a loop: one database round-trip per iteration. Prefer a single set-based statement.",
-          "line": 38
-        },
-        {
-          "code": "N_PLUS_ONE",
-          "severity": "high",
-          "message": "SQL executed inside a loop: one database round-trip per iteration. Prefer a single set-based statement.",
-          "line": 60
-        },
-        {
-          "code": "N_PLUS_ONE",
-          "severity": "high",
-          "message": "SQL executed inside a loop: one database round-trip per iteration. Prefer a single set-based statement.",
-          "line": 62
-        },
-        {
-          "code": "N_PLUS_ONE",
-          "severity": "high",
-          "message": "SQL executed inside a loop: one database round-trip per iteration. Prefer a single set-based statement.",
-          "line": 65
-        },
-        {
-          "code": "EXTERNAL_ROUTINE_DEPENDENCY",
-          "severity": "low",
-          "message": "Depends on other database routines: date.",
-          "line": null
+          "message": "4 SQL statements executed on every iteration of this LOOP (lines 38, 60, 62, 65): one database round-trip each per row. Prefer set-based statements.",
+          "line": 34
         }
       ],
       "dependencies": [
@@ -154,10 +123,6 @@
         {
           "name": "transacoes",
           "kind": "table"
-        },
-        {
-          "name": "date",
-          "kind": "function"
         }
       ],
       "recommended_strategy": "hybrid",
@@ -174,38 +139,50 @@
     },
     "generation": {
       "success": true,
-      "strategy": "database_delegated",
+      "strategy": "hybrid",
       "recommended_strategy": "hybrid",
       "provider": "openrouter",
       "model": "z-ai/glm-5.3-flash",
-      "prompt_version": "generation-v2",
-      "input_tokens": 3461,
-      "output_tokens": 3357,
-      "latency_ms": 15208.8,
+      "prompt_version": "generation-v4",
+      "input_tokens": 3914,
+      "output_tokens": 3349,
+      "latency_ms": 40262.18,
       "finish_reason": "stop",
       "attempt": 1,
       "architectural_decisions": [
         {
-          "topic": "Cursor row-a-row -> statement set-based",
-          "decision": "Todo o loop (busca de taxa, multiplicador por tipo, UPDATE de saldo, INSERT de TARIFA, INSERT de log por transacao e log consolidado) foi colapsado em um unico statement com CTEs de dados (base/upd/ins_tx/ins_log/tot).",
-          "rationale": "Elimina os 4 pontos de N+1 identificados; a semantica por linha (LEFT JOIN LATERAL na taxa vigente mais recente, GREATEST, CASE por tipo, filtro conta_origem_id IS NOT NULL e percentual IS NOT NULL) e preservada integralmente no SQL."
+          "topic": "N+1 -> set-based",
+          "decision": "O cursor com 4 statements por iteração (lookup de taxa, UPDATE de saldo, INSERT de tarifa, INSERT de log) foi reescrito como um único statement com CTEs (base -> taxa via LATERAL -> calc -> efetivas -> UPDATE/INSERTs/INSERT final).",
+          "rationale": "Elimina o round-trip por linha mantendo a semântica: mesma query de seleção, mesmo desempate de taxa (ORDER BY vigente_de DESC LIMIT 1 via LATERAL), mesmo skip quando não há taxa vigente (LEFT JOIN + WHERE percentual IS NOT NULL equivale ao IF v_percentual IS NULL THEN CONTINUE)."
         },
         {
-          "topic": "Transacao",
-          "decision": "Nenhum commit/rollback no modulo; o chamador controla a transacao via AsyncConnection.",
-          "rationale": "A procedure original nao gerenciava transacoes explicitamente; o statement unico tambem garante atomicidade de todo o lote."
+          "topic": "UPDATE contas FROM com múltiplas tarifas por conta",
+          "decision": "As tarifas são agregadas por conta_origem_id (SUM) antes do UPDATE contas.",
+          "rationale": "UPDATE ... FROM aplica no máximo UMA linha de source por target; sem a agregação, contas com várias transações no dia receberiam o débito de apenas uma tarifa. A soma reproduz exatamente o saldo final do débito sequencial original."
         },
         {
-          "topic": "Retorno",
-          "decision": "A funcao retorna um LoteTaxasResumo (frozen dataclass) com contagem e total de taxas, extraido do RETURNING do log consolidado.",
-          "rationale": "A procedure original nao retornava valor, mas o resumo ja e calculado para o log; expor nao altera o comportamento no banco e facilita observabilidade no chamador."
+          "topic": "Arredondamento NUMERIC(18,2) por atribuição",
+          "decision": "Cada atribuição de v_taxa é reproduzida com CAST(... AS NUMERIC(18,2)) em pontos distintos: primeiro GREATEST(valor*percentual/100.0, valor_minimo), depois a multiplicação do CASE (1.00 / 1.10 / 0.90).",
+          "rationale": "PL/pgSQL arredonda a variável NUMERIC(18,2) a cada atribuição; uma expressão combinada arredondaria apenas uma vez e alteraria centavos."
+        },
+        {
+          "topic": "Transação",
+          "decision": "Nenhum commit/rollback no módulo; a procedure original não gerenciava transações.",
+          "rationale": "O chamador (AsyncConnection/transaction) é o dono da transação, conforme a regra 3."
+        },
+        {
+          "topic": "Tipagem de bind parameters",
+          "decision": "Todo uso de :p_data_referencia é escrito como CAST(:p_data_referencia AS DATE).",
+          "rationale": "asyncpg não infere o tipo do parâmetro em posições polimórficas (comparações com colunas date, jsonb_build_object); CAST(:x ::type) não é usado porque SQLAlchemy não reconheceria o bind."
         }
       ],
       "warnings": [
-        "Sem concorrencia controlada, execucoes simultaneas para a mesma data podem cobrar tarifas em dobro: o cursor original nao usava FOR UPDATE e a versao set-based mantem esse comportamento (nenhum lock de linha adicionado).",
-        "O filtro DATE(data_transacao) = :ref nao e sargable (impede uso de indice em data_transacao); mantido por fidelidade ao original. Considere um indice funcional ou range de timestamps como follow-up.",
-        "A ordem de insercao das transacoes TARIFA dentro do lote nao e deterministica (era sequencial no cursor); nao afeta saldos ou totais.",
-        "O ramo defensivo sem linhas de retorno so ocorreria em condicoes anormais; com zero transacoes elegiveis o CTE tot ainda gera o log LOTE_PROCESSADO com transacoes=0, igual ao original."
+        "Ordem de geração de ids: no original, transacoes/log_auditoria eram inseridos transação a transação na ordem do cursor; no statement set-based a ordem física das linhas inseridas não é garantida. Os dados finais (saldos, tarifas, logs com os mesmos valores) são equivalentes, mas os ids gerados podem ficar em ordem diferente.",
+        "DATE(data_transacao) = :p_data_referencia foi mantido literalmente (não sargable em data_transacao); se houver índice em expressão ou necessidade de performance, considere range (data_transacao >= data AND < data + 1 dia) como follow-up manual.",
+        "O cursor original era snapshot no OPEN; as transações TARIFA inseridas durante o loop nunca seriam reprocessadas (tipo <> 'TARIFA' também as exclui). A versão set-based usa um snapshot único do statement — mesmo resultado.",
+        "v_total_taxas/v_count do resumo são calculados por agregação sobre o mesmo conjunto efetivas; valores idênticos aos acumulados no loop (soma de valores já arredondados a 2 casas é exata).",
+        "Assume-se que 'valor_minimo' e 'percentual' são NOT NULL (conforme schema); se a tabela taxas mudar, o filtro 'percentual IS NOT NULL' precisa ser revisado.",
+        "Removed a Markdown fence the LLM left inside python_code."
       ]
     },
     "validation": {
@@ -216,13 +193,22 @@
           "validator": "python_ast",
           "success": true,
           "blocking": true,
-          "messages": []
+          "messages": [],
+          "skipped": null
         },
         {
           "validator": "ruff",
           "success": true,
           "blocking": false,
-          "messages": []
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "behavior",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
         }
       ],
       "warnings": []

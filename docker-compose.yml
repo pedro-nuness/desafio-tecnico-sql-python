@@ -12,6 +12,11 @@ x-app-env: &app-env
   OPENROUTER_API_KEY: ${OPENROUTER_API_KEY:-}
   OPENAI_API_KEY: ${OPENAI_API_KEY:-}
   LOG_LEVEL: ${LOG_LEVEL:-INFO}
+  LANGFUSE_PUBLIC_KEY: ${LANGFUSE_PUBLIC_KEY:-}
+  LANGFUSE_SECRET_KEY: ${LANGFUSE_SECRET_KEY:-}
+  LANGFUSE_BASE_URL: ${LANGFUSE_DOCKER_BASE_URL:-http://host.docker.internal:3000}
+  # Evaluation metric (AD-16): runs generated code, so it gets its own throwaway database.
+  EVALUATION_DATABASE_URL: postgresql+asyncpg://modernizer:modernizer@postgres:5432/modernizer_eval
 
 services:
   postgres:
@@ -42,6 +47,8 @@ services:
 
   app:
     build: .
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
     environment: *app-env
     volumes:
       - ./config:/app/config:ro      # LLM gateway YAML: edit without rebuilding the image

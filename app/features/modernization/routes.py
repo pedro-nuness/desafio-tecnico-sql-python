@@ -4,8 +4,17 @@ from dishka.integrations.fastapi import DishkaRoute, FromDishka
 from fastapi import APIRouter, Request
 
 from app.features.modernization.domain.modernization import PipelineProgress
-from app.features.modernization.schemas import ModernizationRequest, ModernizationResponse
+from app.features.modernization.schemas import (
+    EvaluationResponse,
+    EvaluationSummaryResponse,
+    ModernizationRequest,
+    ModernizationResponse,
+)
 from app.features.modernization.use_cases import (
+    EvaluateCommand,
+    EvaluateModernization,
+    EvaluationSummaryQuery,
+    GetEvaluationSummary,
     GetModernization,
     GetModernizationQuery,
     ModernizeRoutine,
@@ -36,3 +45,22 @@ async def get_modernization(
 ) -> ModernizationResponse:
     result = await use_case.execute(GetModernizationQuery(execution_id))
     return ModernizationResponse.from_domain(result)
+
+
+@router.post("/modernizations/{execution_id}/evaluation")
+async def evaluate_modernization(
+    execution_id: UUID, use_case: FromDishka[EvaluateModernization]
+) -> EvaluationResponse:
+    """Behavioral equivalence of a recorded execution against the evaluation dataset
+    (examples/evaluation); the result is stored in evaluation_results."""
+    result = await use_case.execute(EvaluateCommand(execution_id))
+    return EvaluationResponse.from_domain(result)
+
+
+@router.get("/evaluations")
+async def evaluation_summary(
+    use_case: FromDishka[GetEvaluationSummary],
+) -> EvaluationSummaryResponse:
+    """The metric over the latest evaluation of each routine (e.g. annexes B-F)."""
+    result = await use_case.execute(EvaluationSummaryQuery())
+    return EvaluationSummaryResponse.from_domain(result)

@@ -10,6 +10,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from typing import Protocol
 
+from app.features.modernization.domain.parsing import ParsedProcedure
 from app.features.modernization.domain.validation import (
     ValidationMessage,
     ValidationResult,
@@ -17,15 +18,34 @@ from app.features.modernization.domain.validation import (
 )
 
 
+@dataclass(frozen=True, slots=True)
+class Routine:
+    """The original routine the code was generated from (behavioral checks run it too)."""
+
+    source_code: str
+    procedure: ParsedProcedure
+
+
+@dataclass(frozen=True, slots=True)
+class Skipped:
+    """The check could not run on this code (e.g. no evaluation scenario for the routine)."""
+
+    reason: str
+
+
+type Findings = tuple[ValidationMessage, ...] | Skipped
+
+
 class CodeCheck(Protocol):
     """One validation strategy. Async because some checks spawn processes.
 
-    Returns its findings (empty = passed). The tool itself failing raises (AppError).
+    Returns its findings (empty = passed) or Skipped. The tool itself failing raises
+    (AppError). Static checks ignore `routine`.
     """
 
     name: str
 
-    async def check(self, code: str) -> tuple[ValidationMessage, ...]: ...
+    async def check(self, code: str, routine: Routine | None = None) -> Findings: ...
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,16 +63,20 @@ class ValidateCode:
             raise ValueError("ValidateCode needs at least one rule")
         self._rules = tuple(rules)
 
-    async def execute(self, code: str) -> ValidationResult:
-        findings = await asyncio.gather(*(rule.check.check(code) for rule in self._rules))
+    async def execute(self, code: str, routine: Routine | None = None) -> ValidationResult:
+        findings = await asyncio.gather(*(rule.check.check(code, routine) for rule in self._rules))
         return ValidationResult(
             results=tuple(
-                ValidatorResult(
-                    validator=rule.check.name,
-                    success=not messages,
-                    blocking=rule.blocking,
-                    messages=messages,
-                )
-                for rule, messages in zip(self._rules, findings, strict=True)
+                _result(rule, found) for rule, found in zip(self._rules, findings, strict=True)
             )
         )
+
+
+def _result(rule: Rule, found: Findings) -> ValidatorResult:
+    if isinstance(found, Skipped):
+        return ValidatorResult(
+            validator=rule.check.name, success=True, blocking=rule.blocking, skipped=found.reason
+        )
+    return ValidatorResult(
+        validator=rule.check.name, success=not found, blocking=rule.blocking, messages=found
+    )

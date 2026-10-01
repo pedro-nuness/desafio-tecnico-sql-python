@@ -1,6 +1,7 @@
 import json
+import re
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ValidationError
 
 from app.features.modernization.domain.enums import GenerationStrategy
 from app.features.modernization.domain.generation import (
@@ -28,7 +29,8 @@ class _GenerationPayload(BaseModel):
     python_code: str
     strategy: GenerationStrategy | None = None
     """Missing -> the deterministic recommendation is used (and a warning recorded)."""
-    architectural_decisions: list[_DecisionPayload] = []
+    architectural_decisions: list[object] = []
+    """Validated one by one: a malformed decision is dropped, not the whole answer."""
     warnings: list[str] = []
 
 
@@ -86,12 +88,21 @@ class GenerateCode:
                 else f"LLM response does not match the expected contract: {exc}"
             )
             raise IntegrationError(message, finish_reason=response.finish_reason) from exc
-        if not payload.python_code.strip():
+        code = strip_code_fence(payload.python_code)
+        if not code.strip():
             raise IntegrationError(
                 "LLM returned empty python_code", finish_reason=response.finish_reason
             )
 
         warnings = list(payload.warnings)
+        if code != payload.python_code:
+            warnings.append("Removed a Markdown fence the LLM left inside python_code.")
+        decisions = _decisions(payload.architectural_decisions)
+        if dropped := len(payload.architectural_decisions) - len(decisions):
+            warnings.append(
+                f"Dropped {dropped} architectural decision(s) outside the contract "
+                "(topic, decision, rationale)."
+            )
         warnings.extend(
             f"LLM route {failure}; answered by {response.provider}/{response.model}"
             for failure in response.failed_routes
@@ -104,13 +115,10 @@ class GenerateCode:
                 f"({analysis.recommended_strategy.value})."
             )
         return GenerationResult(
-            code=payload.python_code,
+            code=code,
             strategy=payload.strategy or analysis.recommended_strategy,
             recommended_strategy=analysis.recommended_strategy,
-            architectural_decisions=tuple(
-                ArchitecturalDecision(**decision.model_dump())
-                for decision in payload.architectural_decisions
-            ),
+            architectural_decisions=decisions,
             warnings=tuple(warnings),
             metadata=GenerationMetadata(
                 provider=response.provider,
@@ -132,3 +140,38 @@ def parse_generation_payload(response: LLMResponse) -> _GenerationPayload:
     if start == -1 or end <= start:
         raise ValueError("LLM response does not contain a JSON object")
     return _GenerationPayload.model_validate(json.loads(content[start : end + 1]))
+
+
+def _decisions(items: list[object]) -> tuple[ArchitecturalDecision, ...]:
+    decisions: list[ArchitecturalDecision] = []
+    for item in items:
+        # Needed: decisions are report metadata; one off-contract entry (observed:
+        # {"transaction": "..."} without topic) must not discard valid generated code.
+        try:
+            decision = _DecisionPayload.model_validate(item)
+        except ValidationError:
+            continue
+        decisions.append(ArchitecturalDecision(**decision.model_dump()))
+    return tuple(decisions)
+
+
+_OPENING_FENCE = re.compile(r"(```\s*)?(python|py)?\s*", re.IGNORECASE)
+
+
+def strip_code_fence(code: str) -> str:
+    """Drop a Markdown fence left inside python_code, whole or in part.
+
+    Observed with glm-5.3-flash: a full ```python ... ``` fence, a bare "python" first line,
+    and a closing ``` glued to the last line. A bare "python" line is never meaningful module
+    code. Anything else is returned unchanged.
+    """
+    lines = code.strip().splitlines()
+    stripped = False
+    if lines and _OPENING_FENCE.fullmatch(lines[0].strip()):
+        lines, stripped = lines[1:], True
+    if lines and lines[-1].rstrip().endswith("```"):
+        lines[-1] = lines[-1].rstrip().removesuffix("```")
+        if not lines[-1].strip():
+            lines.pop()
+        stripped = True
+    return "\n".join(lines).rstrip() + "\n" if stripped else code

@@ -1,3 +1,16 @@
+"""Python 3.14 port of PL/pgSQL procedure sp_transferir_entre_contas.
+
+Transfers a value between two accounts atomically: validates balance and
+account status, writes the transaction row and an audit log entry. On any
+error, an error audit row is written and the original exception re-raised.
+
+The caller owns the transaction: pass an open AsyncConnection; this module
+never commits or rolls back the outer transaction. The original
+EXCEPTION WHEN OTHERS block is reproduced with a nested savepoint
+(`begin_nested`) so the failed statements are rolled back while the
+connection stays usable for the error-log insert.
+"""
+
 from __future__ import annotations
 
 import logging
@@ -10,143 +23,175 @@ logger = logging.getLogger(__name__)
 
 
 class TransferenciaError(Exception):
-    """Base para erros de sp_transferir_entre_contas."""
+    """Base error for sp_transferir_entre_contas (RAISE EXCEPTION)."""
 
 
 class ValorInvalidoError(TransferenciaError):
-    """Valor invalido para transferencia."""
+    """p_valor is NULL or <= 0."""
 
 
 class ContasIguaisError(TransferenciaError):
-    """Conta de origem e destino nao podem ser iguais."""
+    """Origin and destination accounts are the same."""
 
 
 class ContaOrigemNaoEncontradaError(TransferenciaError):
-    """Conta de origem nao encontrada."""
+    """Origin account does not exist."""
 
 
 class ContasNaoAtivasError(TransferenciaError):
-    """Ambas as contas precisam estar ATIVAS."""
+    """Both accounts must be ATIVA."""
 
 
 class SaldoInsuficienteError(TransferenciaError):
-    """Saldo insuficiente."""
+    """Insufficient balance in the origin account."""
 
 
 async def sp_transferir_entre_contas(
     conn: AsyncConnection,
     p_conta_origem: int,
     p_conta_destino: int,
-    p_valor: Decimal | None,
+    p_valor: Decimal,
 ) -> None:
-    """Transfere um valor entre duas contas de forma atomica.
-
-    O chamador possui a transacao externa. Internamente um SAVEPOINT
-    (begin_nested) reproduz o subtransaction implicito do bloco
-    EXCEPTION do PL/pgSQL: falhas de DML sao revertidas, mas o registro
-    de auditoria de erro e persistido, e o erro e re-lancado.
+    """Transfer ``p_valor`` from account ``p_conta_origem`` to
+    ``p_conta_destino``. Raises a TransferenciaError subclass on any
+    validation failure; the error is also recorded in log_auditoria.
     """
-    if p_valor is None or p_valor <= 0:
-        raise ValorInvalidoError(f"Valor invalido para transferencia: {p_valor}")
-
-    if p_conta_origem == p_conta_destino:
-        raise ContasIguaisError("Conta de origem e destino nao podem ser iguais")
-
-    nested = conn.begin_nested()
+    # The original procedure wraps its whole body in an implicit
+    # BEGIN ... EXCEPTION WHEN OTHERS block, which in PostgreSQL is a
+    # savepoint. Reproduce it: everything runs inside begin_nested(); on
+    # error the savepoint is rolled back, the error audit row is inserted,
+    # and the exception is re-raised.
     try:
-        row = (
+        async with conn.begin_nested():
+            if p_valor is None or p_valor <= 0:
+                raise ValorInvalidoError(
+                    f"Valor invalido para transferencia: {p_valor}"
+                )
+
+            if p_conta_origem == p_conta_destino:
+                raise ContasIguaisError(
+                    "Conta de origem e destino nao podem ser iguais"
+                )
+
+            # Lock origin row (FOR UPDATE) and read saldo/status.
+            row = (
+                await conn.execute(
+                    text(
+                        "SELECT saldo, status FROM contas "
+                        "WHERE id = :p_conta_origem FOR UPDATE"
+                    ),
+                    {"p_conta_origem": p_conta_origem},
+                )
+            ).first()
+
+            v_saldo_origem: Decimal | None = row[0] if row else None
+            v_status_origem: str | None = row[1] if row else None
+
+            # Lock destination row and read status.
+            row_dest = (
+                await conn.execute(
+                    text(
+                        "SELECT status FROM contas "
+                        "WHERE id = :p_conta_destino FOR UPDATE"
+                    ),
+                    {"p_conta_destino": p_conta_destino},
+                )
+            ).first()
+
+            v_status_destino: str | None = row_dest[0] if row_dest else None
+
+            if v_saldo_origem is None:
+                raise ContaOrigemNaoEncontradaError(
+                    f"Conta de origem {p_conta_origem} nao encontrada"
+                )
+
+            if v_status_origem != "ATIVA" or v_status_destino != "ATIVA":
+                raise ContasNaoAtivasError(
+                    "Ambas as contas precisam estar ATIVAS"
+                )
+
+            if v_saldo_origem < p_valor:
+                raise SaldoInsuficienteError(
+                    f"Saldo insuficiente: saldo={v_saldo_origem} "
+                    f"valor={p_valor}"
+                )
+
             await conn.execute(
                 text(
-                    "SELECT saldo, status FROM contas "
-                    "WHERE id = :conta_origem FOR UPDATE"
+                    "UPDATE contas SET saldo = saldo - CAST(:p_valor AS NUMERIC(18,2)) "
+                    "WHERE id = :p_conta_origem"
                 ),
-                {"conta_origem": p_conta_origem},
+                {
+                    "p_valor": p_valor,
+                    "p_conta_origem": p_conta_origem,
+                },
             )
-        ).first()
 
-        v_saldo_origem: Decimal | None = row[0] if row is not None else None
-        v_status_origem: str | None = row[1] if row is not None else None
-
-        row_dest = (
             await conn.execute(
                 text(
-                    "SELECT status FROM contas "
-                    "WHERE id = :conta_destino FOR UPDATE"
+                    "UPDATE contas SET saldo = saldo + CAST(:p_valor AS NUMERIC(18,2)) "
+                    "WHERE id = :p_conta_destino"
                 ),
-                {"conta_destino": p_conta_destino},
-            )
-        ).first()
-        v_status_destino: str | None = row_dest[0] if row_dest is not None else None
-
-        if v_saldo_origem is None:
-            raise ContaOrigemNaoEncontradaError(
-                f"Conta de origem {p_conta_origem} nao encontrada"
+                {
+                    "p_valor": p_valor,
+                    "p_conta_destino": p_conta_destino,
+                },
             )
 
-        if v_status_origem != "ATIVA" or v_status_destino != "ATIVA":
-            raise ContasNaoAtivasError("Ambas as contas precisam estar ATIVAS")
-
-        if v_saldo_origem < p_valor:
-            raise SaldoInsuficienteError(
-                f"Saldo insuficiente: saldo={v_saldo_origem} valor={p_valor}"
+            await conn.execute(
+                text(
+                    "INSERT INTO transacoes "
+                    "(conta_origem_id, conta_destino_id, tipo, valor) "
+                    "VALUES (:p_conta_origem, :p_conta_destino, "
+                    "'TRANSFERENCIA', CAST(:p_valor AS NUMERIC(18,2)))"
+                ),
+                {
+                    "p_conta_origem": p_conta_origem,
+                    "p_conta_destino": p_conta_destino,
+                    "p_valor": p_valor,
+                },
             )
 
-        await conn.execute(
-            text(
-                "UPDATE contas SET saldo = saldo - :valor WHERE id = :conta_origem"
-            ),
-            {"valor": p_valor, "conta_origem": p_conta_origem},
-        )
-        await conn.execute(
-            text(
-                "UPDATE contas SET saldo = saldo + :valor WHERE id = :conta_destino"
-            ),
-            {"valor": p_valor, "conta_destino": p_conta_destino},
-        )
-
-        await conn.execute(
-            text(
-                "INSERT INTO transacoes "
-                "(conta_origem_id, conta_destino_id, tipo, valor) "
-                "VALUES (:conta_origem, :conta_destino, 'TRANSFERENCIA', :valor)"
-            ),
-            {
-                "conta_origem": p_conta_origem,
-                "conta_destino": p_conta_destino,
-                "valor": p_valor,
-            },
-        )
-
-        await conn.execute(
-            text(
-                "INSERT INTO log_auditoria (entidade, entidade_id, acao, detalhes) "
-                "VALUES ('transacoes', NULL, 'TRANSFERENCIA_OK', "
-                "jsonb_build_object('origem', :conta_origem, "
-                "'destino', :conta_destino, 'valor', :valor))"
-            ),
-            {
-                "conta_origem": p_conta_origem,
-                "conta_destino": p_conta_destino,
-                "valor": p_valor,
-            },
-        )
-
-        await nested.commit()
+            await conn.execute(
+                text(
+                    "INSERT INTO log_auditoria (entidade, entidade_id, acao, detalhes) "
+                    "VALUES ('transacoes', NULL, 'TRANSFERENCIA_OK', "
+                    "jsonb_build_object("
+                    "'origem', CAST(:p_conta_origem AS BIGINT), "
+                    "'destino', CAST(:p_conta_destino AS BIGINT), "
+                    "'valor', CAST(:p_valor AS NUMERIC(18,2))))"
+                ),
+                {
+                    "p_conta_origem": p_conta_origem,
+                    "p_conta_destino": p_conta_destino,
+                    "p_valor": p_valor,
+                },
+            )
     except Exception as exc:
-        await nested.rollback()
+        # Savepoint already rolled back by begin_nested() context manager;
+        # the connection is usable again for the error audit insert.
         erro = str(exc)
-        logger.error("Transferencia falhou: %s", erro)
+        logger.warning(
+            "sp_transferir_entre_contas falhou: origem=%s destino=%s valor=%s erro=%s",
+            p_conta_origem,
+            p_conta_destino,
+            p_valor,
+            erro,
+        )
         await conn.execute(
             text(
                 "INSERT INTO log_auditoria (entidade, acao, detalhes) "
                 "VALUES ('transacoes', 'TRANSFERENCIA_ERRO', "
-                "jsonb_build_object('origem', :conta_origem, "
-                "'destino', :conta_destino, 'valor', :valor, 'erro', :erro))"
+                "jsonb_build_object("
+                "'origem', CAST(:p_conta_origem AS BIGINT), "
+                "'destino', CAST(:p_conta_destino AS BIGINT), "
+                "'valor', CAST(:p_valor AS NUMERIC(18,2)), "
+                "'erro', CAST(:erro AS TEXT)))"
             ),
             {
-                "conta_origem": p_conta_origem,
-                "conta_destino": p_conta_destino,
-                "valor": p_valor,
+                "p_conta_origem": p_conta_origem,
+                "p_conta_destino": p_conta_destino,
+                "p_valor": p_valor,
                 "erro": erro,
             },
         )

@@ -17,6 +17,7 @@ VENDORS = {
     "pglast",
     "ruff",
     "alembic",
+    "langfuse",
 }
 
 # Features depend on the LLM port (llm.llm) only; the gateway, its configuration and the
@@ -25,6 +26,7 @@ LLM_ADAPTERS = {
     "app.shared.integrations.llm.config",
     "app.shared.integrations.llm.gateway",
     "app.shared.integrations.llm.registry",
+    "app.shared.integrations.llm.tracing",
     "app.shared.integrations.llm.openai",
     "app.shared.integrations.llm.openrouter",
 }
@@ -59,7 +61,15 @@ FORBIDDEN: dict[str, set[str]] = {
     | ENTRY
     | {
         f"{FEATURE}.{module}"
-        for module in ("use_cases", "parsing", "generation", "validation", "persistence", "graph")
+        for module in (
+            "use_cases",
+            "parsing",
+            "generation",
+            "validation",
+            "persistence",
+            "evaluation",
+            "graph",
+        )
     },
     "features/modernization/use_cases.py": PURE | ENTRY,
     "features/modernization/generation": PURE | IMPLEMENTATION | {f"{FEATURE}.graph"},
@@ -71,6 +81,8 @@ FORBIDDEN: dict[str, set[str]] = {
     "features/modernization/parsing": IMPLEMENTATION | {f"{FEATURE}.graph"},
     "features/modernization/validation": IMPLEMENTATION | {f"{FEATURE}.graph"},
     "features/modernization/persistence": IMPLEMENTATION | {f"{FEATURE}.graph"},
+    # The evaluation runs generated code on its own database; it never drives the pipeline.
+    "features/modernization/evaluation": IMPLEMENTATION | {f"{FEATURE}.graph"},
     "features/modernization/graph": (VENDORS - {"langgraph"})
     | LLM_ADAPTERS
     | CORE_INFRASTRUCTURE
@@ -121,7 +133,12 @@ def test_only_the_vendor_adapter_imports_its_sdk(vendor: str) -> None:
 FEATURE_VENDOR_HOMES = {
     "pglast": ("features/modernization/parsing/plpgsql.py",),
     "ruff": ("features/modernization/validation/ruff_check.py",),
-    "sqlalchemy": ("features/modernization/persistence/models.py",),
+    "sqlalchemy": (
+        "features/modernization/evaluation/equivalence.py",
+        "features/modernization/evaluation/models.py",
+        "features/modernization/evaluation/repository.py",
+        "features/modernization/persistence/models.py",
+    ),
     "langgraph": ("features/modernization/graph/builder.py",),
     "langchain_core": ("features/modernization/graph/builder.py",),
 }
@@ -180,14 +197,17 @@ def test_no_init_py_files_exist_in_app() -> None:
 # the outcome must be observed locally: SDK error translation + retries (Integration),
 # breaker state, route failover (LLMGateway), failure persistence, and native errors that
 # carry domain meaning (invalid SQL, syntax errors feeding the repair loop, an LLM answer
-# off contract).
+# off contract), and the evaluation, where a failing call is the observation.
 LOCAL_EXCEPT_ALLOWED = [
+    "features/modernization/evaluation/equivalence.py",
     "features/modernization/generation/generate_code.py",
     "features/modernization/graph/builder.py",
     "features/modernization/parsing/plpgsql.py",
+    "features/modernization/validation/behavior_check.py",
     "features/modernization/validation/python_ast_check.py",
     "shared/integrations/integration.py",
     "shared/integrations/llm/gateway.py",
+    "shared/integrations/llm/tracing.py",
     "shared/resilience/circuit_breaker.py",
 ]
 

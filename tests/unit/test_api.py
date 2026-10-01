@@ -11,7 +11,10 @@ from app.core.bootstrap import build_container
 from app.core.config.settings import Settings
 from app.core.server import create_app
 from app.features.modernization.domain.enums import ModernizationStatus
+from app.features.modernization.domain.evaluation import CaseResult
 from app.features.modernization.domain.validation import ValidationMessage
+from app.features.modernization.evaluation.equivalence import EquivalenceMetric
+from app.features.modernization.evaluation.repository import EvaluationRepository
 from app.features.modernization.persistence.repository import ModernizationRepository
 from app.features.modernization.use_cases import ModernizeRoutine
 from app.features.modernization.validation.validate_code import Rule, ValidateCode
@@ -19,7 +22,13 @@ from app.shared.errors import AppError, DomainError, NotFoundError
 from app.shared.integrations.errors import IntegrationError
 from app.shared.persistence import TransactionManager
 from tests.conftest import ModernizeFactory
-from tests.fakes import FakeLLM, InMemoryDatabase, InMemoryModernizationRepository
+from tests.fakes import (
+    FakeLLM,
+    FakeMetric,
+    InMemoryDatabase,
+    InMemoryEvaluationRepository,
+    InMemoryModernizationRepository,
+)
 
 type ApiFactory = Callable[..., FastAPI]
 
@@ -29,13 +38,16 @@ def make_api(make_modernize: ModernizeFactory, store: InMemoryDatabase) -> ApiFa
     """The real container (core/providers.py) with the use cases and persistence overridden
     by ones wired to the in-memory store and fakes; graph options as in `make_graph`."""
 
-    def factory(**graph_options: Any) -> FastAPI:
+    def factory(metric: FakeMetric | None = None, **graph_options: Any) -> FastAPI:
+        metric = metric or FakeMetric()
         fakes = Provider(scope=Scope.APP)
         fakes.provide(lambda: make_modernize(**graph_options), provides=ModernizeRoutine)
         fakes.provide(lambda: store, provides=TransactionManager)
         fakes.provide(
             lambda: InMemoryModernizationRepository(store), provides=ModernizationRepository
         )
+        fakes.provide(lambda: InMemoryEvaluationRepository(store), provides=EvaluationRepository)
+        fakes.provide(lambda: metric, provides=EquivalenceMetric)
         return create_app(build_container(Settings(_env_file=None), fakes))  # type: ignore[call-arg]
 
     return factory
@@ -226,7 +238,7 @@ async def test_validation_exception_keeps_generated_code_before_http_response(
     class CrashingCheck:
         name = "crashing"
 
-        async def check(self, code: str) -> tuple[ValidationMessage, ...]:
+        async def check(self, code: str, routine: object = None) -> tuple[ValidationMessage, ...]:
             raise RuntimeError("validator failed")
 
     code = "def broken(:\n"
@@ -247,3 +259,40 @@ async def test_validation_exception_keeps_generated_code_before_http_response(
     assert stored["report"]["completed_steps"] == ["parsing", "semantic_analysis", "generation"]
     assert stored["report"]["errors"][0]["step"] == "validation"
     assert stored["report"]["errors"][0]["error_type"] == "RuntimeError"
+
+
+async def test_evaluation_of_a_recorded_execution_is_stored_and_summarized(
+    make_api: ApiFactory, load_procedure: Callable[[str], str]
+) -> None:
+    cases = [
+        CaseResult(name=n, passed=p, detail="", original="", generated="")
+        for n, p in [("ok", True), ("rounding", False)]
+    ]
+    api = make_api(metric=FakeMetric(cases))
+    async with api.router.lifespan_context(api):
+        transport = ASGITransport(app=api)
+        async with AsyncClient(transport=transport, base_url="http://test") as http:
+            created = await http.post(
+                "/modernize", json={"source_code": load_procedure("process_orders")}
+            )
+            execution_id = created.json()["execution_id"]
+
+            evaluation = await http.post(f"/modernizations/{execution_id}/evaluation")
+            summary = await http.get("/evaluations")
+
+    assert evaluation.status_code == 200
+    body = evaluation.json()
+    assert body["execution_id"] == execution_id
+    assert body["procedure_name"] == "process_customer_orders"
+    assert (body["cases_passed"], body["cases_total"], body["score"]) == (1, 2, 0.5)
+    assert body["equivalent"] is False and body["metric"] == "behavioral_equivalence"
+    assert summary.status_code == 200
+    assert summary.json()["routines"] == 1
+    assert summary.json()["case_pass_rate"] == 0.5
+    assert summary.json()["evaluations"][0]["evaluation_id"] == body["evaluation_id"]
+
+
+async def test_evaluating_an_unknown_execution_returns_404(client: AsyncClient) -> None:
+    response = await client.post(f"/modernizations/{uuid4()}/evaluation")
+
+    assert response.status_code == 404

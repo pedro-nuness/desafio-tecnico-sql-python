@@ -50,5 +50,5 @@ async def engine(migrated_database_url: str) -> AsyncIterator[AsyncEngine]:
 @pytest.fixture
 async def session_factory(engine: AsyncEngine) -> async_sessionmaker[AsyncSession]:
     async with engine.begin() as connection:
-        await connection.execute(text("TRUNCATE modernization_history"))
+        await connection.execute(text("TRUNCATE modernization_history CASCADE"))
     return create_session_factory(engine)

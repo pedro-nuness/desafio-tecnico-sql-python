@@ -1,7 +1,7 @@
 {
-  "execution_id": "01a0f43f-305c-7261-88a8-8c963725243e",
+  "execution_id": "01a0f7ab-e477-7344-8916-03424113ec49",
   "status": "success",
-  "created_at": "2026-09-30T21:36:16.988943+00:00",
+  "created_at": "2026-10-01T13:33:52.631520+00:00",
   "report": {
     "parsing": {
       "success": true,
@@ -158,39 +158,39 @@
       "recommended_strategy": "hybrid",
       "provider": "openrouter",
       "model": "z-ai/glm-5.3-flash",
-      "prompt_version": "generation-v2",
-      "input_tokens": 3098,
-      "output_tokens": 1978,
-      "latency_ms": 10003.7,
+      "prompt_version": "generation-v4",
+      "input_tokens": 3655,
+      "output_tokens": 2420,
+      "latency_ms": 29170.01,
       "finish_reason": "stop",
       "attempt": 1,
       "architectural_decisions": [
         {
-          "topic": "Transaction ownership",
-          "decision": "Caller owns the outer transaction; a SAVEPOINT (conn.begin_nested) reproduces the PL/pgSQL EXCEPTION subtransaction.",
-          "rationale": "In PL/pgSQL, the EXCEPTION block wraps the body in a subtransaction: failed DML is rolled back while the error-audit INSERT persists. begin_nested is the faithful async equivalent; the outer commit/rollback remains with the caller."
+          "topic": "Exception block as savepoint",
+          "decision": "The whole body runs inside `async with conn.begin_nested():`; the WHEN OTHERS handler runs after the savepoint context exits (rollback already done) and re-raises.",
+          "rationale": "In PL/pgSQL a BEGIN...EXCEPTION block is a savepoint; without begin_nested the transaction would stay aborted and the error-log INSERT would fail. The original handler also catches validation RAISEs, so the savepoint wraps the validations too, preserving control flow."
         },
         {
-          "topic": "Row locking",
-          "decision": "Both FOR UPDATE selects and all dependent writes run on the same AsyncConnection/transaction.",
-          "rationale": "Locks only hold within one transaction; sharing the connection preserves the original atomicity and lock ordering (origem then destino)."
-        },
-        {
-          "topic": "Validation in Python",
-          "decision": "Input validation (valor null/<=0, contas iguais) done in Python before any SQL.",
-          "rationale": "Pure control flow belongs in Python; no database round-trip needed."
+          "topic": "Caller owns transaction",
+          "decision": "No commit/rollback of the outer transaction; row locks (FOR UPDATE) and dependent writes share the same connection.",
+          "rationale": "The procedure does not manage transactions itself; atomicity is guaranteed by the caller's transaction plus the savepoint."
         },
         {
           "topic": "Typed exceptions",
-          "decision": "Each RAISE EXCEPTION mapped to a distinct exception subclass of TransferenciaError.",
-          "rationale": "Allows callers to handle specific failure modes; messages preserved verbatim."
+          "decision": "One exception hierarchy (TransferenciaError base + one subclass per RAISE EXCEPTION) with the original messages.",
+          "rationale": "Maps RAISE EXCEPTION to typed Python errors while preserving message text."
+        },
+        {
+          "topic": "SQLERRM",
+          "decision": "Replaced by str(exc) of the caught Python exception, bound as CAST(:erro AS TEXT) inside jsonb_build_object.",
+          "rationale": "Python has no SQLERRM; the exception text is the equivalent. All jsonb_build_object values are explicitly CAST because asyncpg cannot infer polymorphic bind types."
         }
       ],
       "warnings": [
-        "SQLERRM in the error-audit log is replaced by str(exc); for DBAPI errors the message text may differ slightly from PostgreSQL's SQLERRM formatting.",
-        "The error-audit INSERT runs on the outer transaction; if the caller later rolls back the whole transaction, the error log is lost (same as the original procedure, whose audit row also depended on the caller's transaction outcome).",
-        "The original procedure does not verify that the destination account exists; a nonexistent destino yields v_status_destino NULL, which fails the 'ATIVA' check with 'Ambas as contas precisam estar ATIVAS' — behaviour preserved.",
-        "Deadlock risk from lock ordering (origem before destino) is inherited from the original routine."
+        "The error audit insert in the handler runs on the caller's transaction; if the caller later rolls back the outer transaction, the error log row is lost too (same as the original procedure, which had no autonomous transaction).",
+        "SQLERRM in PostgreSQL contains the database error message; here it contains the Python exception text, which may differ slightly in wording.",
+        "The original procedure did not verify that the destination account exists: if p_conta_destino does not exist, v_status_destino is NULL, the status check fails ('Ambas as contas precisam estar ATIVAS') and the UPDATE/INSERT affect zero rows silently. Behaviour preserved.",
+        "p_valor is expected as decimal.Decimal (NUMERIC end to end); passing float would change precision semantics."
       ]
     },
     "validation": {
@@ -201,13 +201,22 @@
           "validator": "python_ast",
           "success": true,
           "blocking": true,
-          "messages": []
+          "messages": [],
+          "skipped": null
         },
         {
           "validator": "ruff",
           "success": true,
           "blocking": false,
-          "messages": []
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "behavior",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
         }
       ],
       "warnings": []

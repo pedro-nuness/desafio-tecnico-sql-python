@@ -1,46 +1,35 @@
-"""Modernized version of fn_saldo_cliente.
+from __future__ import annotations
 
-Returns the consolidated balance of all active accounts of a client.
-The aggregation stays in the database (database_delegated strategy).
-"""
-
-from dataclasses import dataclass
+import logging
+from decimal import Decimal
 
 from sqlalchemy import text
-from sqlalchemy.engine import Result
 from sqlalchemy.ext.asyncio import AsyncConnection
 
-
-@dataclass(frozen=True)
-class SaldoCliente:
-    """Return value of fn_saldo_cliente (numeric(18, 2))."""
-
-    total: float
+logger = logging.getLogger(__name__)
 
 
-async def fn_saldo_cliente(
-    conn: AsyncConnection,
-    p_cliente_id: int,
-) -> SaldoCliente:
-    """Return the sum of balances of all active accounts of a client.
+class SaldoClienteError(Exception):
+    """Typed error replacing RAISE EXCEPTION in the original routine."""
 
-    Args:
-        conn: Async database connection (caller owns the transaction).
-        p_cliente_id: Client identifier.
 
-    Returns:
-        SaldoCliente with the consolidated balance (0 if no active accounts).
+async def fn_saldo_cliente(conn: AsyncConnection, p_cliente_id: int) -> Decimal:
+    """Return the consolidated balance of all active accounts of a client.
+
+    Python port of fn_saldo_cliente(p_cliente_id BIGINT) RETURNS NUMERIC(18,2).
+    The aggregation stays in SQL (database_delegated); the caller owns the
+    transaction.
     """
-    result: Result = await conn.execute(
+    result = await conn.execute(
         text(
             """
-            SELECT COALESCE(SUM(saldo), 0) AS total
+            SELECT CAST(COALESCE(SUM(saldo), 0) AS NUMERIC(18, 2))
               FROM contas
-             WHERE cliente_id = :p_cliente_id
+             WHERE cliente_id = CAST(:p_cliente_id AS BIGINT)
                AND status = 'ATIVA'
             """
         ),
         {"p_cliente_id": p_cliente_id},
     )
-    row = result.one()
-    return SaldoCliente(total=float(row.total))
+    total: Decimal | None = result.scalar_one()
+    return Decimal("0.00") if total is None else total

@@ -41,7 +41,7 @@ AGGREGATE_FUNCTIONS = frozenset(
 BUILTIN_FUNCTIONS = AGGREGATE_FUNCTIONS | frozenset(
     {
         "abs", "ceil", "floor", "round", "trunc", "greatest", "least", "coalesce", "nullif",
-        "now", "current_timestamp", "current_date", "clock_timestamp", "date_trunc",
+        "now", "current_timestamp", "current_date", "clock_timestamp", "date", "date_trunc",
         "date_part", "extract", "age", "make_interval", "to_char", "to_date", "to_timestamp",
         "lower", "upper", "length", "substr", "substring", "trim", "btrim", "concat",
         "concat_ws", "format", "replace", "split_part", "position", "left", "right",
@@ -231,18 +231,8 @@ def _detect_risks(
 ) -> tuple[SemanticRisk, ...]:
     risks: list[SemanticRisk] = []
     for statement, loop_depth in procedure.iter_statements():
-        if statement.kind in DATABASE_ROUND_TRIP_KINDS and loop_depth > 0:
-            risks.append(
-                SemanticRisk(
-                    code="N_PLUS_ONE",
-                    severity=RiskSeverity.HIGH,
-                    message=(
-                        f"{statement.kind.value.upper()} executed inside a loop: one database "
-                        "round-trip per iteration. Prefer a single set-based statement."
-                    ),
-                    line=statement.line,
-                )
-            )
+        if statement.kind in LOOP_KINDS and loop_depth == 0:
+            risks.extend(_n_plus_one(statement))
         if _is_dynamic_sql(statement):
             risks.append(
                 SemanticRisk(
@@ -268,8 +258,10 @@ def _detect_risks(
                 )
             )
         for handler in statement.exception_handlers:
+            # Only RAISE EXCEPTION (or a bare RAISE;) propagates; NOTICE/WARNING just log.
             reraises = any(
-                inner.kind is StatementKind.RAISE for inner, _ in _walk_all(handler.body)
+                inner.kind is StatementKind.RAISE and inner.raise_level == "EXCEPTION"
+                for inner, _ in _walk_all(handler.body)
             )
             if "others" in (c.lower() for c in handler.conditions) and not reraises:
                 risks.append(
@@ -325,6 +317,32 @@ def _detect_risks(
             )
         )
     return tuple(risks)
+
+
+def _n_plus_one(loop: Statement) -> list[SemanticRisk]:
+    """One finding per outermost loop, listing every statement that hits the database on
+    each iteration (nested loops included)."""
+    lines = [
+        inner.line or 0
+        for inner, depth in loop.walk()
+        if depth > 0 and inner.kind in DATABASE_ROUND_TRIP_KINDS
+    ]
+    if not lines:
+        return []
+    plural = "s" if len(lines) > 1 else ""
+    return [
+        SemanticRisk(
+            code="N_PLUS_ONE",
+            severity=RiskSeverity.HIGH,
+            message=(
+                f"{len(lines)} SQL statement{plural} executed on every iteration of this "
+                f"{loop.kind.value.upper()} (line{plural} "
+                f"{', '.join(map(str, lines))}): one database round-trip each per row. Prefer "
+                "set-based statements."
+            ),
+            line=loop.line,
+        )
+    ]
 
 
 def _walk_all(statements: tuple[Statement, ...]) -> Iterator[tuple[Statement, int]]:

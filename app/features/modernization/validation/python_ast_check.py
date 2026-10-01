@@ -2,6 +2,7 @@ import ast
 import asyncio
 
 from app.features.modernization.domain.validation import ValidationMessage
+from app.features.modernization.validation.validate_code import Routine
 
 
 class PythonASTCheck:
@@ -9,7 +10,9 @@ class PythonASTCheck:
 
     name = "python_ast"
 
-    async def check(self, code: str) -> tuple[ValidationMessage, ...]:
+    async def check(
+        self, code: str, routine: Routine | None = None
+    ) -> tuple[ValidationMessage, ...]:
         return await asyncio.to_thread(_syntax_errors, code)
 
 

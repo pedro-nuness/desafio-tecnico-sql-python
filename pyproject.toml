@@ -10,6 +10,8 @@ dependencies = [
     "dishka>=1.10",
     "fastapi>=0.142",
     "httpx>=0.28.1",
+    "langchain>=1,<2",
+    "langfuse>=4,<5",
     "langgraph>=1.2.12",
     "langgraph-cli[inmem]>=0.4.32",  # serves the graph + the FastAPI routes (langgraph.json)
     "openai>=3.22",
@@ -19,7 +21,7 @@ dependencies = [
     "pydantic-settings>=2.15",
     "pyyaml>=6.0",
     "ruff>=0.16.9",
-    "sqlalchemy[asyncio]>=2.0.43",
+    "sqlalchemy[asyncio]>=2.1",
     "uvicorn[standard]>=0.54",
 ]
 
@@ -27,6 +29,7 @@ dependencies = [
 dev = [
     "pytest>=9.1",
     "pytest-asyncio>=1.4",
+    "pytest-cov>=6",
 ]
 
 [tool.uv]
@@ -41,7 +44,7 @@ asyncio_default_test_loop_scope = "session"
 markers = [
     "integration: requires a reachable PostgreSQL (TEST_DATABASE_URL)",
 ]
-addopts = "-ra"
+addopts = "-ra --import-mode=importlib"
 
 [tool.ruff]
 target-version = "py314"
@@ -70,3 +73,12 @@ ignore = [
 
 [tool.ruff.format]
 quote-style = "double"
+
+[tool.coverage.run]
+source = ["app"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+skip_covered = true
+fail_under = 95  # measured: 95% unit-only, 97% with the Postgres integration tests

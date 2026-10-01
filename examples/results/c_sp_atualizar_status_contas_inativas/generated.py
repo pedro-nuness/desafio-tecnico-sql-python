@@ -9,31 +9,31 @@ from sqlalchemy.ext.asyncio import AsyncConnection
 logger = logging.getLogger(__name__)
 
 
-class ParametroInvalidoError(ValueError):
-    """Equivalente ao RAISE EXCEPTION da rotina legada."""
+class ParametroInvalidoError(Exception):
+    """RAISE EXCEPTION equivalente para validação de parâmetros."""
 
     def __init__(self, p_dias: int | None) -> None:
+        self.p_dias = p_dias
         super().__init__(
             f"Parametro p_dias deve ser positivo, recebido: {p_dias}"
         )
-        self.p_dias = p_dias
 
 
 @dataclass(frozen=True)
-class ResultadoInativacao:
-    """Substitui o parâmetro OUT p_afetadas."""
+class AtualizarStatusContasInativasResult:
+    """Campos OUT da procedure, na ordem original."""
 
-    afetadas: int
+    p_afetadas: int
 
 
 async def sp_atualizar_status_contas_inativas(
     conn: AsyncConnection,
-    p_dias: int,
-) -> ResultadoInativacao:
+    p_dias: int | None,
+) -> AtualizarStatusContasInativasResult:
     """Marca contas ATIVA sem movimentação recente como INATIVA.
 
-    Mantém o UPDATE e o INSERT de auditoria como SQL parametrizado;
-    o chamador é dono da transação (nenhum commit/rollback aqui).
+    Equivalente à procedure PL/pgSQL sp_atualizar_status_contas_inativas.
+    A transação é de responsabilidade do chamador.
     """
     if p_dias is None or p_dias <= 0:
         raise ParametroInvalidoError(p_dias)
@@ -48,13 +48,13 @@ async def sp_atualizar_status_contas_inativas(
                     SELECT 1
                       FROM transacoes t
                      WHERE (t.conta_origem_id = c.id OR t.conta_destino_id = c.id)
-                       AND t.data_transacao >= NOW() - make_interval(days => :p_dias)
+                       AND t.data_transacao >= NOW() - CAST(:p_dias AS INT) * INTERVAL '1 day'
                )
             """
         ),
         {"p_dias": p_dias},
     )
-    afetadas: int = result.rowcount
+    p_afetadas: int = result.rowcount or 0
 
     await conn.execute(
         text(
@@ -63,14 +63,14 @@ async def sp_atualizar_status_contas_inativas(
             VALUES (
                 'contas',
                 'INATIVACAO_LOTE',
-                jsonb_build_object('dias', :p_dias, 'afetadas', :p_afetadas)
+                jsonb_build_object(
+                    'dias', CAST(:p_dias AS INT),
+                    'afetadas', CAST(:p_afetadas AS INT)
+                )
             )
             """
         ),
-        {"p_dias": p_dias, "p_afetadas": afetadas},
+        {"p_dias": p_dias, "p_afetadas": p_afetadas},
     )
 
-    logger.info(
-        "Inativacao em lote concluida: dias=%s afetadas=%s", p_dias, afetadas
-    )
-    return ResultadoInativacao(afetadas=afetadas)
+    return AtualizarStatusContasInativasResult(p_afetadas=p_afetadas)

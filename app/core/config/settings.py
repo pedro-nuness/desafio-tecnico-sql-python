@@ -53,10 +53,27 @@ class Settings(BaseSettings):
 
     ruff_timeout_seconds: float = Field(default=20.0, gt=0)
 
+    langfuse_public_key: str | None = None
+    langfuse_secret_key: SecretStr | None = None
+    langfuse_base_url: str = "http://localhost:3000"
+
+    evaluation_database_url: PostgresDsn | None = None
+    """Disposable database where the evaluation executes generated code (never the app's).
+    Unset: the evaluation endpoints answer with an error; everything else works."""
+    evaluation_dataset_file: Path = Path("examples/evaluation/scenarios.yml")
+    evaluation_case_timeout_seconds: float = Field(default=10.0, gt=0)
+
     log_level: Literal["DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"] = "INFO"
 
     @field_validator(
-        "llm_config_file", "llm_api_key", "llm_base_url", "llm_reasoning_effort", mode="before"
+        "llm_config_file",
+        "llm_api_key",
+        "llm_base_url",
+        "llm_reasoning_effort",
+        "evaluation_database_url",
+        "langfuse_public_key",
+        "langfuse_secret_key",
+        mode="before",
     )
     @classmethod
     def _blank_is_unset(cls, value: object) -> object:

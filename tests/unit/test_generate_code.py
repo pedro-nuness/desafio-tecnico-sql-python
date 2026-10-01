@@ -1,3 +1,4 @@
+import json
 from collections.abc import Callable
 
 import pytest
@@ -75,6 +76,50 @@ async def test_accepts_json_wrapped_in_markdown_fences(analyzed: Analyzed) -> No
     result = await _generate(llm, analyzed)
 
     assert result.code == VALID_CODE
+
+
+@pytest.mark.parametrize(
+    "fenced",
+    [
+        f"```python\n{VALID_CODE}```",
+        f"python\n{VALID_CODE}",  # observed: run v3 #5, annex F
+        f"python\n{VALID_CODE.rstrip()}```",  # observed: run v3 #4, annex D
+        f"```\n{VALID_CODE}\n```\n",
+    ],
+)
+async def test_markdown_fence_inside_python_code_is_removed(
+    analyzed: Analyzed, fenced: str
+) -> None:
+    result = await _generate(FakeLLM([llm_payload(code=fenced)]), analyzed)
+
+    assert result.code == VALID_CODE
+    assert "Removed a Markdown fence the LLM left inside python_code." in result.warnings
+
+
+async def test_off_contract_decisions_are_dropped_not_the_code(analyzed: Analyzed) -> None:
+    content = json.dumps(
+        {
+            "python_code": "x = 1",
+            "strategy": "hybrid",
+            "architectural_decisions": [
+                {"topic": "sql", "decision": "kept in SQL"},
+                {"transaction": "Caller owns the transaction."},  # observed: prompt v4 run
+            ],
+        }
+    )
+
+    result = await _generate(FakeLLM([content]), analyzed)
+
+    assert result.code == "x = 1"
+    assert [d.topic for d in result.architectural_decisions] == ["sql"]
+    assert any("Dropped 1 architectural decision(s)" in w for w in result.warnings)
+
+
+async def test_unfenced_code_is_kept_verbatim(analyzed: Analyzed) -> None:
+    result = await _generate(FakeLLM([llm_payload(code="x = 1")]), analyzed)
+
+    assert result.code == "x = 1"
+    assert not any("Markdown fence" in warning for warning in result.warnings)
 
 
 @pytest.mark.parametrize(

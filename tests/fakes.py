@@ -5,6 +5,7 @@ from collections.abc import AsyncIterator, Sequence
 from contextlib import asynccontextmanager
 from uuid import UUID
 
+from app.features.modernization.domain.evaluation import CaseResult, Evaluation
 from app.features.modernization.domain.modernization import Modernization
 from app.features.modernization.persistence.repository import not_found
 from app.shared.integrations.llm.llm import LLMRequest, LLMResponse
@@ -16,14 +17,18 @@ class InMemoryTransaction:
     def __init__(self, database: InMemoryDatabase) -> None:
         self._database = database
         self.pending: dict[UUID, Modernization] = {}
+        self.pending_evaluations: list[Evaluation] = []
 
     async def commit(self) -> None:
         self._database.rows.update(self.pending)
         self._database.history.extend(self.pending.values())
+        self._database.evaluations.extend(self.pending_evaluations)
         self.pending.clear()
+        self.pending_evaluations.clear()
 
     async def rollback(self) -> None:
         self.pending.clear()
+        self.pending_evaluations.clear()
 
 
 class InMemoryDatabase:
@@ -33,6 +38,7 @@ class InMemoryDatabase:
         self.rows: dict[UUID, Modernization] = {}
         self.history: list[Modernization] = []
         """Every committed version, in order (lets tests see RUNNING -> final)."""
+        self.evaluations: list[Evaluation] = []
         self._active: InMemoryTransaction | None = None
 
     @asynccontextmanager
@@ -73,6 +79,38 @@ class InMemoryModernizationRepository:
         if found is None:
             raise not_found(modernization_id)
         return found
+
+
+class InMemoryEvaluationRepository:
+    """EvaluationRepository port, same contract as the SQLAlchemy one: current transaction."""
+
+    def __init__(self, database: InMemoryDatabase) -> None:
+        self._database = database
+
+    async def save(self, evaluation: Evaluation) -> None:
+        self._database.current().pending_evaluations.append(evaluation)
+
+    async def latest_per_procedure(self) -> tuple[Evaluation, ...]:
+        self._database.current()
+        latest: dict[str, Evaluation] = {}
+        for evaluation in sorted(self._database.evaluations, key=lambda e: e.created_at):
+            latest[evaluation.procedure_name] = evaluation
+        return tuple(latest[name] for name in sorted(latest))
+
+
+class FakeMetric:
+    """EquivalenceMetric port: scripted case results, or raises `error`."""
+
+    def __init__(self, cases: Sequence[CaseResult] = (), *, error: Exception | None = None) -> None:
+        self._cases = tuple(cases)
+        self._error = error
+        self.evaluated: list[Modernization] = []
+
+    async def evaluate(self, modernization: Modernization) -> tuple[CaseResult, ...]:
+        self.evaluated.append(modernization)
+        if self._error is not None:
+            raise self._error
+        return self._cases
 
 
 DEFAULT_TEST_CODE = """\

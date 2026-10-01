@@ -112,7 +112,7 @@ async def test_lint_findings_make_the_result_partial(
 class _ExplodingCheck:
     name = "exploding"
 
-    async def check(self, code: str) -> tuple[ValidationMessage, ...]:
+    async def check(self, code: str, routine: object = None) -> tuple[ValidationMessage, ...]:
         raise RuntimeError("unexpected bug")
 
 

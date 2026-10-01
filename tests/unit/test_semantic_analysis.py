@@ -1,4 +1,5 @@
 from collections.abc import Callable
+from pathlib import Path
 
 from app.features.modernization.domain.enums import GenerationStrategy
 from app.features.modernization.domain.parsing import (
@@ -45,7 +46,8 @@ def test_hybrid_procedure_features_and_risks(load_procedure: Callable[[str], str
     } <= set(analysis.feature_names)
     n_plus_one = [r for r in analysis.risks if r.code == "N_PLUS_ONE"]
     assert len(n_plus_one) == 1 and n_plus_one[0].severity is RiskSeverity.HIGH
-    assert n_plus_one[0].line == 24
+    assert n_plus_one[0].line == 17  # the FOR loop; the UPDATE inside is listed
+    assert "(line 24)" in n_plus_one[0].message
     assert analysis.parameters.inputs == ("p_customer_id",)
     assert analysis.parameters.outputs == ("total_amount",)
     assert analysis.parameters.in_out == ("processed_count",)
@@ -136,3 +138,44 @@ def test_unparsed_sql_becomes_a_risk() -> None:
     risks = analyzer.analyze(procedure).risks
 
     assert [(r.code, r.line) for r in risks] == [("UNPARSED_SQL", 3)]
+
+
+# --------------------------------------------------------------------------- annexes B-F
+
+ANNEXES = Path(__file__).parents[2] / "examples" / "procedures"
+
+
+def _annex(name: str) -> SemanticAnalysis:
+    return analyzer.analyze(parser.parse((ANNEXES / f"{name}.sql").read_text(encoding="utf-8")))
+
+
+def test_builtin_used_as_type_cast_is_not_an_external_routine() -> None:
+    """Annex E filters with DATE(data_transacao): a PostgreSQL builtin, not a user routine."""
+    analysis = _annex("e_sp_processar_lote_taxas")
+
+    assert "EXTERNAL_ROUTINE_DEPENDENCY" not in {r.code for r in analysis.risks}
+    assert DependencyKind.FUNCTION not in {d.kind for d in analysis.dependencies}
+
+
+def test_one_n_plus_one_risk_per_loop_listing_every_round_trip() -> None:
+    """Annex E runs 4 statements per cursor row: one finding for the loop, not four."""
+    analysis = _annex("e_sp_processar_lote_taxas")
+
+    [risk] = [r for r in analysis.risks if r.code == "N_PLUS_ONE"]
+    assert risk.line == 34  # the LOOP
+    assert "4 SQL statements" in risk.message
+    assert "38, 60, 62, 65" in risk.message
+
+
+def test_raise_warning_in_a_handler_does_not_count_as_re_raise() -> None:
+    """Annex F logs a WARNING and returns a fallback row: the error is swallowed."""
+    analysis = _annex("f_sp_relatorio_mensal_cliente")
+
+    assert "SWALLOWED_EXCEPTION" in {r.code for r in analysis.risks}
+
+
+def test_bare_raise_in_a_handler_re_raises() -> None:
+    """Annex D logs the failure and re-raises with RAISE;: nothing is swallowed."""
+    analysis = _annex("d_sp_transferir_entre_contas")
+
+    assert "SWALLOWED_EXCEPTION" not in {r.code for r in analysis.risks}
