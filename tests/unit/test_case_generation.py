@@ -95,6 +95,12 @@ async def test_kept_cases_join_the_callers_on_the_callers_setup() -> None:
                 _case("client 1"),  # same name as the caller's: renamed, not dropped
                 {"name": "two args", "sql": "SELECT fn_saldo_cliente(1, 2)", "args": [1, 2]},
                 {"name": "other routine", "sql": "SELECT now()", "args": [1]},
+                {
+                    "name": "subquery",
+                    "sql": "SELECT fn_saldo_cliente((SELECT cliente_id FROM contas WHERE id = 21))",
+                    "args": [None],
+                },
+                {"name": "call", "sql": "CALL fn_saldo_cliente((SELECT 1))", "args": [1]},
                 {"sql": "SELECT fn_saldo_cliente(3)"},  # no name: off contract
                 _case("bad column", 9),
                 seed="INSERT INTO contas VALUES (9, 9, 1, 'ATIVA');",
@@ -118,7 +124,9 @@ async def test_kept_cases_join_the_callers_on_the_callers_setup() -> None:
     assert result.discarded == (
         "two args: 2 args, the routine takes 1",
         "other routine: does not call fn_saldo_cliente",
-        "case #5: not in the contract (name, sql, args)",
+        "subquery: the call must take literal values, not a subquery",
+        "call: the call must take literal values, not a subquery",
+        "case #7: not in the contract (name, sql, args)",
         "bad column: not valid SQL for this schema: ...",
     )
     assert not result.seed_generated

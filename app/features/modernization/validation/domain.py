@@ -15,8 +15,8 @@ class ValidatorResult(ValueObject):
     """A failing blocking validator means the code is unusable (e.g. syntax error)."""
     messages: tuple[ValidationMessage, ...] = ()
     skipped: str | None = None
-    """Why the check could not run (e.g. no evaluation scenario for the routine). A skipped
-    check passes, and the reason is reported as a warning."""
+    """Why the check could not run (e.g. no behavior scenario). A skipped check does not fail
+    (nothing to repair), but the code is not verified: see ValidationResult.verified_all."""
 
 
 class ValidationResult(ValueObject):
@@ -30,6 +30,11 @@ class ValidationResult(ValueObject):
     @property
     def passed_all(self) -> bool:
         return all(result.success for result in self.results)
+
+    @property
+    def verified_all(self) -> bool:
+        """Every check ran and passed: a skipped check never counts as verified."""
+        return self.passed_all and not any(result.skipped for result in self.results)
 
     def issues(self) -> tuple[str, ...]:
         """Every message of every failed validator, one line each (repair feedback)."""

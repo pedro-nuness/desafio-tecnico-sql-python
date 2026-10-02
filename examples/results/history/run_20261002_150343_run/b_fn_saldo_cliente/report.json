@@ -1,0 +1,154 @@
+{
+  "execution_id": "01a0fd20-0f4f-7321-b698-121f89ba07da",
+  "status": "success",
+  "created_at": "2026-10-02T14:58:51.855456+00:00",
+  "report": {
+    "parsing": {
+      "procedure_name": "fn_saldo_cliente",
+      "kind": "function",
+      "parser": "pglast",
+      "parameters": [
+        {
+          "name": "p_cliente_id",
+          "data_type": "bigint",
+          "mode": "in",
+          "has_default": false
+        }
+      ],
+      "return_type": "numeric(18, 2)",
+      "statement_count": 2,
+      "referenced_tables": [
+        "contas"
+      ],
+      "called_functions": [
+        "sum"
+      ],
+      "warnings": []
+    },
+    "semantic_analysis": {
+      "constructs": [
+        {
+          "construct": "aggregation",
+          "occurrences": 1,
+          "lines": [
+            15
+          ]
+        },
+        {
+          "construct": "in_parameters",
+          "occurrences": 1,
+          "lines": []
+        },
+        {
+          "construct": "variables",
+          "occurrences": 1,
+          "lines": [
+            13
+          ]
+        }
+      ],
+      "risks": [],
+      "dependencies": [
+        {
+          "name": "contas",
+          "kind": "table"
+        }
+      ],
+      "parameters": {
+        "inputs": [
+          "p_cliente_id"
+        ],
+        "outputs": [],
+        "in_out": []
+      },
+      "variables": [
+        "v_total"
+      ],
+      "recommended_strategy": "database_delegated",
+      "recommendations": [
+        {
+          "code": "KEEP_SET_BASED_SQL",
+          "message": "Keep joins, aggregates, CTEs and bulk DML as parameterized SQL."
+        }
+      ]
+    },
+    "code_generation": {
+      "strategy": "database_delegated",
+      "recommended_strategy": "database_delegated",
+      "architectural_decisions": [
+        {
+          "topic": "aggregation stays in SQL",
+          "decision": "The SUM/COALESCE query is kept as parameterized SQL executed via SQLAlchemy text(); Python only unwraps the scalar and applies the NUMERIC(18,2) rounding.",
+          "rationale": "Aggregation belongs close to the database; the routine is a single set-based SELECT."
+        },
+        {
+          "topic": "NUMERIC(18,2) rounding",
+          "decision": "The result is quantized to 2 decimal places with Decimal.quantize (ROUND_HALF_UP is the default for quantize) to reproduce the PL/pgSQL assignment rounding of v_total NUMERIC(18,2).",
+          "rationale": "Rule 12: NUMERIC values must be Decimal end to end and intermediate rounding must be reproduced."
+        }
+      ],
+      "warnings": [
+        "The Python function returns Decimal; callers must not convert it to float.",
+        "No transaction control is performed: the caller owns the transaction, matching the original function which had none."
+      ],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "code-generation-v5",
+      "input_tokens": 2237,
+      "output_tokens": 503,
+      "latency_ms": 11262.41,
+      "finish_reason": "stop",
+      "attempt": 1
+    },
+    "case_generation": {
+      "seed_generated": false,
+      "kept": [
+        "null client id matches nothing",
+        "inactive client with only closed account",
+        "zero balance active account summed"
+      ],
+      "discarded": [],
+      "warnings": [],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "cases-v2",
+      "input_tokens": 3673,
+      "output_tokens": 100,
+      "latency_ms": 5347.49
+    },
+    "validation": {
+      "results": [
+        {
+          "validator": "python_ast",
+          "success": true,
+          "blocking": true,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "ruff",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "behavior",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        }
+      ]
+    },
+    "completed_steps": [
+      "parsing",
+      "semantic_analysis",
+      "case_generation",
+      "code_generation",
+      "validation"
+    ],
+    "errors": [],
+    "warnings": []
+  }
+}

@@ -122,8 +122,8 @@ class ModernizationReport(ValueObject):
             return ModernizationStatus.PARTIAL  # code exists but was never verified
         if not self.validation.is_valid:
             return ModernizationStatus.FAILURE
-        if self.errors or not self.validation.passed_all:
-            return ModernizationStatus.PARTIAL
+        if self.errors or not self.validation.verified_all:
+            return ModernizationStatus.PARTIAL  # a failed or skipped check
         return ModernizationStatus.SUCCESS
 
 

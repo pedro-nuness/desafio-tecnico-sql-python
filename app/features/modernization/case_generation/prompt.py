@@ -5,13 +5,15 @@ from app.features.modernization.parsing.domain import ParsedProcedure
 from app.features.modernization.validation.checks.behavior.domain import Scenario
 from app.shared.domain.value_object import ValueObject
 
-PROMPT_VERSION = "cases-v1"
+PROMPT_VERSION = "cases-v2"
 MAX_CASES = 6
 
 SYSTEM_PROMPT = f"""\
 You write test inputs for a PostgreSQL PL/pgSQL routine that is being rewritten in Python.
-Each case runs on the ORIGINAL routine and on the rewrite, and their results and final table
-rows are compared. Never write expected results: the original routine is the oracle.
+A case is ONE call of the routine with fixed input values. It runs twice: the SQL in "sql" on
+the ORIGINAL routine, and the Python rewrite called with "args". Their results and final table
+rows are compared, so both sides must get exactly the same inputs. Never write expected
+results: the original routine is the oracle.
 
 Write the cases that tell a faithful rewrite from a wrong one:
 1. Every path: each IF/ELSIF/ELSE branch, each RAISE, each EXCEPTION handler, loops over
@@ -23,11 +25,17 @@ Write the cases that tell a faithful rewrite from a wrong one:
 4. At most {MAX_CASES} cases, all different; the name says what the case covers.
 
 Each case:
-- "sql": how the original is called, with literal values only: `SELECT <routine>(...)` for a
-  scalar function, `SELECT * FROM <routine>(...)` for SETOF/TABLE results or OUT parameters,
+- "sql": a single call of the routine and nothing else: `SELECT <routine>(...)` for a scalar
+  function, `SELECT * FROM <routine>(...)` for SETOF/TABLE results or OUT parameters,
   `CALL <routine>(...)` for a procedure (NULL in the position of each OUT parameter).
-- "args": the same IN/INOUT values, in parameter order, as JSON: numbers for integers,
-  strings for NUMERIC ("50.00") and dates ("2026-09-15"), null for NULL.
+  Every argument is a literal (42, '50.00', DATE '2026-09-15', NULL): no subquery, column,
+  expression or function call, because the rewrite only receives "args".
+- "args": the same values as the literals in "sql", in parameter order, as JSON: numbers for
+  integers, strings for NUMERIC ("50.00") and dates ("2026-09-15"), null for NULL.
+- To target a specific row, read its id in the seed and write that id. Wrong:
+  `SELECT f((SELECT cliente_id FROM contas WHERE id = 21))` with args [null]. Right: look up
+  row 21 in the seed, see cliente_id 7, write `SELECT f(7)` with args [7].
+- A case that breaks these rules is discarded.
 
 "seed": SQL that fills the schema's tables for your cases: INSERT statements with explicit
 ids, then `SELECT setval(pg_get_serial_sequence('<table>', 'id'), <max id>);` for every

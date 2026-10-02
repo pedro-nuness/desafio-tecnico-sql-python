@@ -1,12 +1,13 @@
 """Case generation step: the LLM proposes inputs, the original routine filters them.
 
 The LLM never writes expected results: the behavior check compares the original against the
-generated code. A proposed case is kept only if it fits the signature, calls the routine and
-runs on the original as valid SQL. The caller's cases stay the reference; generated ones
-are added to them, on the caller's seed when there is one.
+generated code. A proposed case is kept only if it fits the signature, calls the routine with
+literal values (no subquery) and runs on the original as valid SQL. The caller's cases stay
+the reference; generated ones are added to them, on the caller's seed when there is one.
 """
 
 import json
+import re
 from typing import Any
 
 from pydantic import BaseModel, ValidationError
@@ -177,6 +178,8 @@ def _proposed_cases(
             )
         elif routine not in proposed.sql.lower():
             discarded.append(f"{proposed.name}: does not call {routine}")
+        elif _has_subquery(proposed.sql):
+            discarded.append(f"{proposed.name}: the call must take literal values, not a subquery")
         else:
             name = proposed.name if proposed.name not in taken else f"{proposed.name} #{index}"
             taken.add(name)
@@ -189,3 +192,10 @@ def _proposed_cases(
                 )
             )
     return kept, discarded
+
+
+def _has_subquery(sql: str) -> bool:
+    """A SELECT inside the call: the original resolves it, but the generated code only gets the
+    literal `args`, so the two sides would run on different inputs (observed: args [null])."""
+    selects = len(re.findall(r"\bselect\b", sql, re.IGNORECASE))
+    return selects > (1 if sql.lstrip().lower().startswith("select") else 0)

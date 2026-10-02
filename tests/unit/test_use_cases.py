@@ -10,7 +10,7 @@ from app.features.modernization.use_cases import (
     ModernizeCommand,
 )
 from app.features.modernization.validation.domain import ValidationMessage
-from app.features.modernization.validation.validate_code import Rule, ValidateCode
+from app.features.modernization.validation.validate_code import Rule, Skipped, ValidateCode
 from app.shared.errors import DomainError, NotFoundError
 from app.shared.integrations.errors import IntegrationError
 from tests.conftest import ModernizeFactory, llm_payload
@@ -107,6 +107,27 @@ async def test_lint_findings_make_the_result_partial(
     assert result.status is ModernizationStatus.PARTIAL
     assert result.report.validation is not None
     assert any("F401" in warning for warning in result.report.warnings)
+
+
+class _SkippedCheck:
+    name = "behavior"
+
+    async def check(self, code: str, routine: object = None) -> Skipped:
+        return Skipped("no behavior scenario provided")
+
+
+async def test_a_skipped_check_makes_the_result_partial_not_success(
+    make_modernize: ModernizeFactory, load_procedure: Callable[[str], str]
+) -> None:
+    """Code that was never run against the original is not reported as verified."""
+    skipped = ValidateCode([Rule(_SkippedCheck(), blocking=False)])
+
+    result = await make_modernize(validate_code=skipped).execute(
+        ModernizeCommand(load_procedure("process_orders"))
+    )
+
+    assert result.status is ModernizationStatus.PARTIAL
+    assert "[behavior] not run: no behavior scenario provided" in result.report.warnings
 
 
 class _ExplodingCheck:

@@ -1,0 +1,53 @@
+{
+  "id": "01a0fd24-80d0-73a6-a5a3-6947e750edea",
+  "modernization_id": "01a0fd23-8714-74cc-9159-667fa9195ee9",
+  "procedure_name": "sp_relatorio_mensal_cliente",
+  "metric": "behavioral_equivalence",
+  "prompt_version": "code-generation-v5",
+  "model": "z-ai/glm-5.3-flash",
+  "static_valid": true,
+  "completed": true,
+  "cases": [
+    {
+      "name": "four months, one without movement",
+      "passed": true,
+      "detail": "same result and same final state",
+      "original": "returned 4 row(s): [\"2026-06-01\", \"0\", \"0\", \"1500\", \"0\"], [\"2026-07-01\", \"250\", \"75.25\", \"1674.75\", \"2\"], [\"2026-08-01\", \"40\", \"40\", \"1500\", \"1\"] ...",
+      "generated": "returned 4 row(s): [\"2026-06-01\", \"0\", \"0\", \"1500\", \"0\"], [\"2026-07-01\", \"250\", \"75.25\", \"1674.75\", \"2\"], [\"2026-08-01\", \"40\", \"40\", \"1500\", \"1\"] ...",
+      "source": "user",
+      "duration_ms": 418,
+      "holdout": false
+    },
+    {
+      "name": "client without active accounts",
+      "passed": true,
+      "detail": "same result and same final state",
+      "original": "returned 3 row(s): [\"2026-07-01\", \"0\", \"0\", \"0\", \"0\"], [\"2026-08-01\", \"0\", \"0\", \"0\", \"0\"], [\"2026-09-01\", \"0\", \"0\", \"0\", \"0\"]",
+      "generated": "returned 3 row(s): [\"2026-07-01\", \"0\", \"0\", \"0\", \"0\"], [\"2026-08-01\", \"0\", \"0\", \"0\", \"0\"], [\"2026-09-01\", \"0\", \"0\", \"0\", \"0\"]",
+      "source": "user",
+      "duration_ms": 357,
+      "holdout": true
+    },
+    {
+      "name": "another client, three months",
+      "passed": true,
+      "detail": "same result and same final state",
+      "original": "returned 3 row(s): [\"2026-07-01\", \"75.25\", \"250\", \"125.25\", \"2\"], [\"2026-08-01\", \"0\", \"15\", \"285\", \"1\"], [\"2026-09-01\", \"210\", \"637.5\", \"-127.5\", \"6\"]",
+      "generated": "returned 3 row(s): [\"2026-07-01\", \"75.25\", \"250\", \"125.25\", \"2\"], [\"2026-08-01\", \"0\", \"15\", \"285\", \"1\"], [\"2026-09-01\", \"210\", \"637.5\", \"-127.5\", \"6\"]",
+      "source": "user",
+      "duration_ms": 362,
+      "holdout": true
+    },
+    {
+      "name": "inverted period returns the degraded fallback row",
+      "passed": true,
+      "detail": "same result and same final state",
+      "original": "returned 1 row(s): [\"2026-09-01\", \"0\", \"0\", \"0\", \"0\"]",
+      "generated": "returned 1 row(s): [\"2026-09-01\", \"0\", \"0\", \"0\", \"0\"]",
+      "source": "user",
+      "duration_ms": 325,
+      "holdout": false
+    }
+  ],
+  "created_at": "2026-10-02T15:03:43.056495Z"
+}

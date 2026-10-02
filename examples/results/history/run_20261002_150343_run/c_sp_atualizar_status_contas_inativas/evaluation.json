@@ -1,0 +1,53 @@
+{
+  "id": "01a0fd20-99b9-7763-88dc-fac3e6e1e8cd",
+  "modernization_id": "01a0fd20-5c33-7525-a2fd-94a068bf182e",
+  "procedure_name": "sp_atualizar_status_contas_inativas",
+  "metric": "behavioral_equivalence",
+  "prompt_version": "code-generation-v5",
+  "model": "z-ai/glm-5.3-flash",
+  "static_valid": true,
+  "completed": true,
+  "cases": [
+    {
+      "name": "30 days inactivates the idle and the never-moved accounts",
+      "passed": true,
+      "detail": "same result and same final state",
+      "original": "returned 1 row(s): [\"1\"]",
+      "generated": "returned 1 row(s): [\"1\"]",
+      "source": "user",
+      "duration_ms": 673,
+      "holdout": false
+    },
+    {
+      "name": "3650 days only inactivates the never-moved account",
+      "passed": true,
+      "detail": "same result and same final state",
+      "original": "returned 1 row(s): [\"0\"]",
+      "generated": "returned 1 row(s): [\"0\"]",
+      "source": "user",
+      "duration_ms": 552,
+      "holdout": true
+    },
+    {
+      "name": "zero days is rejected",
+      "passed": true,
+      "detail": "both raised",
+      "original": "raised RaiseError: Parametro p_dias deve ser positivo, recebido: 0",
+      "generated": "raised ParametroInvalidoError: Parametro p_dias deve ser positivo, recebido: 0 (at generated line 40: raise ParametroInvalidoError()",
+      "source": "user",
+      "duration_ms": 512,
+      "holdout": false
+    },
+    {
+      "name": "null days is rejected",
+      "passed": true,
+      "detail": "both raised",
+      "original": "raised RaiseError: Parametro p_dias deve ser positivo, recebido: <NULL>",
+      "generated": "raised ParametroInvalidoError: Parametro p_dias deve ser positivo, recebido: None (at generated line 40: raise ParametroInvalidoError()",
+      "source": "user",
+      "duration_ms": 467,
+      "holdout": true
+    }
+  ],
+  "created_at": "2026-10-02T14:59:27.289682Z"
+}

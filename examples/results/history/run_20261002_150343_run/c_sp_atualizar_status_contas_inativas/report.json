@@ -1,0 +1,236 @@
+{
+  "execution_id": "01a0fd20-5c33-7525-a2fd-94a068bf182e",
+  "status": "success",
+  "created_at": "2026-10-02T14:59:11.539587+00:00",
+  "report": {
+    "parsing": {
+      "procedure_name": "sp_atualizar_status_contas_inativas",
+      "kind": "procedure",
+      "parser": "pglast",
+      "parameters": [
+        {
+          "name": "p_dias",
+          "data_type": "integer",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "p_afetadas",
+          "data_type": "integer",
+          "mode": "out",
+          "has_default": false
+        }
+      ],
+      "return_type": null,
+      "statement_count": 5,
+      "referenced_tables": [
+        "contas",
+        "log_auditoria",
+        "transacoes"
+      ],
+      "called_functions": [
+        "jsonb_build_object",
+        "now"
+      ],
+      "warnings": []
+    },
+    "semantic_analysis": {
+      "constructs": [
+        {
+          "construct": "conditional",
+          "occurrences": 1,
+          "lines": [
+            15
+          ]
+        },
+        {
+          "construct": "dml",
+          "occurrences": 2,
+          "lines": [
+            19,
+            31
+          ]
+        },
+        {
+          "construct": "get_diagnostics",
+          "occurrences": 1,
+          "lines": [
+            29
+          ]
+        },
+        {
+          "construct": "in_parameters",
+          "occurrences": 1,
+          "lines": []
+        },
+        {
+          "construct": "jsonb",
+          "occurrences": 1,
+          "lines": [
+            31
+          ]
+        },
+        {
+          "construct": "out_parameters",
+          "occurrences": 1,
+          "lines": []
+        },
+        {
+          "construct": "raise",
+          "occurrences": 1,
+          "lines": [
+            16
+          ]
+        }
+      ],
+      "risks": [
+        {
+          "code": "DIAGNOSTICS_SEMANTICS",
+          "severity": "low",
+          "message": "GET DIAGNOSTICS must be mapped to driver equivalents (e.g. rowcount).",
+          "line": null
+        }
+      ],
+      "dependencies": [
+        {
+          "name": "contas",
+          "kind": "table"
+        },
+        {
+          "name": "log_auditoria",
+          "kind": "table"
+        },
+        {
+          "name": "transacoes",
+          "kind": "table"
+        }
+      ],
+      "parameters": {
+        "inputs": [
+          "p_dias"
+        ],
+        "outputs": [
+          "p_afetadas"
+        ],
+        "in_out": []
+      },
+      "variables": [],
+      "recommended_strategy": "hybrid",
+      "recommendations": [
+        {
+          "code": "KEEP_SET_BASED_SQL",
+          "message": "Keep joins, aggregates, CTEs and bulk DML as parameterized SQL."
+        },
+        {
+          "code": "TYPED_EXCEPTIONS",
+          "message": "Map RAISE EXCEPTION to typed exceptions and RAISE NOTICE to logging."
+        },
+        {
+          "code": "RESULT_TYPE_FOR_OUT_PARAMS",
+          "message": "Return OUT/INOUT parameters as an immutable result type."
+        },
+        {
+          "code": "ROWCOUNT",
+          "message": "Use the driver's rowcount instead of GET DIAGNOSTICS ROW_COUNT."
+        }
+      ]
+    },
+    "code_generation": {
+      "strategy": "hybrid",
+      "recommended_strategy": "hybrid",
+      "architectural_decisions": [
+        {
+          "topic": "Set-based UPDATE kept in SQL",
+          "decision": "The bulk UPDATE with NOT EXISTS subquery stays as one parameterized statement executed via SQLAlchemy text().",
+          "rationale": "Bulk DML and correlated filters belong close to the database; rewriting in Python would be an N+1 anti-pattern."
+        },
+        {
+          "topic": "Interval construction",
+          "decision": "Replaced `(p_dias || ' days')::INTERVAL` with `make_interval(days => CAST(:p_dias AS INTEGER))`.",
+          "rationale": "The `||` operator is a polymorphic position for asyncpg; make_interval with an explicit CAST keeps the integer type and avoids the 'expected str, got int' failure."
+        },
+        {
+          "topic": "OUT parameter mapping",
+          "decision": "p_afetadas is returned as a frozen dataclass field populated from result.rowcount.",
+          "rationale": "Maps GET DIAGNOSTICS ROW_COUNT to the driver equivalent and satisfies the OUT-parameter result-type rule."
+        },
+        {
+          "topic": "Transaction ownership",
+          "decision": "No commit/rollback in the function; the caller owns the transaction.",
+          "rationale": "The original procedure does not manage transactions itself."
+        },
+        {
+          "topic": "Validation",
+          "decision": "The p_dias validation (NULL or <= 0) is done in Python and raises ParametroInvalidoError before any SQL runs.",
+          "rationale": "Input validation and control flow belong in Python; the typed exception mirrors the RAISE EXCEPTION."
+        }
+      ],
+      "warnings": [
+        "jsonb_build_object values are individually CAST to their own types (INTEGER) so the JSON stores numbers, not strings.",
+        "rowcount semantics: SQLAlchemy/asyncpg reports the number of rows actually updated by the UPDATE, matching GET DIAGNOSTICS ROW_COUNT.",
+        "The audit INSERT uses the rowcount captured before it; if the UPDATE is rolled back by the caller, the audit row is rolled back too (same as the original, which ran inside the caller's transaction)."
+      ],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "code-generation-v5",
+      "input_tokens": 2832,
+      "output_tokens": 1173,
+      "latency_ms": 7360.88,
+      "finish_reason": "stop",
+      "attempt": 1
+    },
+    "case_generation": {
+      "seed_generated": false,
+      "kept": [
+        "NULL p_dias raises exception",
+        "negative p_dias raises exception",
+        "1 day: recent activity keeps accounts active, nothing affected",
+        "44 days: boundary just below the 45-day idle transaction, account 22 stays active",
+        "46 days: just above the 45-day boundary, account 22 inactivated",
+        "very large p_dias: all ATIVA accounts inactivated, INATIVA/ENCERRADA untouched"
+      ],
+      "discarded": [],
+      "warnings": [],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "cases-v2",
+      "input_tokens": 3883,
+      "output_tokens": 399,
+      "latency_ms": 3519.02
+    },
+    "validation": {
+      "results": [
+        {
+          "validator": "python_ast",
+          "success": true,
+          "blocking": true,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "ruff",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "behavior",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        }
+      ]
+    },
+    "completed_steps": [
+      "parsing",
+      "semantic_analysis",
+      "case_generation",
+      "code_generation",
+      "validation"
+    ],
+    "errors": [],
+    "warnings": []
+  }
+}

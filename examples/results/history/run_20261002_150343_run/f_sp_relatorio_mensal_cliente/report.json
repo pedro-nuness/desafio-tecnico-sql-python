@@ -1,0 +1,323 @@
+{
+  "execution_id": "01a0fd23-8714-74cc-9159-667fa9195ee9",
+  "status": "success",
+  "created_at": "2026-10-02T15:02:39.124864+00:00",
+  "report": {
+    "parsing": {
+      "procedure_name": "sp_relatorio_mensal_cliente",
+      "kind": "function",
+      "parser": "pglast",
+      "parameters": [
+        {
+          "name": "p_cliente_id",
+          "data_type": "bigint",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "p_data_inicio",
+          "data_type": "date",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "p_data_fim",
+          "data_type": "date",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "mes_referencia",
+          "data_type": "date",
+          "mode": "table",
+          "has_default": false
+        },
+        {
+          "name": "total_creditos",
+          "data_type": "numeric(18, 2)",
+          "mode": "table",
+          "has_default": false
+        },
+        {
+          "name": "total_debitos",
+          "data_type": "numeric(18, 2)",
+          "mode": "table",
+          "has_default": false
+        },
+        {
+          "name": "saldo_consolidado",
+          "data_type": "numeric(18, 2)",
+          "mode": "table",
+          "has_default": false
+        },
+        {
+          "name": "qtd_transacoes",
+          "data_type": "integer",
+          "mode": "table",
+          "has_default": false
+        }
+      ],
+      "return_type": "TABLE(mes_referencia date, total_creditos numeric(18, 2), total_debitos numeric(18, 2), saldo_consolidado numeric(18, 2), qtd_transacoes integer)",
+      "statement_count": 8,
+      "referenced_tables": [
+        "contas",
+        "transacoes"
+      ],
+      "called_functions": [
+        "count",
+        "date_trunc",
+        "fn_saldo_cliente",
+        "sum"
+      ],
+      "warnings": []
+    },
+    "semantic_analysis": {
+      "constructs": [
+        {
+          "construct": "aggregation",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "construct": "conditional",
+          "occurrences": 1,
+          "lines": [
+            27
+          ]
+        },
+        {
+          "construct": "cte",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "construct": "exception_handling",
+          "occurrences": 1,
+          "lines": [
+            26
+          ]
+        },
+        {
+          "construct": "in_parameters",
+          "occurrences": 3,
+          "lines": []
+        },
+        {
+          "construct": "join",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "construct": "out_parameters",
+          "occurrences": 5,
+          "lines": []
+        },
+        {
+          "construct": "raise",
+          "occurrences": 3,
+          "lines": [
+            28,
+            32,
+            75
+          ]
+        },
+        {
+          "construct": "recursive_cte",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "construct": "return_query",
+          "occurrences": 2,
+          "lines": [
+            34,
+            77
+          ]
+        },
+        {
+          "construct": "variables",
+          "occurrences": 1,
+          "lines": [
+            25
+          ]
+        }
+      ],
+      "risks": [
+        {
+          "code": "SWALLOWED_EXCEPTION",
+          "severity": "medium",
+          "message": "WHEN OTHERS handler does not re-raise: errors are swallowed.",
+          "line": 26
+        },
+        {
+          "code": "RECURSIVE_CTE",
+          "severity": "low",
+          "message": "Recursive CTE should stay in SQL; re-implementing it in Python is costly.",
+          "line": null
+        },
+        {
+          "code": "EXTERNAL_ROUTINE_DEPENDENCY",
+          "severity": "low",
+          "message": "Depends on other database routines: fn_saldo_cliente.",
+          "line": null
+        }
+      ],
+      "dependencies": [
+        {
+          "name": "contas",
+          "kind": "table"
+        },
+        {
+          "name": "transacoes",
+          "kind": "table"
+        },
+        {
+          "name": "fn_saldo_cliente",
+          "kind": "function"
+        }
+      ],
+      "parameters": {
+        "inputs": [
+          "p_cliente_id",
+          "p_data_inicio",
+          "p_data_fim"
+        ],
+        "outputs": [
+          "mes_referencia",
+          "total_creditos",
+          "total_debitos",
+          "saldo_consolidado",
+          "qtd_transacoes"
+        ],
+        "in_out": []
+      },
+      "variables": [
+        "v_saldo_atual"
+      ],
+      "recommended_strategy": "hybrid",
+      "recommendations": [
+        {
+          "code": "KEEP_SET_BASED_SQL",
+          "message": "Keep joins, aggregates, CTEs and bulk DML as parameterized SQL."
+        },
+        {
+          "code": "TYPED_EXCEPTIONS",
+          "message": "Map RAISE EXCEPTION to typed exceptions and RAISE NOTICE to logging."
+        },
+        {
+          "code": "RESULT_TYPE_FOR_OUT_PARAMS",
+          "message": "Return OUT/INOUT parameters as an immutable result type."
+        },
+        {
+          "code": "TYPED_ROWS",
+          "message": "Return RETURN QUERY rows as a sequence of typed rows."
+        }
+      ]
+    },
+    "code_generation": {
+      "strategy": "hybrid",
+      "recommended_strategy": "hybrid",
+      "architectural_decisions": [
+        {
+          "topic": "Exception handler scope",
+          "decision": "The period validation RAISE and the balance lookup and main query all run inside one begin_nested() savepoint whose exception is caught and converted to the fallback row.",
+          "rationale": "In the original, the RAISE EXCEPTION is inside the block protected by WHEN OTHERS, so an inverted period returns the degraded fallback row (with v_saldo_atual still NULL -> 0) instead of propagating an error."
+        },
+        {
+          "topic": "NULL date comparison",
+          "decision": "The comparison is guarded so NULL dates skip the check (SQL three-valued logic) instead of raising TypeError.",
+          "rationale": "In PL/pgSQL, NULL > NULL evaluates to NULL (false), so the original proceeds with the main query and returns a row with NULL mes_referencia."
+        },
+        {
+          "topic": "Relational logic in SQL",
+          "decision": "Recursive CTE, aggregation and joins stay as one parameterized SQL statement; fn_saldo_cliente remains a database call.",
+          "rationale": "Set-based logic stays close to the database; re-implementing the recursive month chain in Python would be costly and error-prone."
+        },
+        {
+          "topic": "Savepoint usage",
+          "decision": "Used `async with conn.begin_nested():` around the protected statements.",
+          "rationale": "A PL/pgSQL EXCEPTION block is a savepoint; without rolling it back on error, the transaction would stay aborted and the fallback query would fail."
+        }
+      ],
+      "warnings": [
+        "Behaviour preserved faithfully: an inverted period does NOT raise; it returns the degraded fallback row (mes = first day of p_data_inicio's month, zeros, saldo 0), exactly like the original WHEN OTHERS handler.",
+        "The WHEN OTHERS handler swallows all errors (including PeriodoInvalidoError); PeriodoInvalidoError is defined and raised internally but callers will normally only observe the fallback row.",
+        "Depends on the database routine fn_saldo_cliente, which must still exist in the database.",
+        "If p_data_inicio is NULL, the fallback row's mes_referencia is NULL, matching the original DATE_TRUNC('month', NULL)."
+      ],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "code-generation-v5",
+      "input_tokens": 5870,
+      "output_tokens": 2828,
+      "latency_ms": 24021.38,
+      "finish_reason": "stop",
+      "attempt": 2
+    },
+    "case_generation": {
+      "seed_generated": false,
+      "kept": [
+        "nonexistent client id, valid period returns empty set",
+        "NULL cliente_id yields NULL saldo rows",
+        "client with only ENCERRADA account, zero saldo",
+        "single month where transaction has both sides on client accounts (counted once)",
+        "one-day range boundary: fim day included, cancelled and TARIFA rows present",
+        "NULL dates hit exception handler fallback row"
+      ],
+      "discarded": [],
+      "warnings": [],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "cases-v2",
+      "input_tokens": 4649,
+      "output_tokens": 913,
+      "latency_ms": 29417.49
+    },
+    "validation": {
+      "results": [
+        {
+          "validator": "python_ast",
+          "success": true,
+          "blocking": true,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "ruff",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "behavior",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        }
+      ]
+    },
+    "completed_steps": [
+      "parsing",
+      "semantic_analysis",
+      "case_generation",
+      "code_generation",
+      "validation",
+      "code_generation",
+      "validation"
+    ],
+    "errors": [],
+    "warnings": [
+      "generation attempt 2: regenerated after 2 validation issue(s) in the previous attempt"
+    ]
+  }
+}

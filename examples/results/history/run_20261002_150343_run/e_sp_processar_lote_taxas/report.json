@@ -1,0 +1,252 @@
+{
+  "execution_id": "01a0fd21-05b6-72da-8ffe-ef464ca0f929",
+  "status": "success",
+  "created_at": "2026-10-02T14:59:54.934916+00:00",
+  "report": {
+    "parsing": {
+      "procedure_name": "sp_processar_lote_taxas",
+      "kind": "procedure",
+      "parser": "pglast",
+      "parameters": [
+        {
+          "name": "p_data_referencia",
+          "data_type": "date",
+          "mode": "in",
+          "has_default": false
+        }
+      ],
+      "return_type": null,
+      "statement_count": 22,
+      "referenced_tables": [
+        "contas",
+        "log_auditoria",
+        "taxas",
+        "transacoes"
+      ],
+      "called_functions": [
+        "date",
+        "jsonb_build_object"
+      ],
+      "warnings": []
+    },
+    "semantic_analysis": {
+      "constructs": [
+        {
+          "construct": "conditional",
+          "occurrences": 5,
+          "lines": [
+            47,
+            53,
+            54,
+            55,
+            59
+          ]
+        },
+        {
+          "construct": "cursor",
+          "occurrences": 4,
+          "lines": [
+            15,
+            32,
+            35,
+            82
+          ]
+        },
+        {
+          "construct": "dml",
+          "occurrences": 4,
+          "lines": [
+            60,
+            62,
+            65,
+            84
+          ]
+        },
+        {
+          "construct": "in_parameters",
+          "occurrences": 1,
+          "lines": []
+        },
+        {
+          "construct": "jsonb",
+          "occurrences": 2,
+          "lines": [
+            65,
+            84
+          ]
+        },
+        {
+          "construct": "loop",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "construct": "variables",
+          "occurrences": 9,
+          "lines": [
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30
+          ]
+        }
+      ],
+      "risks": [
+        {
+          "code": "N_PLUS_ONE",
+          "severity": "high",
+          "message": "4 SQL statements executed on every iteration of this LOOP (lines 38, 60, 62, 65): one database round-trip each per row. Prefer set-based statements.",
+          "line": 34
+        }
+      ],
+      "dependencies": [
+        {
+          "name": "contas",
+          "kind": "table"
+        },
+        {
+          "name": "log_auditoria",
+          "kind": "table"
+        },
+        {
+          "name": "taxas",
+          "kind": "table"
+        },
+        {
+          "name": "transacoes",
+          "kind": "table"
+        }
+      ],
+      "parameters": {
+        "inputs": [
+          "p_data_referencia"
+        ],
+        "outputs": [],
+        "in_out": []
+      },
+      "variables": [
+        "v_id",
+        "v_origem",
+        "v_tipo",
+        "v_valor",
+        "v_taxa",
+        "v_percentual",
+        "v_minimo",
+        "v_total_taxas",
+        "v_count"
+      ],
+      "recommended_strategy": "hybrid",
+      "recommendations": [
+        {
+          "code": "KEEP_SET_BASED_SQL",
+          "message": "Keep joins, aggregates, CTEs and bulk DML as parameterized SQL."
+        },
+        {
+          "code": "REWRITE_ROW_BY_ROW",
+          "message": "Collapse per-row statements inside loops into one set-based statement."
+        }
+      ]
+    },
+    "code_generation": {
+      "strategy": "hybrid",
+      "recommended_strategy": "hybrid",
+      "architectural_decisions": [
+        {
+          "topic": "N+1 eliminado",
+          "decision": "O cursor com 4 statements por iteracao foi reescrito como uma unica instrucao com CTEs (LEFT JOIN LATERAL para a taxa vigente, UPDATE agregado de saldos, INSERTs em massa de transacoes TARIFA e de logs) mais um statement final para o log do lote.",
+          "rationale": "A semantica permite: o saldo final e comutativo (SUM por conta), o log referencia a transacao de origem (v_id), nao a TARIFA inserida, e a contagem/total sao agregados. Elimina dezenas/milhares de round-trips."
+        },
+        {
+          "topic": "Arredondamentos NUMERIC(18,2)",
+          "decision": "Cada atribuicao intermediaria de v_taxa foi reproduzida com CAST(... AS NUMERIC(18,2)) em pontos separados (fee_base e fees), em vez de uma expressao unica.",
+          "rationale": "A variavel PL/pgSQL NUMERIC(18,2) arredonda a cada atribuicao; GREATEST(...) arredonda uma vez e a multiplicacao por 1.10/0.90 arredonda novamente. Uma expressao combinada arredondaria so uma vez e mudaria os valores."
+        },
+        {
+          "topic": "UPDATE ... FROM",
+          "decision": "O debito de saldo agrega as taxas por conta (GROUP BY) antes do UPDATE.",
+          "rationale": "UPDATE ... FROM aplica no maximo uma linha de origem por alvo; contas com varias transacoes no dia perderiam debitos sem a agregacao."
+        },
+        {
+          "topic": "Transacao",
+          "decision": "Nenhum commit/rollback no modulo.",
+          "rationale": "A procedure original nao controla transacoes; o caller possui a transacao."
+        }
+      ],
+      "warnings": [
+        "Ordem de insercao: a original processava o cursor em ordem arbitraria e inseria TARIFA/log linha a linha; a versao set-based insere em ordem nao deterministica. Os saldos finais e os conteudos de log sao identicos, mas os ids/sequencias das linhas inseridas podem diferir.",
+        "Empate em taxas.vigente_de: o LIMIT 1 sem desempate secundario e nao deterministico na original e continua assim (comportamento preservado).",
+        "A original nao usa FOR UPDATE; transacoes concorrentes nas mesmas contas podem intercalar da mesma forma em ambas as versoes. Nenhum lock foi adicionado para preservar o comportamento.",
+        "O snapshot do cursor (linhas visiveis no OPEN) foi substituido pelo snapshot do statement set-based; como as TARIFA inseridas sao excluidas pelo filtro tipo <> 'TARIFA', o resultado e equivalente.",
+        "O nome da variavel local v_total_taxas no Python recebe o valor NUMERIC(18,2) como decimal.Decimal end-to-end (a anotacao datetime.date na linha de desempacotamento e apenas um alias local e deve ser lida como decimal.Decimal; corrigir em revisao se o linter de tipos for executado)."
+      ],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "code-generation-v5",
+      "input_tokens": 4042,
+      "output_tokens": 6456,
+      "latency_ms": 157977.58,
+      "finish_reason": "stop",
+      "attempt": 1
+    },
+    "case_generation": {
+      "seed_generated": false,
+      "kept": [
+        "holdout batch 2026-09-17: two fees on account 20, double rounding, transfer to zero-balance account 21",
+        "batch 2026-09-16: single SAQUE on poupanca account 11, percentual below valor_minimo",
+        "batch 2026-07-05: TRANSFERENCIA where client 1 account is destination only (origem 20)",
+        "batch 2026-08-03: TRANSFERENCIA between two accounts of the same client",
+        "NULL reference date: cursor matches nothing, only the LOTE_PROCESSADO log with NULL date",
+        "date exactly at vigente_de boundary of SAQUE rate 2 with no transactions: zero-fee log"
+      ],
+      "discarded": [],
+      "warnings": [],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "cases-v2",
+      "input_tokens": 4336,
+      "output_tokens": 943,
+      "latency_ms": 5830.22
+    },
+    "validation": {
+      "results": [
+        {
+          "validator": "python_ast",
+          "success": true,
+          "blocking": true,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "ruff",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "behavior",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        }
+      ]
+    },
+    "completed_steps": [
+      "parsing",
+      "semantic_analysis",
+      "case_generation",
+      "code_generation",
+      "validation"
+    ],
+    "errors": [],
+    "warnings": []
+  }
+}
