@@ -1,35 +1,33 @@
-"""Evaluation dataset: the legacy schema, the seed data and the cases per routine (YAML).
+"""Evaluation dataset of the experiment: the legacy schema, the seed data and the cases per
+routine (YAML).
+
+Only the experiment reads it (scripts/run_examples.py and the evaluation endpoint): the
+pipeline runs the scenario its caller sends. The YAML splits the cases into dev (sent to the
+pipeline) and holdout (only the metric runs them), so the metric measures generalization.
 
 Paths inside the YAML are relative to it. Loaded once and validated, so a broken dataset
 fails with a clear message instead of in the middle of an evaluation.
 """
 
 from pathlib import Path
-from typing import Any
 
 import yaml
 from pydantic import BaseModel, ConfigDict, Field
 
+from app.features.modernization.validation.checks.behavior.domain import Case, Scenario
 
-class Case(BaseModel):
-    model_config = ConfigDict(frozen=True, extra="forbid")
 
-    name: str
-    sql: str
-    """How the original routine is called (SELECT for functions, CALL for procedures)."""
-    args: tuple[Any, ...] = ()  # YAML scalars: also dates, which are not JSON
-    """Positional arguments of the generated entry point; converted to the routine's IN
-    parameter types (e.g. "50.00" -> Decimal for NUMERIC, 2026-09-15 -> date)."""
+class _Case(Case):
     holdout: bool = False
-    """Never shown to the LLM: only the metric runs it (the repair loop runs the others)."""
+    """Never sent to the pipeline, so never shown to the LLM: only the metric runs it."""
 
 
-class Scenario(BaseModel):
+class _Scenario(BaseModel):
     model_config = ConfigDict(frozen=True, extra="forbid")
 
     requires: tuple[Path, ...] = ()
     """Other routines the original calls (installed before it), relative to the YAML."""
-    cases: tuple[Case, ...] = Field(min_length=1)
+    cases: tuple[_Case, ...] = Field(min_length=1)
 
 
 class _DatasetFile(BaseModel):
@@ -39,7 +37,7 @@ class _DatasetFile(BaseModel):
     seed: Path
     compare_tables: tuple[str, ...] = Field(min_length=1)
     ignore_columns: tuple[str, ...] = ()
-    scenarios: dict[str, Scenario]
+    scenarios: dict[str, _Scenario]
 
 
 class Dataset:
@@ -51,7 +49,7 @@ class Dataset:
         setup_sql: str,
         compare_tables: tuple[str, ...],
         ignore_columns: tuple[str, ...],
-        scenarios: dict[str, Scenario],
+        scenarios: dict[str, _Scenario],
         base_dir: Path,
     ) -> None:
         self.setup_sql = setup_sql
@@ -73,14 +71,32 @@ class Dataset:
             base_dir=base_dir,
         )
 
-    def scenario(self, routine: str) -> Scenario | None:
-        return self._scenarios.get(routine.lower())
+    def scenario(self, routine: str, *, include_holdout: bool) -> Scenario | None:
+        """The routine's cases as the harness runs them: without the holdout cases for the
+        pipeline, with them for the metric. None when the dataset has no scenario for it."""
+        found = self._scenarios.get(routine.lower())
+        if found is None:
+            return None
+        requirements = (_read(self._base_dir / path) for path in found.requires)
+        return Scenario(
+            setup_sql="\n".join((self.setup_sql, *requirements)),
+            cases=tuple(
+                Case(name=case.name, sql=case.sql, args=case.args)
+                for case in found.cases
+                if include_holdout or not case.holdout
+            ),
+            compare_tables=self.compare_tables,
+            ignore_columns=self.ignore_columns,
+        )
+
+    def holdout(self, routine: str) -> frozenset[str]:
+        """Names of the routine's holdout cases."""
+        found = self._scenarios.get(routine.lower())
+        cases = found.cases if found else ()
+        return frozenset(case.name for case in cases if case.holdout)
 
     def routines(self) -> tuple[str, ...]:
         return tuple(self._scenarios)
-
-    def requirements_sql(self, scenario: Scenario) -> str:
-        return "\n".join(_read(self._base_dir / path) for path in scenario.requires)
 
 
 def _read(path: Path) -> str:

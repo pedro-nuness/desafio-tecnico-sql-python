@@ -1,4 +1,4 @@
-"""Risks the Python version must handle, and the recommendations they (and the features) lead to.
+"""Risks the Python version must handle, and the recommendations they (and the constructs) lead to.
 
 Texts and severities live in catalog.py; this module only decides which ones apply.
 """
@@ -11,7 +11,7 @@ from app.features.modernization.analysis.catalog import (
     RISKS,
     is_builtin_function,
 )
-from app.features.modernization.analysis.domain import Feature, Recommendation, SemanticRisk
+from app.features.modernization.analysis.domain import Recommendation, SemanticRisk, SqlConstruct
 from app.features.modernization.parsing.domain import (
     LOOP_KINDS,
     ParsedProcedure,
@@ -38,7 +38,7 @@ def fragments_with_lines(procedure: ParsedProcedure) -> Iterator[tuple[SqlFragme
 
 
 def detect_risks(
-    procedure: ParsedProcedure, features: Container[Feature]
+    procedure: ParsedProcedure, constructs: Container[SqlConstruct]
 ) -> tuple[SemanticRisk, ...]:
     risks: list[SemanticRisk] = []
     for statement, loop_depth in procedure.iter_statements():
@@ -61,11 +61,11 @@ def detect_risks(
     for fragment, line in fragments_with_lines(procedure):
         if fragment.parse_error:
             risks.append(_risk("UNPARSED_SQL", line, error=fragment.parse_error))
-    if Feature.ROW_LOCKING in features:
+    if SqlConstruct.ROW_LOCKING in constructs:
         risks.append(_risk("ROW_LOCKING"))
-    if Feature.GET_DIAGNOSTICS in features:
+    if SqlConstruct.GET_DIAGNOSTICS in constructs:
         risks.append(_risk("DIAGNOSTICS_SEMANTICS"))
-    if Feature.RECURSIVE_CTE in features:
+    if SqlConstruct.RECURSIVE_CTE in constructs:
         risks.append(_risk("RECURSIVE_CTE"))
     external = [f for f in procedure.called_functions if not is_builtin_function(f)]
     if external:
@@ -108,29 +108,36 @@ def _walk_all(statements: tuple[Statement, ...]) -> Iterator[tuple[Statement, in
 
 
 def recommend(
-    features: Container[Feature], risks: tuple[SemanticRisk, ...]
+    constructs: Container[SqlConstruct], risks: tuple[SemanticRisk, ...]
 ) -> tuple[Recommendation, ...]:
     risk_codes = {risk.code for risk in risks}
     rules: list[tuple[bool, str]] = [
         (
             any(
-                f in features for f in (Feature.DML, Feature.AGGREGATION, Feature.JOIN, Feature.CTE)
+                f in constructs
+                for f in (
+                    SqlConstruct.DML,
+                    SqlConstruct.AGGREGATION,
+                    SqlConstruct.JOIN,
+                    SqlConstruct.CTE,
+                )
             ),
             "KEEP_SET_BASED_SQL",
         ),
         ("N_PLUS_ONE" in risk_codes, "REWRITE_ROW_BY_ROW"),
         (
-            Feature.TRANSACTION_CONTROL in features or Feature.ROW_LOCKING in features,
+            SqlConstruct.TRANSACTION_CONTROL in constructs
+            or SqlConstruct.ROW_LOCKING in constructs,
             "CALLER_OWNS_TRANSACTION",
         ),
         (
-            Feature.RAISE in features or Feature.EXCEPTION_HANDLING in features,
+            SqlConstruct.RAISE in constructs or SqlConstruct.EXCEPTION_HANDLING in constructs,
             "TYPED_EXCEPTIONS",
         ),
-        (Feature.OUT_PARAMETERS in features, "RESULT_TYPE_FOR_OUT_PARAMS"),
-        (Feature.RETURN_QUERY in features, "TYPED_ROWS"),
-        (Feature.GET_DIAGNOSTICS in features, "ROWCOUNT"),
-        (Feature.DYNAMIC_SQL in features, "SAFE_DYNAMIC_SQL"),
+        (SqlConstruct.OUT_PARAMETERS in constructs, "RESULT_TYPE_FOR_OUT_PARAMS"),
+        (SqlConstruct.RETURN_QUERY in constructs, "TYPED_ROWS"),
+        (SqlConstruct.GET_DIAGNOSTICS in constructs, "ROWCOUNT"),
+        (SqlConstruct.DYNAMIC_SQL in constructs, "SAFE_DYNAMIC_SQL"),
     ]
     return tuple(
         Recommendation(code=code, message=RECOMMENDATIONS[code])

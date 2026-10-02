@@ -3,7 +3,7 @@
 from datetime import datetime
 from uuid import UUID
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from app.features.modernization.domain import (
     Modernization,
@@ -12,7 +12,29 @@ from app.features.modernization.domain import (
 )
 from app.features.modernization.evaluation.domain import Evaluation, EvaluationSummary
 from app.features.modernization.use_cases import ModernizeCommand
-from app.features.modernization.validation.checks.behavior.domain import CaseResult
+from app.features.modernization.validation.checks.behavior.domain import (
+    Case,
+    CaseResult,
+    CaseSource,
+    Scenario,
+)
+
+
+class BehaviorRequest(BaseModel):
+    """How to run the original routine, so the generated code can be checked against it."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    seed: str = Field(
+        description="SQL run after `schema`: the test rows, plus any routine the original calls."
+    )
+    cases: tuple[Case, ...] = Field(min_length=1)
+    compare_tables: tuple[str, ...] = Field(
+        default=(), description="Tables whose final rows must match; empty = every table."
+    )
+    ignore_columns: tuple[str, ...] = Field(
+        default=(), description="Columns that differ between runs (new ids, now())."
+    )
 
 
 class ModernizationRequest(BaseModel):
@@ -24,9 +46,41 @@ class ModernizationRequest(BaseModel):
         alias="schema",
         description="Optional DDL of the tables involved (improves generation).",
     )
+    behavior: BehaviorRequest | None = Field(
+        default=None,
+        description="Optional seed and cases: the generated code is run against the original "
+        "on them, and divergences go back to the LLM.",
+    )
+    generate_cases: bool = Field(
+        default=True,
+        description="An LLM proposes more cases (on the `behavior` seed, or with its own seed); "
+        "the original routine filters them. Needs `schema`. False = only `behavior` runs.",
+    )
+
+    @model_validator(mode="after")
+    def _behavior_needs_the_schema(self) -> ModernizationRequest:
+        if self.behavior is not None and not self.schema_context:
+            raise ValueError("`behavior` needs `schema`: the tables the seed fills")
+        return self
 
     def to_command(self) -> ModernizeCommand:
-        return ModernizeCommand(source_code=self.source_code, schema_context=self.schema_context)
+        behavior = None
+        if self.behavior is not None:
+            behavior = Scenario(
+                setup_sql=f"{self.schema_context}\n{self.behavior.seed}",
+                cases=tuple(
+                    case.model_copy(update={"source": CaseSource.USER})
+                    for case in self.behavior.cases
+                ),
+                compare_tables=self.behavior.compare_tables,
+                ignore_columns=self.behavior.ignore_columns,
+            )
+        return ModernizeCommand(
+            source_code=self.source_code,
+            schema_context=self.schema_context,
+            behavior=behavior,
+            generate_cases=self.generate_cases,
+        )
 
 
 class ModernizationResponse(BaseModel):

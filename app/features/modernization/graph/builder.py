@@ -7,6 +7,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.graph.state import CompiledStateGraph
 
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
+from app.features.modernization.case_generation.generate_cases import GenerateCases
 from app.features.modernization.domain import (
     Modernization,
     ModernizationStatus,
@@ -16,6 +17,7 @@ from app.features.modernization.domain import (
 )
 from app.features.modernization.generation.generate_code import GenerateCode
 from app.features.modernization.graph.nodes import (
+    CaseGenerationNode,
     GenerationNode,
     ParsingNode,
     RecordResultNode,
@@ -32,6 +34,7 @@ from app.features.modernization.graph.state import (
 )
 from app.features.modernization.parsing.parser import SQLParser
 from app.features.modernization.persistence.execution_log import ExecutionLog
+from app.features.modernization.validation.checks.behavior.domain import Scenario
 from app.features.modernization.validation.validate_code import ValidateCode
 
 type ModernizationGraph = CompiledStateGraph[ModernizationState, None, ModernizationInput]
@@ -63,10 +66,15 @@ def build_modernization_graph(
     generate_code: GenerateCode,
     validate_code: ValidateCode,
     execution_log: ExecutionLog,
+    generate_cases: GenerateCases | None = None,
     retry: RetryPolicy = DEFAULT_RETRY,
 ) -> ModernizationGraph:
     """START -> record_start -> parsing -> semantic_analysis -> generation -> validation
     -> record_result -> END, with validation -> generation while retries remain.
+
+    With `generate_cases`, semantic_analysis fans out to generation AND case_generation (same
+    superstep, in parallel); validation runs once both are done. Retries go back to
+    generation only: the cases are generated once per run.
 
     A step that raises is recorded as FAILURE (with everything produced so far) and the
     exception propagates to the caller: the global HTTP handler maps it to a response.
@@ -78,15 +86,28 @@ def build_modernization_graph(
         GenerationNode(generate_code),
         ValidationNode(validate_code),
     ]
+    if generate_cases is not None:
+        steps.append(CaseGenerationNode(generate_cases))
+
+    # inicialização do graph
     graph.add_node(RECORD_START, _tracked(RecordStartNode(execution_log)))
     for node in steps:
         graph.add_node(node.step.value, _tracked(node, node.step, execution_log))
     graph.add_node(RECORD_RESULT, _tracked(RecordResultNode(execution_log)))
 
+    # instanciação do caminho do graph
     graph.add_edge(START, RECORD_START)
     graph.add_edge(RECORD_START, PipelineStep.PARSING.value)
     graph.add_edge(PipelineStep.PARSING.value, PipelineStep.SEMANTIC_ANALYSIS.value)
-    graph.add_edge(PipelineStep.SEMANTIC_ANALYSIS.value, PipelineStep.GENERATION.value)
+    if generate_cases is None:
+        graph.add_edge(PipelineStep.SEMANTIC_ANALYSIS.value, PipelineStep.GENERATION.value)
+    else:
+        graph.add_conditional_edges(
+            PipelineStep.SEMANTIC_ANALYSIS.value,
+            _after_analysis(generate_cases),
+            [PipelineStep.GENERATION.value, PipelineStep.CASE_GENERATION.value],
+        )
+        graph.add_edge(PipelineStep.CASE_GENERATION.value, PipelineStep.VALIDATION.value)
     graph.add_edge(PipelineStep.GENERATION.value, PipelineStep.VALIDATION.value)
     graph.add_conditional_edges(
         PipelineStep.VALIDATION.value,
@@ -102,11 +123,18 @@ async def run_modernization(
     *,
     source_code: str,
     schema_context: str | None,
+    behavior: Scenario | None = None,
+    generate_cases: bool = True,
     progress: PipelineProgress | None = None,
 ) -> Modernization:
     """Invokes the graph; `progress` receives the execution id as soon as it exists."""
     final = await graph.ainvoke(
-        ModernizationInput(source_code=source_code, schema_context=schema_context),
+        ModernizationInput(
+            source_code=source_code,
+            schema_context=schema_context,
+            behavior=behavior,
+            generate_cases=generate_cases,
+        ),
         config={"configurable": {"progress": progress}},
     )
     modernization: Modernization = final["modernization"]
@@ -138,6 +166,16 @@ def _tracked(
             raise
 
     return run
+
+
+def _after_analysis(generate_cases: GenerateCases) -> Callable[[ModernizationState], list[str]]:
+    def route(state: ModernizationState) -> list[str]:
+        targets = [PipelineStep.GENERATION.value]
+        if state.get("generate_cases", True) and generate_cases.available:
+            targets.append(PipelineStep.CASE_GENERATION.value)
+        return targets
+
+    return route
 
 
 def _after_validation(retry: RetryPolicy) -> Callable[[ModernizationState], str]:

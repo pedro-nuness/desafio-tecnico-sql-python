@@ -17,6 +17,7 @@ from app.core.config.settings import Settings
 from app.core.database.engine import create_engine
 from app.core.database.session import create_session_factory
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
+from app.features.modernization.case_generation.generate_cases import GenerateCases
 from app.features.modernization.evaluation.repository import (
     EvaluationRepository,
     SqlAlchemyEvaluationRepository,
@@ -92,7 +93,7 @@ class InfrastructureProvider(Provider):
             llm_settings.routes,
             budget_seconds=llm_settings.budget_seconds,
         )
-        return TracedLLM(gateway) if langfuse else gateway
+        return TracedLLM(gateway, model=llm_settings.routes[0].model) if langfuse else gateway
 
 
 class ModernizationProvider(Provider):
@@ -108,6 +109,18 @@ class ModernizationProvider(Provider):
         return GenerateCode(
             llm,
             GenerationPromptBuilder(),
+            temperature=settings.llm_temperature,
+            max_output_tokens=settings.llm_max_output_tokens,
+        )
+
+    @provide
+    def generate_cases(
+        self, settings: Settings, llm: LLM, equivalence: BehavioralEquivalence
+    ) -> GenerateCases:
+        # Same LLM as the code; the original routine (via the harness) filters its cases.
+        return GenerateCases(
+            llm,
+            equivalence,
             temperature=settings.llm_temperature,
             max_output_tokens=settings.llm_max_output_tokens,
         )
@@ -129,6 +142,7 @@ class ModernizationProvider(Provider):
         self,
         settings: Settings,
         generate_code: GenerateCode,
+        generate_cases: GenerateCases,
         validate_code: ValidateCode,
         execution_log: ExecutionLog,
         langfuse: Langfuse | None,
@@ -139,6 +153,7 @@ class ModernizationProvider(Provider):
             generate_code=generate_code,
             validate_code=validate_code,
             execution_log=execution_log,
+            generate_cases=generate_cases,
             retry=RetryPolicy(
                 max_attempts=settings.generation_max_attempts,
                 budget_seconds=settings.generation_retry_budget_seconds,

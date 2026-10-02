@@ -4,10 +4,10 @@ from pathlib import Path
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
 from app.features.modernization.analysis.domain import (
     DependencyKind,
-    Feature,
     GenerationStrategy,
     RiskSeverity,
     SemanticAnalysis,
+    SqlConstruct,
 )
 from app.features.modernization.parsing.domain import (
     ExceptionHandler,
@@ -28,22 +28,22 @@ def _analyze(load_procedure: Callable[[str], str], name: str) -> SemanticAnalysi
     return analyzer.analyze(parser.parse(load_procedure(name)))
 
 
-def test_hybrid_procedure_features_and_risks(load_procedure: Callable[[str], str]) -> None:
+def test_hybrid_procedure_constructs_and_risks(load_procedure: Callable[[str], str]) -> None:
     analysis = _analyze(load_procedure, "process_orders")
 
     assert {
-        Feature.IN_PARAMETERS,
-        Feature.OUT_PARAMETERS,
-        Feature.VARIABLES,
-        Feature.LOOP,
-        Feature.EXCEPTION_HANDLING,
-        Feature.RAISE,
-        Feature.GET_DIAGNOSTICS,
-        Feature.ROW_LOCKING,
-        Feature.JSONB,
-        Feature.FUNCTION_CALLS,
-        Feature.DML,
-    } <= set(analysis.feature_names)
+        SqlConstruct.IN_PARAMETERS,
+        SqlConstruct.OUT_PARAMETERS,
+        SqlConstruct.VARIABLES,
+        SqlConstruct.LOOP,
+        SqlConstruct.EXCEPTION_HANDLING,
+        SqlConstruct.RAISE,
+        SqlConstruct.GET_DIAGNOSTICS,
+        SqlConstruct.ROW_LOCKING,
+        SqlConstruct.JSONB,
+        SqlConstruct.FUNCTION_CALLS,
+        SqlConstruct.DML,
+    } <= set(analysis.construct_names)
     n_plus_one = [r for r in analysis.risks if r.code == "N_PLUS_ONE"]
     assert len(n_plus_one) == 1 and n_plus_one[0].severity is RiskSeverity.HIGH
     assert n_plus_one[0].line == 17  # the FOR loop; the UPDATE inside is listed
@@ -64,12 +64,12 @@ def test_set_based_function_is_delegated_to_database(load_procedure: Callable[[s
     analysis = _analyze(load_procedure, "monthly_sales_report")
 
     assert {
-        Feature.CTE,
-        Feature.AGGREGATION,
-        Feature.JOIN,
-        Feature.JSONB,
-        Feature.RETURN_QUERY,
-    } <= set(analysis.feature_names)
+        SqlConstruct.CTE,
+        SqlConstruct.AGGREGATION,
+        SqlConstruct.JOIN,
+        SqlConstruct.JSONB,
+        SqlConstruct.RETURN_QUERY,
+    } <= set(analysis.construct_names)
     assert analysis.recommended_strategy is GenerationStrategy.DATABASE_DELEGATED
     assert not [r for r in analysis.risks if r.severity is RiskSeverity.HIGH]
 
@@ -78,7 +78,7 @@ def test_pure_computation_is_reimplemented_in_python(load_procedure: Callable[[s
     analysis = _analyze(load_procedure, "calculate_discount")
 
     assert analysis.recommended_strategy is GenerationStrategy.PYTHON_REIMPLEMENTATION
-    assert Feature.CONDITIONAL in analysis.feature_names
+    assert SqlConstruct.CONDITIONAL in analysis.construct_names
 
 
 def test_procedure_transaction_dynamic_sql_cursor_recursive_cte(
@@ -88,11 +88,11 @@ def test_procedure_transaction_dynamic_sql_cursor_recursive_cte(
     risk_codes = {r.code for r in analysis.risks}
 
     assert {
-        Feature.TRANSACTION_CONTROL,
-        Feature.DYNAMIC_SQL,
-        Feature.CURSOR,
-        Feature.RECURSIVE_CTE,
-    } <= set(analysis.feature_names)
+        SqlConstruct.TRANSACTION_CONTROL,
+        SqlConstruct.DYNAMIC_SQL,
+        SqlConstruct.CURSOR,
+        SqlConstruct.RECURSIVE_CTE,
+    } <= set(analysis.construct_names)
     assert {"TRANSACTION_CONTROL", "DYNAMIC_SQL", "N_PLUS_ONE", "RECURSIVE_CTE"} <= risk_codes
 
 

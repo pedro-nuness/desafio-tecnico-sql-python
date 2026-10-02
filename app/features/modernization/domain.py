@@ -9,6 +9,7 @@ from uuid import UUID, uuid7
 from pydantic import Field, JsonValue
 
 from app.features.modernization.analysis.domain import SemanticAnalysis
+from app.features.modernization.case_generation.domain import CaseGenerationResult
 from app.features.modernization.generation.domain import GenerationResult
 from app.features.modernization.parsing.domain import Parameter, ParsedProcedure, RoutineKind
 from app.features.modernization.validation.domain import ValidationResult
@@ -36,6 +37,8 @@ class PipelineStep(StrEnum):
     PARSING = "parsing"
     SEMANTIC_ANALYSIS = "semantic_analysis"
     GENERATION = "generation"
+    CASE_GENERATION = "case_generation"
+    """Runs in parallel with GENERATION (fan-out after the analysis)."""
     VALIDATION = "validation"
 
 
@@ -105,6 +108,8 @@ class ModernizationReport(ValueObject):
     semantic_analysis: SemanticAnalysis | None = None
     generation: GenerationResult | None = None
     """The latest attempt (the code itself lives in Modernization.generated_code)."""
+    case_generation: CaseGenerationResult | None = None
+    """None when the step did not run (disabled, no schema, no evaluation database)."""
     validation: ValidationResult | None = None
     completed_steps: tuple[PipelineStep, ...] = ()
     errors: tuple[PipelineError, ...] = ()

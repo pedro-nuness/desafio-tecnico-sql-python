@@ -7,14 +7,17 @@ delegates to the ExecutionLog.
 from typing import ClassVar, Protocol
 
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
+from app.features.modernization.case_generation.generate_cases import GenerateCases
 from app.features.modernization.domain import PipelineStep
 from app.features.modernization.generation.domain import RepairFeedback
 from app.features.modernization.generation.generate_code import GenerateCode
 from app.features.modernization.graph.state import ModernizationState, StateUpdate, to_report
 from app.features.modernization.parsing.parser import SQLParser
 from app.features.modernization.persistence.execution_log import ExecutionLog
+from app.features.modernization.validation.checks.behavior.domain import Scenario
 from app.features.modernization.validation.validate_code import Routine, ValidateCode
 from app.shared.errors import AppError
+from app.shared.integrations.errors import IntegrationError
 
 
 class StepNode(Protocol):
@@ -110,6 +113,46 @@ def _feedback(state: ModernizationState, attempt: int) -> RepairFeedback | None:
     return RepairFeedback(attempt=attempt, previous_code=previous_code, issues=validation.issues())
 
 
+class CaseGenerationNode:
+    """Runs next to GenerationNode (fan-out after the analysis). Never fails the run: the
+    cases only add verification, so a failure here becomes a warning and the caller's
+    scenario is kept as is."""
+
+    step = PipelineStep.CASE_GENERATION
+
+    def __init__(self, generate_cases: GenerateCases) -> None:
+        self._generate_cases = generate_cases
+
+    async def __call__(self, state: ModernizationState) -> StateUpdate:
+        schema = state.get("schema_context")
+        if not schema:
+            return StateUpdate(
+                warnings=["Case generation skipped: it needs `schema` to build the test data."],
+                completed_steps=[self.step],
+            )
+        # Needed: an LLM failure or an off-contract answer must not fail a run whose code may
+        # be fine; the report says the step produced nothing.
+        try:
+            behavior, result = await self._generate_cases.execute(
+                procedure=require(state.get("parsed_procedure"), "parsed_procedure"),
+                source_code=state["source_code"],
+                schema_context=schema,
+                behavior=_behavior(state),
+            )
+        except IntegrationError as exc:
+            return StateUpdate(
+                warnings=[f"Case generation failed, only the caller's cases run: {exc.message}"],
+                completed_steps=[self.step],
+            )
+        return StateUpdate(behavior=behavior, case_generation=result, completed_steps=[self.step])
+
+
+def _behavior(state: ModernizationState) -> Scenario | None:
+    behavior = state.get("behavior")
+    # The LangGraph API and Studio send the input as plain JSON.
+    return None if behavior is None else Scenario.model_validate(behavior)
+
+
 class ValidationNode:
     step = PipelineStep.VALIDATION
 
@@ -121,6 +164,7 @@ class ValidationNode:
         routine = Routine(
             source_code=state["source_code"],
             procedure=require(state.get("parsed_procedure"), "parsed_procedure"),
+            behavior=_behavior(state),
         )
         result = await self._validate_code.execute(code, routine)
         return StateUpdate(validation_result=result, completed_steps=[self.step])

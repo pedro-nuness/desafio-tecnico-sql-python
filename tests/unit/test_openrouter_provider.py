@@ -173,3 +173,29 @@ async def test_optional_response_fields_and_non_text_content(
                 assert response.content == ""
                 assert response.input_tokens is None and response.output_tokens is None
                 assert response.finish_reason == "length"
+
+
+async def test_an_upstream_failure_mid_answer_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    """OpenRouter answers 200 with finish_reason "error" and a cut-off content (observed:
+    unterminated JSON that failed generation); it must be retried, not parsed."""
+    failed = _completion()
+    failed["choices"][0]["finish_reason"] = "error"
+    failed["choices"][0]["message"]["content"] = '{\n  "python_code": "from decimal'
+    answers = iter([failed, _completion()])
+    monkeypatch.setattr("app.shared.integrations.integration.asyncio.sleep", AsyncMock())
+    async with httpx.AsyncClient(
+        transport=httpx.MockTransport(lambda _: httpx.Response(200, json=next(answers)))
+    ) as http:
+        monkeypatch.setattr(
+            "app.shared.integrations.llm.openrouter.provider.OpenRouter",
+            partial(OpenRouter, async_client=http),
+        )
+        provider = OpenRouterProvider(
+            "openrouter", api_key="sk-test", integration=Integration("openrouter", retries=1)
+        )
+        with provider._client:
+            response = await provider.complete(
+                LLMRequest(system_prompt="s", user_prompt="u"), ROUTE
+            )
+
+    assert (response.content, response.finish_reason) == ("ok", "stop")

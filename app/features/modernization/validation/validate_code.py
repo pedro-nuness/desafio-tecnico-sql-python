@@ -11,6 +11,7 @@ from dataclasses import dataclass
 from typing import Protocol
 
 from app.features.modernization.parsing.domain import ParsedProcedure
+from app.features.modernization.validation.checks.behavior.domain import Scenario
 from app.features.modernization.validation.domain import (
     ValidationMessage,
     ValidationResult,
@@ -24,11 +25,13 @@ class Routine:
 
     source_code: str
     procedure: ParsedProcedure
+    behavior: Scenario | None = None
+    """The caller's data and cases to run it on; None = behavior is not verified."""
 
 
 @dataclass(frozen=True, slots=True)
 class Skipped:
-    """The check could not run on this code (e.g. no evaluation scenario for the routine)."""
+    """The check could not run on this code (e.g. the caller sent no behavior scenario)."""
 
     reason: str
 

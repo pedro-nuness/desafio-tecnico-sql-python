@@ -1,7 +1,8 @@
 """Behavioral equivalence: the generated module against the original routine (AD-16).
 
-For each case of the dataset (examples/evaluation/scenarios.yml) a fresh schema is created
-with the Annex A tables, the seed and the original routine. The case runs twice, each side in
+For each case of a scenario (sent by the caller; for the metric, read from
+examples/evaluation/scenarios.yml) a fresh schema is created with the scenario's setup (tables,
+seed) and the original routine. The case runs twice, each side in
 its own transaction that is rolled back: the original through SQL, the generated entry point
 through Python. Equivalent means:
 
@@ -21,8 +22,10 @@ import asyncio
 import dataclasses
 import inspect
 import json
+import linecache
 import subprocess
 import sys
+import traceback
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -40,12 +43,17 @@ from sqlalchemy.pool import NullPool
 
 from app.features.modernization.domain import Modernization
 from app.features.modernization.parsing.domain import Parameter, ParameterMode
-from app.features.modernization.validation.checks.behavior.dataset import Case, Dataset, Scenario
-from app.features.modernization.validation.checks.behavior.domain import CaseResult
+from app.features.modernization.validation.checks.behavior.dataset import Dataset
+from app.features.modernization.validation.checks.behavior.domain import (
+    Case,
+    CaseResult,
+    Scenario,
+)
 from app.shared.errors import AppError, DomainError
 
 INPUT_MODES = frozenset({ParameterMode.IN, ParameterMode.INOUT, ParameterMode.VARIADIC})
 PREVIEW_CHARS = 240
+GENERATED_FILENAME_PREFIX = "<generated "
 RUNNER_MODULE = "app.features.modernization.validation.checks.behavior.runner"
 RESULT_MARKER = "@@evaluation-result@@ "
 """Prefix of the runner's result line (generated code may print to stdout too)."""
@@ -82,16 +90,17 @@ class Observed:
 
 
 class BehavioralEquivalence:
-    """Runs the dataset cases of a routine on the original and on the generated code.
+    """Runs the cases of a scenario on the original and on the generated code.
 
-    Used twice: as the metric (every case, after the run) and as a validation check inside
-    the pipeline (dev cases only, feeding the repair loop; check.py, next to this module).
+    Used twice: as a validation check inside the pipeline (the caller's scenario, feeding the
+    repair loop; check.py, next to this module) and as the metric of the experiment (the
+    dataset's scenario of the routine, holdout included, after the run).
     """
 
     def __init__(
         self,
         database_url: str | None,
-        dataset_file: Path,
+        dataset_file: Path | None = None,
         *,
         case_timeout_seconds: float = 10.0,
         isolate: bool = True,
@@ -109,7 +118,7 @@ class BehavioralEquivalence:
         return self._database_url is not None
 
     async def evaluate(self, modernization: Modernization) -> tuple[CaseResult, ...]:
-        """The metric: every case of the routine, holdout included."""
+        """The metric: every dataset case of the routine, holdout included."""
         parsing = modernization.report.parsing
         if parsing is None or not parsing.procedure_name:
             raise DomainError(
@@ -117,20 +126,23 @@ class BehavioralEquivalence:
                 execution_id=str(modernization.id),
             )
         routine = parsing.procedure_name.rpartition(".")[2].lower()
+        dataset = self._load_dataset()
+        scenario = dataset.scenario(routine, include_holdout=True)
+        if scenario is None:
+            raise DomainError(
+                f"No evaluation scenario for routine {routine}",
+                routine=routine,
+                available=list(dataset.routines()),
+            )
         cases = await self.run(
             routine=routine,
             source_code=modernization.source_code,
             code=modernization.generated_code,
             parameters=parsing.parameters,
-            include_holdout=True,
+            scenario=scenario,
         )
-        if cases is None:
-            raise DomainError(
-                f"No evaluation scenario for routine {routine}",
-                routine=routine,
-                available=list(self._load_dataset().routines()),
-            )
-        return cases
+        holdout = dataset.holdout(routine)
+        return tuple(case.model_copy(update={"holdout": case.name in holdout}) for case in cases)
 
     async def run(
         self,
@@ -139,16 +151,11 @@ class BehavioralEquivalence:
         source_code: str,
         code: str | None,
         parameters: Sequence[Parameter],
-        include_holdout: bool,
-    ) -> tuple[CaseResult, ...] | None:
-        """Runs the routine's cases; None when the dataset has no scenario for it."""
+        scenario: Scenario,
+    ) -> tuple[CaseResult, ...]:
+        """Runs every case of the scenario, in order."""
         if self._database_url is None:
             raise AppError("Evaluation database not configured: set EVALUATION_DATABASE_URL")
-        dataset = self._load_dataset()
-        scenario = dataset.scenario(routine)
-        if scenario is None:
-            return None
-        cases = tuple(case for case in scenario.cases if include_holdout or not case.holdout)
         if self._isolate:
             return await self._run_isolated(
                 {
@@ -156,12 +163,11 @@ class BehavioralEquivalence:
                     "source_code": source_code,
                     "code": code,
                     "parameters": [parameter.model_dump(mode="json") for parameter in parameters],
-                    "include_holdout": include_holdout,
+                    "scenario": scenario.model_dump(mode="json"),
                     "database_url": self._database_url,
-                    "dataset_file": str(self._dataset_file.resolve()),
                     "case_timeout_seconds": self._case_timeout_seconds,
                 },
-                cases=len(cases),
+                cases=len(scenario.cases),
             )
         inputs = tuple(p for p in parameters if p.mode in INPUT_MODES)
         module_name = f"generated_{routine}_{uuid4().hex}"
@@ -170,7 +176,6 @@ class BehavioralEquivalence:
             return tuple(
                 [
                     await self._run_case(
-                        dataset,
                         scenario,
                         case,
                         original_sql=source_code,
@@ -179,19 +184,48 @@ class BehavioralEquivalence:
                         inputs=inputs,
                         module_name=module_name,
                     )
-                    for case in cases
+                    for case in scenario.cases
                 ]
             )
         finally:
             sys.modules.pop(module_name, None)
 
+    async def probe(
+        self, *, source_code: str, setup_sql: str, cases: Sequence[Case]
+    ) -> tuple[str | None, ...]:
+        """Runs each case on the original only, to filter proposed cases (case_generation).
+
+        Per case, why it cannot be used, None = usable: the setup or the call is not valid
+        SQL for this schema (SQLSTATE class 42), or it times out. An error the routine
+        raises on purpose (RAISE, a constraint) is behavior, so the case is usable. No
+        generated code runs here, so it runs in process.
+        """
+        # Needed: a broken setup (a proposed seed) discards the cases, it does not fail the run.
+        try:
+            async with self._sandbox("\n".join((setup_sql, source_code))) as schema:
+                return tuple([await self._probe_case(schema, case) for case in cases])
+        except Exception as exc:
+            return tuple(f"the setup failed: {describe_error(exc)}" for _ in cases)
+
+    async def _probe_case(self, schema: str, case: Case) -> str | None:
+        async with self._engine_or_fail().connect() as conn:  # closed without commit
+            await conn.exec_driver_sql(f'SET search_path TO "{schema}"')
+            # Needed: the error is the observation here, like in _observe.
+            try:
+                async with asyncio.timeout(self._case_timeout_seconds):
+                    await conn.exec_driver_sql(case.sql)
+            except TimeoutError:
+                return f"timed out after {self._case_timeout_seconds:.0f}s on the original"
+            except Exception as exc:
+                if sqlstate(exc).startswith("42"):
+                    return f"not valid SQL for this schema: {describe_error(exc)}"
+        return None
+
     async def close(self) -> None:
         if self._engine is not None:
             await self._engine.dispose()
 
-    async def _run_isolated(
-        self, request: dict[str, Any], *, cases: int
-    ) -> tuple[CaseResult, ...] | None:
+    async def _run_isolated(self, request: dict[str, Any], *, cases: int) -> tuple[CaseResult, ...]:
         # Generous bound: every case may hit its own timeout, plus interpreter start-up.
         timeout = self._case_timeout_seconds * (cases + 1) + 30
         # subprocess.run in a worker thread: works on every event loop
@@ -224,14 +258,12 @@ class BehavioralEquivalence:
                 "Evaluation runner failed: " + (stderr[-1] if stderr else "no output"),
                 returncode=completed.returncode,
             )
-        payload = json.loads(result)
-        return None if payload is None else tuple(CaseResult.model_validate(c) for c in payload)
+        return tuple(CaseResult.model_validate(case) for case in json.loads(result))
 
     # ------------------------------------------------------------------ one case
 
     async def _run_case(
         self,
-        dataset: Dataset,
         scenario: Scenario,
         case: Case,
         *,
@@ -241,7 +273,7 @@ class BehavioralEquivalence:
         inputs: tuple[Parameter, ...],
         module_name: str,
     ) -> CaseResult:
-        setup = "\n".join((dataset.setup_sql, dataset.requirements_sql(scenario), original_sql))
+        setup = "\n".join((scenario.setup_sql, original_sql))
         args = coerce_args(case, inputs)
 
         async def call_original(conn: AsyncConnection) -> Any:
@@ -253,12 +285,16 @@ class BehavioralEquivalence:
             return await entry(conn, *args)
 
         async with self._sandbox(setup) as schema:
-            original = await self._observe(schema, dataset, call_original, module_name=None)
+            snapshot = Snapshot(
+                tables=scenario.compare_tables or await self._tables(schema),
+                ignore_columns=scenario.ignore_columns,
+            )
+            original = await self._observe(schema, snapshot, call_original, module_name=None)
             if entry is None:
                 generated = Observed(error=problem)
             else:
                 generated = await self._observe(
-                    schema, dataset, call_generated, module_name=module_name
+                    schema, snapshot, call_generated, module_name=module_name
                 )
         passed, detail = compare(original, generated)
         return CaseResult(
@@ -267,11 +303,11 @@ class BehavioralEquivalence:
             detail=detail,
             original=original.describe(),
             generated=generated.describe(),
-            holdout=case.holdout,
+            source=case.source,
         )
 
     async def _observe(
-        self, schema: str, dataset: Dataset, run: Run, *, module_name: str | None
+        self, schema: str, snapshot: Snapshot, run: Run, *, module_name: str | None
     ) -> Observed:
         async with self._engine_or_fail().connect() as conn:
             await conn.exec_driver_sql(f'SET search_path TO "{schema}"')
@@ -281,7 +317,7 @@ class BehavioralEquivalence:
             try:
                 async with asyncio.timeout(self._case_timeout_seconds):
                     value = await run(conn)
-                state = await _snapshot(conn, dataset)
+                state = await snapshot.take(conn)
             except Exception as exc:
                 deliberate = module_name is not None and defined_in(exc, module_name)
                 return Observed(error=describe_error(exc), deliberate=deliberate)
@@ -289,9 +325,18 @@ class BehavioralEquivalence:
         rows = None if value is None and module_name is None else canonical_rows(value)
         return Observed(rows=rows, state=state)
 
+    async def _tables(self, schema: str) -> tuple[str, ...]:
+        """Every table the setup created (the default of compare_tables)."""
+        async with self._engine_or_fail().connect() as conn:
+            result = await conn.execute(
+                text("SELECT tablename FROM pg_tables WHERE schemaname = :schema ORDER BY 1"),
+                {"schema": schema},
+            )
+            return tuple(result.scalars())
+
     @asynccontextmanager
     async def _sandbox(self, setup_sql: str) -> AsyncIterator[str]:
-        """A throwaway schema with the legacy tables, the seed and the routines."""
+        """A throwaway schema with the scenario's tables, its seed and the routines."""
         schema = f"eval_{uuid4().hex}"
         await self._run_script(
             f'CREATE SCHEMA "{schema}"; SET search_path TO "{schema}";\n{setup_sql}'
@@ -316,27 +361,36 @@ class BehavioralEquivalence:
         return self._engine
 
     def _load_dataset(self) -> Dataset:
+        if self._dataset_file is None:
+            raise AppError("Evaluation dataset not configured: set EVALUATION_DATASET_FILE")
         if self._dataset is None:
             self._dataset = Dataset.load(self._dataset_file)
         return self._dataset
 
 
-async def _snapshot(conn: AsyncConnection, dataset: Dataset) -> dict[str, tuple[str, ...]]:
-    state: dict[str, tuple[str, ...]] = {}
-    for table in dataset.compare_tables:
-        quoted = conn.dialect.identifier_preparer.quote(table)  # name from the dataset file
-        result = await conn.execute(
-            # ::text: parsed here with Decimal, so NUMERIC values never go through float.
-            text(f"SELECT (to_jsonb(t) - CAST(:ignored AS text[]))::text FROM {quoted} AS t"),  # noqa: S608
-            {"ignored": list(dataset.ignore_columns)},
-        )
-        state[table] = tuple(
-            sorted(
-                canonical(json.loads(raw, parse_float=Decimal, parse_int=Decimal))
-                for (raw,) in result.all()
+@dataclass(frozen=True, slots=True)
+class Snapshot:
+    """The final rows of the compared tables, taken the same way on both sides."""
+
+    tables: tuple[str, ...]
+    ignore_columns: tuple[str, ...]
+
+    async def take(self, conn: AsyncConnection) -> dict[str, tuple[str, ...]]:
+        state: dict[str, tuple[str, ...]] = {}
+        for table in self.tables:
+            quoted = conn.dialect.identifier_preparer.quote(table)  # caller's name, quoted
+            result = await conn.execute(
+                # ::text: parsed here with Decimal, so NUMERIC values never go through float.
+                text(f"SELECT (to_jsonb(t) - CAST(:ignored AS text[]))::text FROM {quoted} AS t"),  # noqa: S608
+                {"ignored": list(self.ignore_columns)},
             )
-        )
-    return state
+            state[table] = tuple(
+                sorted(
+                    canonical(json.loads(raw, parse_float=Decimal, parse_int=Decimal))
+                    for (raw,) in result.all()
+                )
+            )
+        return state
 
 
 # ---------------------------------------------------------------------- generated module
@@ -350,9 +404,12 @@ def load_entry_point(
         return None, "no generated code"
     module = ModuleType(module_name)
     sys.modules[module_name] = module  # dataclasses resolve their module by name
+    filename = f"{GENERATED_FILENAME_PREFIX}{routine}>"
+    # Tracebacks then show the generated source line (describe_error points the LLM to it).
+    linecache.cache[filename] = (len(code), None, code.splitlines(keepends=True), filename)
     # Needed: a module that cannot even be imported fails every case, it is not a crash here.
     try:
-        exec(compile(code, f"<generated {routine}>", "exec"), module.__dict__)
+        exec(compile(code, filename, "exec"), module.__dict__)
     except Exception as exc:
         return None, f"generated module failed to import: {describe_error(exc)}"
     entry = getattr(module, routine, None)
@@ -392,13 +449,37 @@ def defined_in(exc: BaseException, module_name: str) -> bool:
     return any(cls.__module__ == module_name for cls in type(exc).__mro__)
 
 
+def sqlstate(exc: BaseException) -> str:
+    """PostgreSQL error code of the driver error in the cause chain ("" when none)."""
+    current: BaseException | None = exc
+    while current is not None:
+        if code := getattr(current, "sqlstate", None):
+            return str(code)
+        current = current.__cause__
+    return ""
+
+
 def describe_error(exc: BaseException) -> str:
-    """Innermost cause, first line: `RaiseError: Saldo insuficiente ...`, not the wrapper."""
+    """Innermost cause, first line: `RaiseError: Saldo insuficiente ...`, not the wrapper.
+
+    When the generated code raised it, the line it raised from is appended: a driver error
+    such as `TypeError: expected str, got int` names no statement, and without it the repair
+    attempt edited the wrong one.
+    """
     root = exc
     while root.__cause__ is not None:
         root = root.__cause__
     message = str(root).strip().splitlines()[0] if str(root).strip() else ""
-    return f"{type(exc if root is exc else root).__name__}: {message}"[:PREVIEW_CHARS]
+    described = f"{type(exc if root is exc else root).__name__}: {message}"[:PREVIEW_CHARS]
+    frames = [
+        frame
+        for frame in traceback.extract_tb(exc.__traceback__)
+        if frame.filename.startswith(GENERATED_FILENAME_PREFIX)
+    ]
+    if not frames:
+        return described
+    frame = frames[-1]
+    return f"{described} (at generated line {frame.lineno}: {frame.line})"
 
 
 # ---------------------------------------------------------------------- comparison

@@ -68,8 +68,11 @@ class Integration:
             # Needed: the single place where native SDK exceptions are translated.
             try:
                 return await func()
-            except IntegrationError:
-                raise
+            except IntegrationError as error:
+                # Already ours: an adapter's transient error (a provider failing mid-answer)
+                # is retried like a translated one; a contract error passes through.
+                if not error.transient or attempt == self._retries:
+                    raise
             except Exception as exc:
                 error = self._translate(exc)
                 if not error.transient or attempt == self._retries:

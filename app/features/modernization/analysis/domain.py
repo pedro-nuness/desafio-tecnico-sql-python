@@ -16,7 +16,7 @@ class GenerationStrategy(StrEnum):
     """Python owns control flow and errors; relational operations remain parameterized SQL."""
 
 
-class Feature(StrEnum):
+class SqlConstruct(StrEnum):
     IN_PARAMETERS = "in_parameters"
     OUT_PARAMETERS = "out_parameters"
     VARIABLES = "variables"
@@ -50,8 +50,8 @@ class DependencyKind(StrEnum):
     FUNCTION = "function"
 
 
-class DetectedFeature(ValueObject):
-    feature: Feature
+class DetectedSqlConstruct(ValueObject):
+    construct: SqlConstruct
     occurrences: int
     lines: tuple[int, ...] = ()
 
@@ -80,7 +80,7 @@ class Recommendation(ValueObject):
 
 
 class SemanticAnalysis(ValueObject):
-    features: tuple[DetectedFeature, ...] = ()
+    constructs: tuple[DetectedSqlConstruct, ...] = ()
     risks: tuple[SemanticRisk, ...] = ()
     dependencies: tuple[Dependency, ...] = ()
     parameters: ParameterSummary = ParameterSummary()
@@ -88,9 +88,9 @@ class SemanticAnalysis(ValueObject):
     recommended_strategy: GenerationStrategy
     recommendations: tuple[Recommendation, ...] = ()
 
-    def has(self, feature: Feature) -> bool:
-        return any(detected.feature is feature for detected in self.features)
+    def has(self, construct: SqlConstruct) -> bool:
+        return any(detected.construct is construct for detected in self.constructs)
 
     @property
-    def feature_names(self) -> tuple[Feature, ...]:
-        return tuple(detected.feature for detected in self.features)
+    def construct_names(self) -> tuple[SqlConstruct, ...]:
+        return tuple(detected.construct for detected in self.constructs)

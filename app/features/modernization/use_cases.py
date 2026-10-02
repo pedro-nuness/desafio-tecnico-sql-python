@@ -13,6 +13,7 @@ from app.features.modernization.evaluation.domain import Evaluation, EvaluationS
 from app.features.modernization.evaluation.repository import EvaluationRepository
 from app.features.modernization.graph.builder import ModernizationGraph, run_modernization
 from app.features.modernization.persistence.repository import ModernizationRepository
+from app.features.modernization.validation.checks.behavior.domain import Scenario
 from app.features.modernization.validation.checks.behavior.harness import EquivalenceMetric
 
 logger = logging.getLogger(__name__)
@@ -22,6 +23,10 @@ logger = logging.getLogger(__name__)
 class ModernizeCommand:
     source_code: str
     schema_context: str | None = None
+    behavior: Scenario | None = None
+    """The caller's data and cases to verify behavior (None = none sent)."""
+    generate_cases: bool = True
+    """False = only the caller's cases run (no case_generation step)."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -52,6 +57,8 @@ class ModernizeRoutine:
             self._graph,
             source_code=command.source_code,
             schema_context=command.schema_context,
+            behavior=command.behavior,
+            generate_cases=command.generate_cases,
             progress=progress,
         )
         logger.info(

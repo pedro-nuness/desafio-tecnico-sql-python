@@ -24,7 +24,7 @@ async def test_generation_is_a_child_of_its_graph_node(make_graph, load_procedur
             self.parent = parent_run_id
 
     callback = Recorder()
-    graph = make_graph(llm=TracedLLM(FakeLLM())).with_config(callbacks=[callback])
+    graph = make_graph(llm=TracedLLM(FakeLLM(), model="primary")).with_config(callbacks=[callback])
     await run_modernization(
         graph,
         source_code=load_procedure("process_orders"),
@@ -80,14 +80,17 @@ async def test_tracing_preserves_response_usage_and_errors(monkeypatch):
         "app.shared.integrations.llm.tracing.get_async_callback_manager_for_config",
         lambda config: manager,
     )
-    llm = TracedLLM(AsyncMock(generate=AsyncMock(return_value=response)))
+    llm = TracedLLM(AsyncMock(generate=AsyncMock(return_value=response)), model="primary")
     request = LLMRequest(system_prompt="rules", user_prompt="source")
     assert await llm.generate(request) == response
+    # Langfuse reads the model at start (else it warns); the end reports who answered
+    assert manager.on_llm_start.call_args.kwargs["invocation_params"]["model"] == "primary"
+    assert generation.on_llm_end.call_args.args[0].llm_output["model_name"] == "test"
     assert generation.on_llm_end.call_args.args[0].llm_output["token_usage"] == {
         "prompt_tokens": 12,
         "completion_tokens": 3,
     }
     error = RuntimeError("provider failed")
     with pytest.raises(RuntimeError, match="provider failed"):
-        await TracedLLM(FakeLLM(error=error)).generate(request)
+        await TracedLLM(FakeLLM(error=error), model="primary").generate(request)
     generation.on_llm_error.assert_awaited_once_with(error)

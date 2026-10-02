@@ -52,6 +52,7 @@ DOMAIN_FILES = (
     "features/modernization/parsing/domain.py",
     "features/modernization/analysis/domain.py",
     "features/modernization/generation/domain.py",
+    "features/modernization/case_generation/domain.py",
     "features/modernization/validation/domain.py",
     "features/modernization/validation/checks/behavior/domain.py",
     "features/modernization/evaluation/domain.py",
@@ -69,6 +70,8 @@ FORBIDDEN: dict[str, set[str]] = {
     "core/database": {"fastapi", "langgraph", "app.features", "openai", "pglast", "ruff"},
     "features/modernization/use_cases.py": PURE | ENTRY,
     "features/modernization/generation": PURE | IMPLEMENTATION | {f"{FEATURE}.graph"},
+    # Runs the original routine through the behavior harness, never a driver itself.
+    "features/modernization/case_generation": PURE | IMPLEMENTATION | {f"{FEATURE}.graph"},
     "features/modernization/parsing/parser.py": PURE | IMPLEMENTATION,
     "features/modernization/analysis": PURE | IMPLEMENTATION | {f"{FEATURE}.graph"},
     "features/modernization/validation/validate_code.py": PURE | IMPLEMENTATION,
@@ -201,10 +204,13 @@ def test_no_init_py_files_exist_in_app() -> None:
 # the outcome must be observed locally: SDK error translation + retries (Integration),
 # breaker state, route failover (LLMGateway), failure persistence, and native errors that
 # carry domain meaning (invalid SQL, syntax errors feeding the repair loop, an LLM answer
-# off contract), and the evaluation, where a failing call is the observation.
+# off contract), the evaluation, where a failing call is the observation, and case generation,
+# which only adds verification and never fails the run (graph/nodes.py).
 LOCAL_EXCEPT_ALLOWED = [
+    "features/modernization/case_generation/generate_cases.py",
     "features/modernization/generation/generate_code.py",
     "features/modernization/graph/builder.py",
+    "features/modernization/graph/nodes.py",
     "features/modernization/parsing/plpgsql.py",
     "features/modernization/validation/checks/behavior/check.py",
     "features/modernization/validation/checks/behavior/harness.py",
@@ -230,9 +236,13 @@ def test_local_exception_handlers_only_where_needed() -> None:
 
 # The error class decides the HTTP status (see app/shared/errors.py), so a module may only
 # claim the faults it can know about: a dependency failing is known at the integration edge
-# (or by the generation step validating the LLM answer); "not found" only by persistence.
+# (or by the generation steps validating the LLM answer); "not found" only by persistence.
 ERROR_CLASSES_ALLOWED_IN = {
-    "IntegrationError": ("shared/integrations/", "features/modernization/generation/"),
+    "IntegrationError": (
+        "shared/integrations/",
+        "features/modernization/generation/",
+        "features/modernization/case_generation/",
+    ),
     "NotFoundError": ("features/modernization/persistence/",),
 }
 

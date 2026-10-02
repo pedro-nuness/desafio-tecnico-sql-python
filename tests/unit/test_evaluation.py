@@ -20,8 +20,8 @@ from app.features.modernization.use_cases import (
     GetEvaluationSummary,
     ModernizeCommand,
 )
-from app.features.modernization.validation.checks.behavior.dataset import Case, Dataset
-from app.features.modernization.validation.checks.behavior.domain import CaseResult
+from app.features.modernization.validation.checks.behavior.dataset import Dataset
+from app.features.modernization.validation.checks.behavior.domain import Case, CaseResult
 from app.features.modernization.validation.checks.behavior.harness import (
     INPUT_MODES,
     Observed,
@@ -172,6 +172,19 @@ def test_errors_are_described_by_their_innermost_cause() -> None:
         assert describe_error(exc) == "LookupError: Saldo insuficiente: saldo=200.00"
 
 
+async def test_errors_raised_by_generated_code_point_to_its_line() -> None:
+    # A driver TypeError names no statement: the repair attempt needs the line it came from.
+    code = "async def fn(conn, days):\n    ok = 1\n    return int('x' + days)\n"
+    entry, problem = load_entry_point(code, "fn", f"generated_{uuid4().hex}")
+    assert entry is not None and problem is None
+    with pytest.raises(TypeError) as exc_info:
+        await entry(None, 30)
+    assert describe_error(exc_info.value) == (
+        'TypeError: can only concatenate str (not "int") to str'
+        " (at generated line 3: return int('x' + days))"
+    )
+
+
 def test_arguments_take_the_types_of_the_routine_parameters() -> None:
     inputs = tuple(
         Parameter(name=n, data_type=t, mode=ParameterMode.IN)
@@ -191,7 +204,7 @@ def test_every_annex_has_a_scenario_whose_cases_match_its_signature() -> None:
     dataset = Dataset.load(DATASET)
     for procedure_file in sorted((EXAMPLES / "procedures").glob("*.sql")):
         procedure = PglastParser().parse(procedure_file.read_text(encoding="utf-8"))
-        scenario = dataset.scenario(procedure.name)
+        scenario = dataset.scenario(procedure.name, include_holdout=True)
         assert scenario is not None, procedure.name
         inputs = [p for p in procedure.parameters if p.mode in INPUT_MODES]
         for case in scenario.cases:

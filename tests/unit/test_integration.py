@@ -93,3 +93,11 @@ async def test_open_circuit_reports_retry_after_without_calling_the_dependency()
 
     assert exc_info.value.retry_after == pytest.approx(30, abs=1)
     assert func.await_count == 1
+
+
+async def test_an_adapters_own_transient_error_is_retried(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("app.shared.integrations.integration.asyncio.sleep", AsyncMock())
+    func = AsyncMock(side_effect=[IntegrationError("cut off", transient=True), "ok"])
+
+    assert await Integration("dep", retries=1).call(func) == "ok"
+    assert func.await_count == 2

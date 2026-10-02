@@ -19,7 +19,12 @@ from app.features.modernization.evaluation.repository import SqlAlchemyEvaluatio
 from app.features.modernization.parsing.plpgsql import PglastParser
 from app.features.modernization.persistence.repository import SqlAlchemyModernizationRepository
 from app.features.modernization.validation.checks.behavior.check import BehaviorCheck
-from app.features.modernization.validation.checks.behavior.domain import CaseResult
+from app.features.modernization.validation.checks.behavior.dataset import Dataset
+from app.features.modernization.validation.checks.behavior.domain import (
+    Case,
+    CaseResult,
+    Scenario,
+)
 from app.features.modernization.validation.checks.behavior.harness import BehavioralEquivalence
 from app.features.modernization.validation.checks.syntax import PythonASTCheck
 from app.features.modernization.validation.validate_code import Rule, ValidateCode
@@ -115,6 +120,89 @@ async def test_missing_writes_fail_and_deliberate_errors_pass(
     assert not cases["insufficient balance"].passed  # original raised, Python returned
 
 
+async def test_a_callers_scenario_compares_every_table_its_setup_creates(
+    harness: BehavioralEquivalence,
+) -> None:
+    """No compare_tables: the final rows of every table the caller's setup created count."""
+    source = (EXAMPLES / "procedures" / "b_fn_saldo_cliente.sql").read_text(encoding="utf-8")
+    scenario = Scenario(
+        setup_sql="CREATE TABLE contas (cliente_id bigint, saldo numeric, status text);"
+        "INSERT INTO contas VALUES (1, 100, 'ATIVA'), (1, 50, 'INATIVA');",
+        cases=(Case(name="client 1", sql="SELECT fn_saldo_cliente(1)", args=(1,)),),
+    )
+    # Right result, but it also zeroes the inactive account.
+    writes = FAITHFUL_B.replace(
+        "    return result.scalar_one()",
+        "    total = result.scalar_one()\n"
+        "    await conn.execute(text(\"UPDATE contas SET saldo = 0 WHERE status = 'INATIVA'\"))\n"
+        "    return total",
+    )
+
+    async def run(code: str) -> CaseResult:
+        [case] = await harness.run(
+            routine="fn_saldo_cliente",
+            source_code=source,
+            code=code,
+            parameters=PglastParser().parse(source).parameters,
+            scenario=scenario,
+        )
+        return case
+
+    assert (await run(FAITHFUL_B)).passed
+    wrong = await run(UNFAITHFUL_B)
+    assert not wrong.passed and "150" in wrong.detail
+    side_effect = await run(writes)
+    assert not side_effect.passed and "contas: 1 row(s) only in the original" in side_effect.detail
+
+
+CHECKED_FN = """
+CREATE FUNCTION fn_dobro(p_valor numeric) RETURNS numeric LANGUAGE plpgsql AS $$
+BEGIN
+    IF p_valor < 0 THEN
+        RAISE EXCEPTION 'valor negativo';
+    END IF;
+    RETURN p_valor * 2;
+END;
+$$;
+"""
+
+
+async def test_probe_keeps_valid_calls_and_deliberate_errors_and_discards_invalid_sql(
+    harness: BehavioralEquivalence,
+) -> None:
+    def case(name: str, sql: str) -> Case:
+        return Case(name=name, sql=sql, args=(1,))
+
+    reasons = await harness.probe(
+        source_code=CHECKED_FN,
+        setup_sql="CREATE TABLE t (x int);",
+        cases=[
+            case("ok", "SELECT fn_dobro(2)"),
+            case("raises on purpose", "SELECT fn_dobro(-1)"),
+            case("wrong arity", "SELECT fn_dobro(1, 2)"),
+            case("missing table", "SELECT * FROM nope"),
+        ],
+    )
+
+    ok, deliberate, arity, table = reasons
+    assert ok is None and deliberate is None  # a RAISE is behavior to compare
+    assert arity is not None and arity.startswith("not valid SQL for this schema")
+    assert table is not None and "UndefinedTable" in table
+
+
+async def test_probe_discards_every_case_when_the_setup_breaks(
+    harness: BehavioralEquivalence,
+) -> None:
+    reasons = await harness.probe(
+        source_code=CHECKED_FN,
+        setup_sql="INSERT INTO missing VALUES (1);",
+        cases=[Case(name="a", sql="SELECT fn_dobro(1)", args=(1,))],
+    )
+
+    [reason] = reasons
+    assert reason is not None and reason.startswith("the setup failed")
+
+
 async def test_every_sandbox_schema_is_dropped(
     harness: BehavioralEquivalence, session_factory: SessionFactory
 ) -> None:
@@ -148,11 +236,12 @@ async def test_repository_keeps_every_evaluation_and_reads_the_latest_per_routin
     assert (latest[0].cases_passed, latest[0].cases_total) == (1, 2)
 
 
-async def test_the_repair_loop_fixes_a_divergence_without_seeing_the_holdout_cases(
+async def test_the_repair_loop_fixes_a_divergence_with_the_callers_cases_only(
     harness: BehavioralEquivalence, make_graph: GraphFactory
 ) -> None:
     """Graph + real harness (subprocess): a wrong B is regenerated with the behavior findings
-    of the dev cases as feedback; holdout case names never reach the prompt."""
+    of the cases the caller sent (the dev ones, as run_examples does) as feedback; the holdout
+    case names never reach the prompt."""
     llm = FakeLLM(
         [
             llm_payload(code=UNFAITHFUL_B, strategy="database_delegated"),
@@ -163,8 +252,12 @@ async def test_the_repair_loop_fixes_a_divergence_without_seeing_the_holdout_cas
         [Rule(PythonASTCheck(), blocking=True), Rule(BehaviorCheck(harness), blocking=False)]
     )
     source = (EXAMPLES / "procedures" / "b_fn_saldo_cliente.sql").read_text(encoding="utf-8")
+    dataset = Dataset.load(EXAMPLES / "evaluation" / "scenarios.yml")
+    behavior = dataset.scenario("fn_saldo_cliente", include_holdout=False)
 
-    final = await make_graph(llm=llm, validate_code=validate_code).ainvoke({"source_code": source})
+    final = await make_graph(llm=llm, validate_code=validate_code).ainvoke(
+        {"source_code": source, "behavior": behavior}
+    )
 
     modernization = final["modernization"]
     assert modernization.status is ModernizationStatus.SUCCESS

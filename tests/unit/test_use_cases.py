@@ -16,7 +16,8 @@ from app.shared.integrations.errors import IntegrationError
 from tests.conftest import ModernizeFactory, llm_payload
 from tests.fakes import FakeLLM, InMemoryDatabase
 
-ALL_STEPS = tuple(PipelineStep)
+# The graph built by make_graph has no case generator (see test_case_generation.py).
+ALL_STEPS = tuple(step for step in PipelineStep if step is not PipelineStep.CASE_GENERATION)
 
 
 async def test_success_runs_all_four_nodes_and_persists_twice(

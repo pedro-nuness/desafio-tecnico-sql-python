@@ -5,7 +5,7 @@ from app.features.modernization.generation.domain import RepairFeedback
 from app.features.modernization.parsing.domain import ParsedProcedure, Statement
 from app.shared.domain.value_object import ValueObject
 
-PROMPT_VERSION = "generation-v4"
+PROMPT_VERSION = "generation-v5"
 
 SYSTEM_PROMPT = f"""\
 You are a senior backend engineer modernizing PostgreSQL PL/pgSQL routines into Python 3.14.
@@ -43,10 +43,17 @@ Runtime pitfalls. Each one below was observed in code that passed ast.parse and 
 still failed or computed wrong values when executed against PostgreSQL:
 10. asyncpg prepares every statement and cannot infer the type of a bind parameter in a
     polymorphic position (make_interval, date/interval arithmetic, `||`, COALESCE,
-    jsonb_build_object, CASE): write `CAST(:name AS <type>)` there. Never `:name::type`
-    (SQLAlchemy does not recognise `:name` as a bind when `::` follows). This includes
-    every value of jsonb_build_object, text too: `'erro', CAST(:erro AS TEXT)`, not
-    `'erro', :erro` (an untyped error message in the error log broke a run).
+    jsonb_build_object, CASE): write `CAST(:name AS <type>)` there, where <type> is the
+    PL/pgSQL type of the value being bound, so the Python value matches it. Never
+    `:name::type` (SQLAlchemy does not recognise `:name` as a bind when `::` follows).
+    - jsonb_build_object: cast every value to its own type, so the JSON keeps it:
+      `'erro', CAST(:erro AS TEXT)`, `'dias', CAST(:dias AS INTEGER)` ({{"dias": 30}}).
+      Casting an integer to TEXT stores {{"dias": "30"}} and changes the row.
+    - Intervals from an integer: `make_interval(days => CAST(:dias AS INTEGER))`. Never
+      `CAST(:dias AS TEXT) || ' days'`: asyncpg then expects a str and the int fails with
+      `TypeError: expected str, got int`.
+    - One bind name has one type in a statement: casting the same `:name` to two types
+      fails.
 11. Savepoints: `async with conn.begin_nested():`. Calling `conn.begin_nested()` without
     `async with`/`await` starts nothing and fails at commit time.
 12. NUMERIC/DECIMAL values are `decimal.Decimal` end to end, never float. A PL/pgSQL
@@ -219,7 +226,7 @@ def _analysis_section(analysis: SemanticAnalysis) -> str:
         "## Deterministic semantic analysis",
         f"- recommended strategy: {analysis.recommended_strategy.value} "
         "(you may choose another one if you justify it in architectural_decisions)",
-        "- features: " + (", ".join(f.feature.value for f in analysis.features) or "(none)"),
+        "- constructs: " + (", ".join(f.construct.value for f in analysis.constructs) or "(none)"),
         "- risks:",
     ]
     lines += [

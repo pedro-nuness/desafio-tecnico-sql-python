@@ -4,6 +4,7 @@ from typing import Annotated, NotRequired, TypedDict
 from uuid import UUID
 
 from app.features.modernization.analysis.domain import SemanticAnalysis
+from app.features.modernization.case_generation.domain import CaseGenerationResult
 from app.features.modernization.domain import (
     Modernization,
     ModernizationReport,
@@ -14,6 +15,7 @@ from app.features.modernization.domain import (
 )
 from app.features.modernization.generation.domain import GenerationResult
 from app.features.modernization.parsing.domain import ParsedProcedure
+from app.features.modernization.validation.checks.behavior.domain import Scenario
 from app.features.modernization.validation.domain import ValidationResult
 
 
@@ -22,11 +24,18 @@ class ModernizationInput(TypedDict):
 
     source_code: str
     schema_context: NotRequired[str | None]
+    behavior: NotRequired[Scenario | None]
+    """Data and cases for the behavior check; absent = the check is skipped."""
+    generate_cases: NotRequired[bool]
+    """False = only the caller's cases (no case_generation step). Default True."""
 
 
 class ModernizationState(TypedDict):
     source_code: str
     schema_context: NotRequired[str | None]
+    behavior: NotRequired[Scenario | None]
+    """The caller's scenario; case_generation replaces it with caller's + kept cases."""
+    generate_cases: NotRequired[bool]
 
     # Set by record_start: every run has a persisted row from its first step.
     execution_id: UUID
@@ -39,6 +48,8 @@ class ModernizationState(TypedDict):
     generation: GenerationResult | None
     """Strategy, architectural decisions, model and tokens of the latest attempt."""
     generation_attempts: int
+
+    case_generation: NotRequired[CaseGenerationResult | None]
 
     validation_result: ValidationResult | None
 
@@ -62,6 +73,7 @@ def to_report(state: ModernizationState) -> ModernizationReport:
         parsing=ParsingSummary.of(procedure) if procedure else None,
         semantic_analysis=state.get("semantic_analysis"),
         generation=state.get("generation"),
+        case_generation=state.get("case_generation"),
         validation=validation,
         completed_steps=tuple(state.get("completed_steps", [])),
         errors=tuple(state.get("errors", [])),
@@ -79,6 +91,8 @@ class StateUpdate(TypedDict, total=False):
     generated_code: str
     generation: GenerationResult
     generation_attempts: int
+    behavior: Scenario | None
+    case_generation: CaseGenerationResult
     validation_result: ValidationResult
     completed_steps: list[PipelineStep]
     warnings: list[str]

@@ -1,10 +1,10 @@
-"""Catalogs the semantic analysis reads: PostgreSQL built-ins, IR -> feature mappings and the
+"""Catalogs the semantic analysis reads: PostgreSQL built-ins, IR -> construct mappings and the
 text of every risk and recommendation. Data only (plus the built-in lookup)."""
 
 from collections.abc import Mapping
 from typing import NamedTuple
 
-from app.features.modernization.analysis.domain import Feature, RiskSeverity
+from app.features.modernization.analysis.domain import RiskSeverity, SqlConstruct
 from app.features.modernization.parsing.domain import SqlCommand, StatementKind
 
 # --------------------------------------------------------------------------- PostgreSQL
@@ -42,34 +42,34 @@ def is_builtin_function(name: str) -> bool:
     return schema == "pg_catalog" or bare.lower() in BUILTIN_FUNCTIONS
 
 
-# --------------------------------------------------------------------------- IR -> features
+# --------------------------------------------------------------------------- IR -> constructs
 
-PROCEDURAL_FEATURES = frozenset(
+PROCEDURAL_CONSTRUCTS = frozenset(
     {
-        Feature.LOOP,
-        Feature.CONDITIONAL,
-        Feature.EXCEPTION_HANDLING,
-        Feature.RAISE,
-        Feature.CURSOR,
-        Feature.TRANSACTION_CONTROL,
-        Feature.DYNAMIC_SQL,
-        Feature.GET_DIAGNOSTICS,
+        SqlConstruct.LOOP,
+        SqlConstruct.CONDITIONAL,
+        SqlConstruct.EXCEPTION_HANDLING,
+        SqlConstruct.RAISE,
+        SqlConstruct.CURSOR,
+        SqlConstruct.TRANSACTION_CONTROL,
+        SqlConstruct.DYNAMIC_SQL,
+        SqlConstruct.GET_DIAGNOSTICS,
     }
 )
 
-STATEMENT_FEATURES: dict[StatementKind, Feature] = {
-    StatementKind.IF: Feature.CONDITIONAL,
-    StatementKind.CASE: Feature.CONDITIONAL,
-    StatementKind.COMMIT: Feature.TRANSACTION_CONTROL,
-    StatementKind.ROLLBACK: Feature.TRANSACTION_CONTROL,
-    StatementKind.RAISE: Feature.RAISE,
-    StatementKind.GET_DIAGNOSTICS: Feature.GET_DIAGNOSTICS,
-    StatementKind.RETURN_QUERY: Feature.RETURN_QUERY,
-    StatementKind.OPEN_CURSOR: Feature.CURSOR,
-    StatementKind.FETCH: Feature.CURSOR,
-    StatementKind.CLOSE_CURSOR: Feature.CURSOR,
-    StatementKind.FOR_CURSOR: Feature.CURSOR,
-    StatementKind.CALL: Feature.FUNCTION_CALLS,
+STATEMENT_CONSTRUCTS: dict[StatementKind, SqlConstruct] = {
+    StatementKind.IF: SqlConstruct.CONDITIONAL,
+    StatementKind.CASE: SqlConstruct.CONDITIONAL,
+    StatementKind.COMMIT: SqlConstruct.TRANSACTION_CONTROL,
+    StatementKind.ROLLBACK: SqlConstruct.TRANSACTION_CONTROL,
+    StatementKind.RAISE: SqlConstruct.RAISE,
+    StatementKind.GET_DIAGNOSTICS: SqlConstruct.GET_DIAGNOSTICS,
+    StatementKind.RETURN_QUERY: SqlConstruct.RETURN_QUERY,
+    StatementKind.OPEN_CURSOR: SqlConstruct.CURSOR,
+    StatementKind.FETCH: SqlConstruct.CURSOR,
+    StatementKind.CLOSE_CURSOR: SqlConstruct.CURSOR,
+    StatementKind.FOR_CURSOR: SqlConstruct.CURSOR,
+    StatementKind.CALL: SqlConstruct.FUNCTION_CALLS,
 }
 
 DATABASE_ROUND_TRIP_KINDS = frozenset(

@@ -85,11 +85,19 @@ persistida), avalia cada uma e grava os resultados:
 
 ```bash
 uv run python -m scripts.run_examples
+# Opções da CLI:
+uv run python -m scripts.run_examples --without-generated-cases  # somente casos dev
+uv run python -m scripts.run_examples -p b_fn_saldo_cliente      # filtra rotina específica
+uv run python -m scripts.run_examples -p b,c --tag "exp-1"       # subconjunto com tag
+uv run python -m scripts.run_examples --history                  # exibe tabela de histórico/tracking
+uv run python -m scripts.run_examples --detail                   # detalhamento caso a caso
 ```
 
-Saída em `examples/results/`: `<anexo>/generated.py`, `report.json`, `evaluation.json` e
-`[SUMMARY.md](examples/results/SUMMARY.md)`. Os arquivos versionados são uma rodada real, sem
-curadoria: falhas ficam como saíram.
+Cada execução fica em `examples/results/history/run_<id>_<tag>/` (nada é sobrescrito): `run.json`,
+`SUMMARY.md` e, por anexo, `procedure.sql` (recebida), `payload.json` (comando enviado, SQL em lista
+de linhas), `generated.py`, `report.json` e `evaluation.json`.
+`[HISTORY.md](examples/results/HISTORY.md)` e `history.jsonl` são o índice de todas as execuções.
+Os arquivos versionados são uma rodada real, sem curadoria: falhas ficam como saíram.
 
 ---
 
@@ -101,7 +109,9 @@ flowchart LR
     record_start --> parsing
     parsing --> semantic_analysis
     semantic_analysis --> generation
+    semantic_analysis -. "generate_cases (padrão)" .-> case_generation
     generation --> validation
+    case_generation --> validation
     validation -- "reprovado, tentativas e tempo sobrando" --> generation
     validation -- "aprovado ou sem retry" --> record_result
     record_result --> END((END))
@@ -114,8 +124,9 @@ flowchart LR
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------- | ----------------------- |
 | `record_start`      | grava a execução como `running` antes do LLM                                                                            | `ExecutionLog.start`    |
 | `parsing`           | PL/pgSQL → IR `ParsedProcedure` (parâmetros, declarações, árvore de statements, SQL embutido com tabelas/funções/locks) | `PglastParser`          |
-| `semantic_analysis` | features, riscos (N+1, `FOR UPDATE`, exceção engolida, SQL dinâmico…), dependências e estratégia recomendada            | `SemanticAnalyzer`      |
+| `semantic_analysis` | construtos SQL, riscos (N+1, `FOR UPDATE`, exceção engolida, SQL dinâmico…), dependências e estratégia recomendada      | `SemanticAnalyzer`      |
 | `generation`        | prompt montado a partir das duas etapas anteriores → LLM → contrato JSON                                                | `GenerateCode`          |
+| `case_generation`   | em paralelo com `generation`: LLM propõe casos de teste, a rotina original filtra, somam-se aos do chamador             | `GenerateCases`         |
 | `validation`        | `ast.parse` (bloqueante), Ruff e comportamento contra a rotina original (não bloqueantes)                               | `ValidateCode`          |
 | `record_result`     | calcula o status e grava código e relatório                                                                             | `ExecutionLog.complete` |
 
@@ -130,6 +141,10 @@ produzido e relança a exceção, que vira resposta HTTP no handler global. Func
 - **Loop de reparo** (`validation → generation`): se algum check reprova, a geração roda de novo
 com o código anterior e a lista de problemas no prompt. Limites: `GENERATION_MAX_ATTEMPTS`
 (padrão 2) e `GENERATION_RETRY_BUDGET_SECONDS` (padrão 90 s), porque a request é síncrona.
+- **Fan-out** (`semantic_analysis → generation + case_generation`): os dois nós rodam no mesmo
+superstep, em paralelo, e `validation` roda uma vez quando ambos terminam. O retry volta só
+para `generation`: os casos são gerados uma vez por execução. `case_generation` nunca derruba a
+execução: falha do LLM vira warning e ficam só os casos do chamador.
 
 ---
 
@@ -161,6 +176,7 @@ app/
         ├── parsing/            # domain.py (o IR) · parser.py (SQLParser) · plpgsql.py
         ├── analysis/           # domain.py · analyzer.py · risks.py · catalog.py
         ├── generation/         # domain.py · prompt.py · generate_code.py
+        ├── case_generation/    # domain.py · prompt.py · generate_cases.py
         ├── validation/         # domain.py · validate_code.py (CodeCheck, Rule, ValidateCode)
         │   └── checks/         # syntax.py (ast.parse) · lint.py (Ruff)
         │       └── behavior/   # domain.py · check.py · harness.py · dataset.py · runner.py
@@ -231,17 +247,33 @@ docker compose exec postgres psql -U modernizer -d postgres -c "CREATE DATABASE 
 
 
 ```json
-{ "source_code": "CREATE OR REPLACE FUNCTION ...", "schema": "CREATE TABLE contas (...);" }
+{
+  "source_code": "CREATE OR REPLACE FUNCTION fn_saldo_cliente ...",
+  "schema": "CREATE TABLE contas (...);",
+  "behavior": {
+    "seed": "INSERT INTO contas VALUES (...);",
+    "cases": [{ "name": "cliente 1", "sql": "SELECT fn_saldo_cliente(1)", "args": [1] }],
+    "compare_tables": [],
+    "ignore_columns": ["id"]
+  },
+  "generate_cases": true
+}
 ```
 
-`schema` é opcional. A resposta traz `execution_id`, `status`, `generated_code` e `report`:
+`schema`, `behavior` e `generate_cases` são opcionais. Com `behavior` (exige `schema`), o código
+gerado roda contra a original nesses casos e as divergências voltam para o LLM; `compare_tables`
+vazio compara todas as tabelas criadas. `generate_cases` (padrão `true`, exige `schema`) soma
+casos propostos por um LLM aos do chamador; `false` roda só os do `behavior`. Sem nenhum caso, o
+comportamento não é verificado e o relatório diz isso. A resposta traz `execution_id`, `status`,
+`generated_code` e `report`:
 
 
 | seção               | conteúdo                                                                                                                    |
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `parsing`           | nome, tipo, parâmetros e modos, retorno, nº de statements, tabelas, funções chamadas                                        |
-| `semantic_analysis` | features (com linhas), riscos (`code`, `severity`, `message`, `line`), dependências, estratégia recomendada                 |
+| `semantic_analysis` | construtos SQL (com linhas), riscos (`code`, `severity`, `message`, `line`), dependências, estratégia recomendada           |
 | `generation`        | estratégia escolhida e recomendada, decisões arquiteturais, provider, modelo, `prompt_version`, tokens, latência, tentativa |
+| `case_generation`   | casos mantidos, descartados (com o motivo), se o seed foi gerado, warnings, provider, modelo, tokens, latência             |
 | `validation`        | resultado por check (`validator`, `success`, `blocking`, `messages`, `skipped`)                                             |
 | raiz                | `completed_steps` (repete geração/validação a cada tentativa), `errors`, `warnings`                                         |
 
@@ -282,12 +314,27 @@ rejeita, `begin_nested()` sem `await`, arredondamento `NUMERIC` em cada atribui�
 `UPDATE … FROM` aplicando uma linha só, fallback rodando numa transação abortada. Só executando
 contra o original isso aparece.
 
-**Dentro do pipeline, com holdout.** O mesmo harness roda como check de validação
-(`validation/checks/behavior/check.py`): uma divergência vira feedback para o loop de reparo. Para a
-métrica continuar medindo generalização, o dataset separa **12 casos dev** (rodam no pipeline e
-viram feedback) de **9 holdout** (`holdout: true`, nunca chegam ao prompt). Cada rotina tem os dois
-tipos, e o holdout repete as armadilhas com outros dados. Rotina sem cenário no dataset: o check
-responde "não verificado" no relatório, e o status não finge verificação.
+**Dentro do pipeline: os casos do chamador.** O mesmo harness roda como check de validação
+(`validation/checks/behavior/check.py`) sobre o `behavior` do request: todos os casos rodam e cada
+divergência vira feedback para o loop de reparo. Sem `behavior`, o check responde "não verificado"
+no relatório, e o status não finge verificação.
+
+**Casos gerados (`case_generation`).** Um LLM propõe entradas: chamadas e, se o chamador não
+mandou `behavior`, também o seed. Ele nunca escreve o resultado esperado: o oráculo é a rotina
+original, então um caso ruim no máximo é inútil, nunca uma resposta errada. Antes de entrar, cada
+caso passa por dois filtros: estático (número de `args` igual ao de parâmetros IN, a SQL chama a
+rotina) e execução só na original (`BehavioralEquivalence.probe`): descarta SQL inválido para o
+schema (SQLSTATE classe 42), timeout e seed que quebra o setup. Um `RAISE` da rotina é
+comportamento e fica. Com seed do chamador, o seed proposto é ignorado (misturar dá conflito de
+PK). Cada caso leva `source: user | generated`; os gerados aparecem como "(generated)" no feedback
+do reparo. Limites: no máximo 6 casos; o mesmo modelo escreve código e testes, então os pontos
+cegos podem coincidir; cobertura de ramos não é medida.
+
+**No experimento: holdout.** O holdout é do experimento, não do produto. O dataset separa
+**12 casos dev** de **9 holdout** (`holdout: true`). O `scripts/run_examples.py` manda só os dev
+como `behavior`, e a métrica roda todos depois. Assim a taxa de holdout mede se a correção
+generaliza, em vez de só se ajustar aos casos que o LLM viu. Cada rotina tem os dois tipos, e o
+holdout repete as armadilhas com outros dados.
 
 **O que fica de fora:** só as entradas do dataset (não é prova geral); NOTICE/logs, concorrência,
 custo das queries e mensagens exatas de erro não são comparados; `id`, `data_transacao` e
@@ -298,64 +345,58 @@ do servidor, mas não é um sandbox (mesma máquina, com rede).
 [Evolução](#limitações-e-evolução)), comparar SQLSTATE e estado após falhas, medir cobertura dos
 ramos do PL/pgSQL, executar o código gerado em container sem rede e com papel de banco restrito.
 
-### Rodadas
+### Resultado
 
-Mesmo modelo, Anexo A como schema, temperatura 0. A [linha de base v2](examples/evaluation/baseline-v2.json)
-é anterior ao prompt com armadilhas de runtime e ao check de comportamento.
+Modelo `z-ai/glm-5.3-flash`, prompt `generation-v5`, Anexo A como schema, temperatura 0, casos
+gerados pelo LLM ligados ([`HISTORY.md`](examples/results/HISTORY.md)):
 
+| rotinas | casos | holdout | validade AST | conclusão | tokens (in / out) | duração |
+| ------- | ----- | ------- | ------------ | --------- | ----------------- | ------- |
+| **5/5** | **21/21** | **9/9** | 100% | 100% | 21,1k / 9,6k | 269 s |
 
-| rodada                             | pipeline                             | rotinas       | casos            | holdout | o que falhou ou custou tentativa                          |
-| ---------------------------------- | ------------------------------------ | ------------- | ---------------- | ------- | --------------------------------------------------------- |
-| v2                                 | AST + Ruff                           | 1/5           | 8/19             | —       | C, D, E, F                                                |
-| v3 #1–#3                           | AST + Ruff                           | 4/5, 5/5, 4/5 | 14, 19, 16 de 19 | —       | D: bind sem tipo; F: `INTERVAL` como `str`                |
-| v3 #4                              | + comportamento no loop              | 4/5           | 14/21            | 6/9     | D: retentativa voltou com cerca Markdown                  |
-| v3 #5                              | idem                                 | 5/5           | 21/21            | 9/9     | D e F corrigidos na 2ª tentativa                          |
-| v4 #1                              | + cerca removida, contrato tolerante | 5/5           | 21/21            | 9/9     | F corrigido na 2ª tentativa                               |
-| v4 #2                              | idem                                 | 4/5           | 20/21            | 8/9     | D: falha num caso holdout                                 |
-| **v4 #3** (em `examples/results/`) | idem                                 | **5/5**       | **21/21**        | **9/9** | C e D: import não usado (Ruff), corrigido na 2ª tentativa |
-| v4 sem source #1–#2 (experimento, [decisão 3](#3-prompt-a-partir-da-análise-contrato-tolerante)) | prompt sem o source bruto | 5/5, 5/5 | 21, 21 de 21 | 9, 9 de 9 | E: arredondamento `NUMERIC(18,2)`, corrigido na 2ª tentativa |
+Temperatura 0 não torna o provider determinístico: rodadas da mesma versão podem divergir, e é
+para isso que existe o holdout. Uma correção que só se ajusta aos casos dev que o loop de reparo
+viu aparece como falha num caso holdout.
 
+### Decisões de tradução por anexo
 
-A mesma versão do pipeline oscila entre rodadas (temperatura 0 não torna o provider
-determinístico); por isso todas ficam registradas. A v4 #2 mostra para que serve o holdout. O D passou nos quatro casos dev, que o loop de reparo
-viu, e falhou no holdout "origem inexistente". O código busca a conta com `.one()`, que lança
-`NoResultFound` quando não há linha; o original faz `SELECT … INTO`, recebe `NULL` e lança a
-própria exceção. Sem o holdout, a rodada contaria como 5/5.
-
-### Decisões de tradução por anexo (rodada v4 #3)
-
+Código, payload e relatórios: [`examples/results/history/run_20261002_032528_run/`](examples/results/history/run_20261002_032528_run/).
 
 | anexo                                   | estratégia           | tentativas | casos (dev · holdout) |
 | --------------------------------------- | -------------------- | ---------- | --------------------- |
 | B `fn_saldo_cliente`                    | `database_delegated` | 1          | 2/2 · 1/1             |
-| C `sp_atualizar_status_contas_inativas` | `hybrid`             | 2          | 2/2 · 2/2             |
-| D `sp_transferir_entre_contas`          | `hybrid`             | 2          | 4/4 · 3/3             |
-| E `sp_processar_lote_taxas`             | `hybrid`             | 1          | 2/2 · 1/1             |
-| F `sp_relatorio_mensal_cliente`         | `hybrid`             | 1          | 2/2 · 2/2             |
+| C `sp_atualizar_status_contas_inativas` | `hybrid`             | 1          | 2/2 · 2/2             |
+| D `sp_transferir_entre_contas`          | `hybrid`             | 1          | 4/4 · 3/3             |
+| E `sp_processar_lote_taxas`             | `hybrid`             | 2          | 2/2 · 1/1             |
+| F `sp_relatorio_mensal_cliente`         | `hybrid`             | 2          | 2/2 · 2/2             |
 
 
-- **B:** uma consulta agregada, toda em SQL, com `CAST(… AS NUMERIC(18,2))` e retorno `Decimal`.
-O módulo declara uma exceção que não usa (o original não tem `RAISE`); Ruff não acusa classe
-não usada.
-- **C:** valida `p_dias` em Python com exceção própria; o `UPDATE … NOT EXISTS` fica no banco;
-`GET DIAGNOSTICS` vira `result.rowcount`; o OUT vira uma dataclass. A 1ª tentativa tinha um
-import não usado (Ruff).
+- **B:** uma consulta agregada, toda em SQL; o resultado volta como `Decimal` e é arredondado
+com `quantize(Decimal("0.01"), ROUND_HALF_UP)`, como a variável `NUMERIC(18,2)` do original.
+- **C:** valida `p_dias` em Python com exceção própria; o `UPDATE … NOT EXISTS` fica no banco, com
+`make_interval(days => CAST(:p_dias AS INTEGER))`; `GET DIAGNOSTICS` vira `result.rowcount`; o OUT
+vira uma dataclass congelada; o `jsonb_build_object` do log usa `CAST(… AS INTEGER)`, e o JSON
+guarda números como no original.
 - **D:** o corpo inteiro roda num savepoint (`async with conn.begin_nested()`), porque o
 `EXCEPTION WHEN OTHERS` original cobre também os `RAISE` de validação. `FOR UPDATE` e escritas
-na mesma conexão, valores `Decimal`, uma exceção por `RAISE`. As buscas usam `.first()` e tratam
-a conta ausente como o `SELECT … INTO` original (o defeito da v4 #2). No handler, grava a
-auditoria de erro e relança; um erro que não é de validação sai embrulhado em
-`TransferenciaError`, enquanto o original relança o erro em si. A métrica aceita, porque não
-compara o tipo exato do erro (ver "O que fica de fora"). A 1ª tentativa tinha um import não
-usado (Ruff).
-- **E:** o loop cursor-a-cursor (N+1) virou **um único statement**: taxa vigente por
-`LEFT JOIN LATERAL`, os dois arredondamentos `NUMERIC(18,2)` intermediários, débito agregado por
-conta antes do `UPDATE … FROM` (duas tarifas na mesma conta) e os inserts de tarifa e de
-auditoria como CTEs de escrita. O log do lote é um segundo statement com os totais. O
-`logger.info` é um acréscimo do LLM (o original não tem NOTICE).
-- **F:** CTE recursiva, agregações e a chamada a `fn_saldo_cliente` ficam em SQL. A validação de
-período roda **dentro** do savepoint, como no original: o `WHEN OTHERS` captura o período
-invertido e devolve a linha degradada, montada por uma consulta com aliases explícitos.
+na mesma conexão, valores `Decimal`, uma exceção por `RAISE` (todas filhas de
+`TransferenciaError`). As buscas usam `.first()` e tratam a conta ausente como o `SELECT … INTO`
+original (`.one()` lançaria `NoResultFound` no lugar da exceção do original). No handler, depois do rollback do savepoint, grava a auditoria de
+erro com a mensagem (o `SQLERRM`) e relança a exceção original com `raise`.
+- **E:** o loop cursor-a-cursor (N+1) virou SQL set-based: uma tabela temporária
+(`ON COMMIT DROP`) calcula todas as tarifas de uma vez, com a taxa vigente por
+`LEFT JOIN LATERAL` e os dois arredondamentos `NUMERIC(18,2)` intermediários; depois três
+statements em lote (débito agregado por conta antes do `UPDATE … FROM`, tarifas, auditoria) e o
+log do lote com os totais. A tabela temporária existe porque quatro statements leem o mesmo
+cálculo. A 1ª tentativa lançava erro para data `NULL`, enquanto o original não processa nada e
+registra o lote: um caso gerado pelo LLM pegou a divergência. Sobrou uma classe de exceção não
+usada (`FeeProcessingError`); Ruff não acusa classe não usada.
+- **F:** CTE recursiva, agregações e a chamada a `fn_saldo_cliente` ficam em SQL; as linhas voltam
+como dataclasses congeladas; `RAISE NOTICE`/`WARNING` viram `logging`. A 1ª tentativa validava o
+período fora do handler (o original captura o próprio `RAISE` no `WHEN OTHERS` e devolve a linha
+degradada) e comparava datas `NULL` em Python (`TypeError`). Na 2ª, a validação foi para dentro do
+`try`, `NULL` pula a comparação como no PL/pgSQL, e o fallback roda depois do rollback do
+savepoint.
 
 ---
 
@@ -398,7 +439,7 @@ Com Postgres (`docker compose up -d postgres`), os testes de integração rodam 
 TEST_DATABASE_URL=postgresql+asyncpg://modernizer:modernizer@127.0.0.1:5432/modernizer_test EVALUATION_DATABASE_URL=postgresql+asyncpg://modernizer:modernizer@127.0.0.1:5432/modernizer_eval uv run pytest --cov
 ```
 
-- **232 testes** (222 unitários, 10 de integração); nenhum chama um LLM real.
+- **267 testes** (254 unitários, 13 de integração); nenhum chama um LLM real.
 - **Cobertura 96%** com integração (branches incluídos, subprocesso da avaliação medido);
 `fail_under = 95`. Só com unitários fica em 91%, porque o harness precisa de Postgres.
 - **Unitários:** parser e análise semântica (inclusive regressões medidas nos anexos), prompt e
@@ -407,8 +448,9 @@ política de bloqueio, loop de reparo (feedback, limite de tentativas, orçament
 persistência de sucesso e falha, API, gateway de LLM (failover, circuit breaker) e regras de
 arquitetura.
 - **Integração:** Postgres migrado por Alembic, repositórios, JSONB, equivalência contra o
-PL/pgSQL real e o ciclo completo do loop de reparo com o harness (um B errado é corrigido pelo
-feedback dos casos dev e nenhum nome de caso holdout aparece no prompt).
+PL/pgSQL real, cenário do chamador comparando todas as tabelas criadas, e o ciclo completo do
+loop de reparo com o harness (um B errado é corrigido pelo feedback dos casos enviados e nenhum
+nome de caso holdout aparece no prompt).
 
 ---
 
@@ -425,7 +467,7 @@ dialeto novo é outra implementação de `SQLParser` produzindo o mesmo IR.
 
 ### 2. Análise semântica determinística e a escolha SQL × Python
 
-`SemanticAnalyzer` (`analysis/`) é lógica pura sobre o IR: detecta features e riscos e recomenda a
+`SemanticAnalyzer` (`analysis/`) é lógica pura sobre o IR: detecta construtos SQL e riscos e recomenda a
 estratégia. Catálogos (funções nativas, textos de riscos e recomendações) ficam em `analysis/catalog.py`.
 
 
@@ -452,14 +494,26 @@ A resposta é JSON validado com Pydantic. Desvios que não afetam o código são
 (cerca Markdown dentro do código, decisão arquitetural malformada), porque cada um custava uma
 tentativa ou abortava a execução. `PROMPT_VERSION` vai para o relatório.
 
-**Experimento: prompt sem o source bruto.** Duas rodadas dos Anexos B–F com o prompt sem a seção do source
-original deram 5/5 rotinas, 21/21 casos e 9/9 de holdout nas duas: o contexto estruturado basta
-para gerar código equivalente. O custo apareceu no Anexo E, que nas duas rodadas perdeu na primeira
-tentativa o arredondamento por atribuição de `NUMERIC(18,2)` (994 em vez de 993,99) e só passou
-após o feedback da validação comportamental; com o source ele passou de primeira nas três rodadas
-v4. O tipo da variável e a atribuição estão no prompt, mas em seções separadas; no source estão
-juntos. Sem o source o input cai ~5–20% (B, F), menos do que custa a tentativa extra do E. Por isso
-o source fica, como referência. Amostra pequena (2 contra 3 rodadas), é um sinal, não estatística.
+**Experimento: prompt sem o source bruto.** Duas rodadas dos Anexos B–F com o prompt v5 sem a
+seção do source original (todo o resto igual), comparadas à execução consolidada
+([resultados](examples/experiments/sem-source/HISTORY.md)):
+
+| prompt de geração         | rotinas | casos | holdout | tentativas (B C D E F) | tokens (in / out) |
+| ------------------------- | ------- | ----- | ------- | ---------------------- | ----------------- |
+| com source (consolidada)  | 5/5     | 21/21 | 9/9     | 1 1 1 2 2              | 21,1k / 9,6k      |
+| sem source #1             | 5/5     | 21/21 | 9/9     | 1 1 2 2 2              | 19,7k / 15,1k     |
+| sem source #2             | 4/5     | 19/21 | 8/9     | 1 1 2 3 2              | 22,2k / 13,0k     |
+
+O contexto estruturado basta para B, C e F. O custo aparece no E: nas duas rodadas sem source, a
+1ª tentativa perdeu o arredondamento por atribuição de `NUMERIC(18,2)` no caso dev fixo (saldo 994
+em vez de 993,99); a #1 corrigiu na 2ª tentativa e a #2 não corrigiu em três, falhando também no
+holdout. Com o source, o E acertou o arredondamento de primeira (a 2ª tentativa da consolidada foi
+por outro motivo, data `NULL`). O tipo da variável e a atribuição estão no prompt, mas em seções
+separadas; no source estão juntos. As tentativas extras de D não entram na comparação: só as
+rodadas sem source geraram um caso com valor 0,005, e os casos gerados mudam a cada rodada. Sem o
+source o input cai 7–12% por tentativa (B e C, que têm uma tentativa nas três rodadas), mas as
+tentativas extras anulam a economia e aumentam o output em 36–57%. Por isso o source fica, como
+referência. Amostra pequena (2 rodadas contra 1), é um sinal, não estatística.
 
 ### 4. LLM atrás de um gateway
 
@@ -532,8 +586,9 @@ provider; CPU e banco não são o limite.
 
 **Já no código:** processo sem estado (tudo no Postgres), então N réplicas atrás de um balanceador
 funcionam sem coordenação; I/O async de ponta a ponta; um pool de conexões por processo e nenhuma
-conexão presa durante o LLM; checks em paralelo; execuções independentes concorrentes
-(`run_examples` dispara as cinco com `asyncio.gather`); failover e circuit breaker no LLM.
+conexão presa durante o LLM; checks em paralelo; execuções independentes podem rodar
+concorrentes (o `run_examples` roda em sequência, uma rotina por vez); failover e circuit
+breaker no LLM.
 
 **Filas (próximo passo):** `POST /modernize` responde `202` com o `execution_id` (a linha `running`
 já é gravada antes do LLM) e o cliente consulta `GET /modernizations/{id}`, que já existe. O
@@ -593,18 +648,17 @@ valores do `.env.example` (sem segredos), para não depender do `.env` de quem r
 - Sem catálogo: `%TYPE`/`%ROWTYPE` não são resolvidos (viram placeholder com warning), e builtin ×
 rotina do usuário é heurística.
 - `EXECUTE` (SQL dinâmico) não é analisável: vira risco `DYNAMIC_SQL`.
-- Comportamento só é verificado onde há dataset (B–F). Para qualquer outra rotina a validação é
-estática e o relatório diz isso.
+- Comportamento só é verificado quando há casos: os do `behavior` ou os gerados (que exigem
+`schema` e `EVALUATION_DATABASE_URL`). Sem isso a validação é estática e o relatório diz isso.
 - `POST /modernize` é síncrono.
 
 **Com mais tempo:**
 
-- **Dataset de avaliação gerado automaticamente**, como um nó antes da geração: banco de teste a
-partir do `schema_context`; seed e entradas derivados do IR (tipos, colunas, constantes de
-`WHERE`/`IF` como valores de borda), por LLM ou fuzzing; a rotina original como oráculo (casos que
-não exercitam nada são descartados); a mesma divisão dev/holdout. Riscos: cobertura de ramos
-(medir com `plpgsql_check`), viés de usar o mesmo LLM para código e dados, rotinas com efeitos
-externos.
+- **Casos gerados mais fortes** (o `case_generation` já existe): valores de borda tirados de
+forma determinística do IR (constantes de `WHERE`/`IF`, hoje só pedidas no prompt), cobertura de
+ramos com `plpgsql_check` para descartar casos que não exercitam nada, e um modelo diferente para
+os testes. Medir antes: rodar `scripts/run_examples.py` com e sem `--without-generated-cases` e
+comparar a taxa de holdout.
 - Modo assíncrono com fila, cache de resultado e backpressure por provider.
 - Executar o código gerado em container sem rede e com papel de banco restrito.
 - Resolver `%TYPE` e builtins consultando o catálogo quando houver conexão.

@@ -7,8 +7,11 @@ from app.shared.integrations.llm.llm import LLM, LLMRequest, LLMResponse
 
 
 class TracedLLM:
-    def __init__(self, llm: LLM) -> None:
+    def __init__(self, llm: LLM, *, model: str) -> None:
         self._llm = llm
+        self._model = model
+        """Primary route's model: Langfuse needs one at start; the end reports the one that
+        answered (another route after a failover)."""
 
     async def generate(self, request: LLMRequest) -> LLMResponse:
         manager = get_async_callback_manager_for_config(ensure_config())
@@ -17,6 +20,7 @@ class TracedLLM:
             [request.system_prompt + "\n\n" + request.user_prompt],
             name="llm.generate",
             invocation_params={
+                "model": self._model,
                 "temperature": request.temperature,
                 "max_tokens": request.max_output_tokens,
             },

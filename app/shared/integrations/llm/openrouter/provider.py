@@ -6,9 +6,10 @@ transient failures a bounded number of times (the provider's max_retries).
 
 import time
 
-from openrouter import OpenRouter
+from openrouter import OpenRouter, components
 from openrouter.types import UNSET
 
+from app.shared.integrations.errors import IntegrationError
 from app.shared.integrations.integration import Integration
 from app.shared.integrations.llm.config import Route
 from app.shared.integrations.llm.llm import LLMRequest, LLMResponse, ResponseFormat
@@ -41,8 +42,9 @@ class OpenRouterProvider:
 
     async def complete(self, request: LLMRequest, route: Route) -> LLMResponse:
         started = time.perf_counter()
-        completion = await self._integration.call(
-            lambda: self._client.chat.send_async(
+
+        async def send() -> components.ChatResult:
+            completion = await self._client.chat.send_async(
                 model=route.model,
                 messages=[
                     {"role": "system", "content": request.system_prompt},
@@ -58,7 +60,18 @@ class OpenRouterProvider:
                 ),
                 stream=False,
             )
-        )
+            if completion.choices and completion.choices[0].finish_reason == "error":
+                # OpenRouter answers 200 when the upstream provider fails mid-answer: the
+                # content is cut off (observed: unterminated JSON). Transient, so retried.
+                raise IntegrationError(
+                    f"{self.name}: the upstream provider failed mid-answer",
+                    transient=True,
+                    integration=self.name,
+                    model=route.model,
+                )
+            return completion
+
+        completion = await self._integration.call(send)
         latency_ms = (time.perf_counter() - started) * 1000
 
         if not completion.choices:
