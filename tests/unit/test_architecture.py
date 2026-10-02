@@ -138,7 +138,7 @@ FEATURE_VENDOR_HOMES = {
         "features/modernization/evaluation/repository.py",
         "features/modernization/persistence/models.py",
         "features/modernization/persistence/repository.py",
-        "features/modernization/validation/checks/behavior/harness.py",
+        "features/modernization/validation/checks/behavior/sandbox.py",
     ),
     "langgraph": ("features/modernization/graph/builder.py",),
     "langchain_core": ("features/modernization/graph/builder.py",),
@@ -213,11 +213,14 @@ LOCAL_EXCEPT_ALLOWED = [
     "features/modernization/graph/nodes.py",
     "features/modernization/parsing/plpgsql.py",
     "features/modernization/validation/checks/behavior/check.py",
+    "features/modernization/validation/checks/behavior/generated.py",
     "features/modernization/validation/checks/behavior/harness.py",
+    "features/modernization/validation/checks/behavior/runner.py",
     "features/modernization/validation/checks/syntax.py",
     "shared/integrations/integration.py",
     "shared/integrations/llm/gateway.py",
     "shared/integrations/llm/tracing.py",
+    "shared/integrations/tracing.py",
     "shared/resilience/circuit_breaker.py",
 ]
 

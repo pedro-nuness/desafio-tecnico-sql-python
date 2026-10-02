@@ -27,7 +27,7 @@ def _completion() -> dict:
         "choices": [
             {"index": 0, "message": {"role": "assistant", "content": "ok"}, "finish_reason": "stop"}
         ],
-        "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3},
+        "usage": {"prompt_tokens": 2, "completion_tokens": 1, "total_tokens": 3, "cost": 0.0021},
     }
 
 
@@ -94,6 +94,7 @@ async def test_official_sdk_request_and_response_mapping(
     assert response.provider == "openrouter"
     assert response.model == "actual/model"
     assert (response.input_tokens, response.output_tokens, response.finish_reason) == (2, 1, "stop")
+    assert response.cost_usd == 0.0021  # billed cost, reported by OpenRouter
     assert response.latency_ms >= 0
 
 

@@ -89,6 +89,7 @@ class OpenRouterProvider:
             model=completion.model or route.model,
             input_tokens=usage.prompt_tokens if usage else None,
             output_tokens=usage.completion_tokens if usage else None,
+            cost_usd=usage.cost if usage and isinstance(usage.cost, int | float) else None,
             latency_ms=round(latency_ms, 2),
             finish_reason=choice.finish_reason,
         )

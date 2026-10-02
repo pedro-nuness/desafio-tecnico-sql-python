@@ -48,7 +48,7 @@ def _completion() -> SimpleNamespace:
     return SimpleNamespace(
         model="served-model",
         choices=[SimpleNamespace(message=SimpleNamespace(content="ok"), finish_reason="stop")],
-        usage=SimpleNamespace(prompt_tokens=2, completion_tokens=1),
+        usage=SimpleNamespace(prompt_tokens=2, completion_tokens=1, cost=None),
     )
 
 

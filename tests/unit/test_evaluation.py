@@ -20,15 +20,17 @@ from app.features.modernization.use_cases import (
     GetEvaluationSummary,
     ModernizeCommand,
 )
-from app.features.modernization.validation.checks.behavior.dataset import Dataset
-from app.features.modernization.validation.checks.behavior.domain import Case, CaseResult
-from app.features.modernization.validation.checks.behavior.harness import (
-    INPUT_MODES,
+from app.features.modernization.validation.checks.behavior.comparison import (
     Observed,
     canonical,
     canonical_rows,
-    coerce_args,
     compare,
+)
+from app.features.modernization.validation.checks.behavior.dataset import Dataset
+from app.features.modernization.validation.checks.behavior.domain import Case, CaseResult
+from app.features.modernization.validation.checks.behavior.generated import (
+    INPUT_MODES,
+    coerce_args,
     defined_in,
     describe_error,
     load_entry_point,

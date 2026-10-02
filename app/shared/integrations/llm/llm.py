@@ -32,6 +32,8 @@ class LLMResponse(ValueObject):
     model: str
     input_tokens: int | None = None
     output_tokens: int | None = None
+    cost_usd: float | None = None
+    """Billed cost of the call, when the provider reports it (OpenRouter does)."""
     latency_ms: float
     finish_reason: str | None = None
     failed_routes: tuple[str, ...] = ()

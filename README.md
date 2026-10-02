@@ -146,6 +146,57 @@ superstep, em paralelo, e `validation` roda uma vez quando ambos terminam. O ret
 para `code_generation`: os casos são gerados uma vez por execução. `case_generation` nunca derruba a
 execução: falha do LLM vira warning e ficam só os casos do chamador.
 
+### Verificação do código gerado (nó `validation`)
+
+```mermaid
+flowchart TD
+    code["código gerado"] --> gather{{"ValidateCode: checks em paralelo"}}
+    gather --> ast["python_ast · bloqueante"]
+    gather --> ruff["ruff · não bloqueante"]
+    gather --> beh["behavior · não bloqueante"]
+    ast & ruff & beh --> result["ValidationResult"]
+    result -- "algum check reprovou,<br/>tentativas e tempo sobrando" --> regen["code_generation<br/>código anterior + achados no prompt"]
+    regen --> code
+    result -- "tudo aprovado, ou sem retry" --> status["record_result<br/>bloqueante reprovou → failure<br/>não bloqueante reprovou → partial<br/>senão → success"]
+```
+
+Um check pulado (`Skipped`: sem `behavior`, sem banco de avaliação, código que não compila) conta
+como aprovado e o motivo vai para os warnings do relatório.
+
+O check `behavior` por dentro (`validation/checks/behavior/`):
+
+```mermaid
+sequenceDiagram
+    participant C as BehaviorCheck<br/>check.py
+    participant H as BehavioralEquivalence<br/>harness.py (servidor)
+    participant R as CaseRunner<br/>runner.py (subprocesso)
+    participant DB as Postgres<br/>modernizer_eval
+    C->>H: run(rotina, código, cenário)
+    H->>R: python -m …runner, request JSON no stdin
+    R->>R: load_entry_point: exec do código gerado (generated.py)
+    loop cada caso
+        R->>DB: CREATE SCHEMA eval_{uuid} + setup_sql + rotina original (sandbox.py)
+        R->>DB: original: case.sql, conexão própria, rollback
+        R->>DB: gerado: await entry(conn, *args), conexão própria, rollback
+        Note over R: snapshot das tabelas em cada lado<br/>compare: desfecho · linhas · estado final (comparison.py)
+        R->>DB: DROP SCHEMA
+    end
+    R-->>H: stdout "@@evaluation-result@@ [CaseResult…]"
+    H-->>C: um CaseResult por caso
+    C->>C: cada divergência vira achado BEHAVIOR (feedback do reparo)
+```
+
+- **Isolamento**: o código gerado só executa em `runner.py`, num subprocesso, nunca no servidor;
+  crash, travamento ou estado vazado ficam lá. Timeout por caso (`EVALUATION_CASE_TIMEOUT_SECONDS`)
+  e no subprocesso inteiro.
+- **Mesmo ponto de partida**: cada caso tem schema próprio e cada lado roda em transação revertida,
+  então o original não altera o que o gerado vê.
+- **Equivalente** = mesmo desfecho (os dois retornam, ou os dois lançam, e o Python com exceção
+  definida no próprio módulo), mesmas linhas de resultado e mesmo estado final das tabelas
+  (ignorando `ignore_columns`). Detalhes em [Métrica de evaluation](#métrica-de-evaluation).
+- O mesmo harness é a métrica (`evaluate`, com holdout) e filtra os casos gerados (`probe`, só a
+  original, no próprio processo).
+
 ---
 
 ## Arquitetura
@@ -179,7 +230,7 @@ app/
         ├── case_generation/    # domain.py · prompt.py · generate_cases.py
         ├── validation/         # domain.py · validate_code.py (CodeCheck, Rule, ValidateCode)
         │   └── checks/         # syntax.py (ast.parse) · lint.py (Ruff)
-        │       └── behavior/   # domain.py · check.py · harness.py · dataset.py · runner.py
+        │       └── behavior/   # check.py · harness.py · runner.py · sandbox.py · generated.py · comparison.py · dataset.py · domain.py
         ├── evaluation/         # a métrica: domain.py · models.py · repository.py
         └── persistence/        # o histórico: models.py · repository.py · execution_log.py
 migrations/  scripts/run_examples.py  examples/  tests/{unit,integration}  docker/
@@ -416,8 +467,20 @@ Sem as chaves, o tracing fica desligado.
 
 O que é registrado: um trace por execução, um span por nó do grafo (inclusive cada tentativa do
 loop de reparo), via o callback nativo do LangChain/LangGraph; e a chamada ao LLM como geração
-filha do nó `code_generation` (`TracedLLM`), com prompt, resposta, modelo, tokens e latência. Custo
-aparece quando o modelo tem preço cadastrado no Langfuse.
+filha do nó `code_generation` (`TracedLLM`), com prompt, resposta, modelo, tokens, latência e custo.
+O custo é o valor cobrado que o OpenRouter devolve em `usage.cost`, gravado direto na geração
+(o callback do LangChain só leva tokens). Em outro provider, o Langfuse só mostra custo se tiver o
+preço do modelo cadastrado.
+
+A verificação de comportamento também aparece (`TracedEquivalence`, mesmo mecanismo):
+
+- `behavior.run`, filho de `validation`: um span por caso com SQL, args, o que cada lado fez e
+  `duration_ms`. O caso divergente fica com nível ERROR (vermelho), e o span recebe o score
+  `behavior_pass_rate` (aprovados / total), que dá para filtrar e plotar no Langfuse;
+- `behavior.probe`, filho de `case_generation`: cada caso proposto, mantido ou descartado e por quê.
+
+Os casos rodam no subprocesso, então os spans são emitidos quando os resultados voltam. O tempo
+real de cada caso está em `duration_ms`, não na duração do span.
 
 ![Trace do Anexo D no Langfuse](docs/langfuse/langfuse_screenshot_1.png)
 

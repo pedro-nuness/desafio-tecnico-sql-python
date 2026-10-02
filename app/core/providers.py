@@ -46,6 +46,7 @@ from app.features.modernization.validation.checks.behavior.harness import (
     BehavioralEquivalence,
     EquivalenceMetric,
 )
+from app.features.modernization.validation.checks.behavior.tracing import TracedEquivalence
 from app.features.modernization.validation.checks.lint import RuffCheck
 from app.features.modernization.validation.checks.syntax import PythonASTCheck
 from app.features.modernization.validation.validate_code import Rule, ValidateCode
@@ -168,9 +169,12 @@ class ModernizationProvider(Provider):
     evaluations = provide(SqlAlchemyEvaluationRepository, provides=EvaluationRepository)
 
     @provide
-    async def equivalence(self, settings: Settings) -> AsyncIterator[BehavioralEquivalence]:
+    async def equivalence(
+        self, settings: Settings, langfuse: Langfuse | None
+    ) -> AsyncIterator[BehavioralEquivalence]:
         url = settings.evaluation_database_url
-        harness = BehavioralEquivalence(
+        # With Langfuse: spans per case and the pass-rate score inside the graph's trace.
+        harness = (TracedEquivalence if langfuse else BehavioralEquivalence)(
             str(url) if url else None,
             settings.evaluation_dataset_file,
             case_timeout_seconds=settings.evaluation_case_timeout_seconds,

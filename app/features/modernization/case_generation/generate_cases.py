@@ -19,10 +19,8 @@ from app.features.modernization.validation.checks.behavior.domain import (
     CaseSource,
     Scenario,
 )
-from app.features.modernization.validation.checks.behavior.harness import (
-    INPUT_MODES,
-    BehavioralEquivalence,
-)
+from app.features.modernization.validation.checks.behavior.generated import INPUT_MODES
+from app.features.modernization.validation.checks.behavior.harness import BehavioralEquivalence
 from app.shared.integrations.errors import IntegrationError
 from app.shared.integrations.llm.llm import LLM, LLMRequest, ResponseFormat
 

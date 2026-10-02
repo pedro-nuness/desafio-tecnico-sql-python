@@ -51,6 +51,8 @@ class CaseResult(ValueObject):
     """Observed outcome of the original routine (rows or error), for the report."""
     generated: str
     source: CaseSource = CaseSource.USER
+    duration_ms: int | None = None
+    """Wall time of the case: schema setup, both sides and the comparison."""
     holdout: bool = False
     """Set only by the evaluation experiment (scenarios.yml): a case the pipeline was never
     given, so it never reached the LLM."""

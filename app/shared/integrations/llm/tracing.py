@@ -4,6 +4,7 @@ from langchain_core.outputs import Generation, LLMResult
 from langchain_core.runnables.config import ensure_config, get_async_callback_manager_for_config
 
 from app.shared.integrations.llm.llm import LLM, LLMRequest, LLMResponse
+from app.shared.integrations.tracing import langfuse_observation
 
 
 class TracedLLM:
@@ -31,6 +32,10 @@ class TracedLLM:
         except Exception as exc:
             await generation.on_llm_error(exc)
             raise
+        # The callback carries tokens, not cost: without it Langfuse only prices models it knows.
+        observation = langfuse_observation(generation)
+        if observation is not None and response.cost_usd is not None:
+            observation.update(cost_details={"total": response.cost_usd})
         await generation.on_llm_end(
             LLMResult(
                 generations=[[Generation(text=response.content)]],
