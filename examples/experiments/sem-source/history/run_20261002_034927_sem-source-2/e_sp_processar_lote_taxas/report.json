@@ -1,0 +1,277 @@
+{
+  "execution_id": "01a0fab7-ef38-77ec-908b-bc2ef0319814",
+  "status": "partial",
+  "created_at": "2026-10-02T03:45:53.464721+00:00",
+  "report": {
+    "parsing": {
+      "procedure_name": "sp_processar_lote_taxas",
+      "kind": "procedure",
+      "parser": "pglast",
+      "parameters": [
+        {
+          "name": "p_data_referencia",
+          "data_type": "date",
+          "mode": "in",
+          "has_default": false
+        }
+      ],
+      "return_type": null,
+      "statement_count": 22,
+      "referenced_tables": [
+        "contas",
+        "log_auditoria",
+        "taxas",
+        "transacoes"
+      ],
+      "called_functions": [
+        "date",
+        "jsonb_build_object"
+      ],
+      "warnings": []
+    },
+    "semantic_analysis": {
+      "constructs": [
+        {
+          "construct": "conditional",
+          "occurrences": 5,
+          "lines": [
+            47,
+            53,
+            54,
+            55,
+            59
+          ]
+        },
+        {
+          "construct": "cursor",
+          "occurrences": 4,
+          "lines": [
+            15,
+            32,
+            35,
+            82
+          ]
+        },
+        {
+          "construct": "dml",
+          "occurrences": 4,
+          "lines": [
+            60,
+            62,
+            65,
+            84
+          ]
+        },
+        {
+          "construct": "in_parameters",
+          "occurrences": 1,
+          "lines": []
+        },
+        {
+          "construct": "jsonb",
+          "occurrences": 2,
+          "lines": [
+            65,
+            84
+          ]
+        },
+        {
+          "construct": "loop",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "construct": "variables",
+          "occurrences": 9,
+          "lines": [
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30
+          ]
+        }
+      ],
+      "risks": [
+        {
+          "code": "N_PLUS_ONE",
+          "severity": "high",
+          "message": "4 SQL statements executed on every iteration of this LOOP (lines 38, 60, 62, 65): one database round-trip each per row. Prefer set-based statements.",
+          "line": 34
+        }
+      ],
+      "dependencies": [
+        {
+          "name": "contas",
+          "kind": "table"
+        },
+        {
+          "name": "log_auditoria",
+          "kind": "table"
+        },
+        {
+          "name": "taxas",
+          "kind": "table"
+        },
+        {
+          "name": "transacoes",
+          "kind": "table"
+        }
+      ],
+      "parameters": {
+        "inputs": [
+          "p_data_referencia"
+        ],
+        "outputs": [],
+        "in_out": []
+      },
+      "variables": [
+        "v_id",
+        "v_origem",
+        "v_tipo",
+        "v_valor",
+        "v_taxa",
+        "v_percentual",
+        "v_minimo",
+        "v_total_taxas",
+        "v_count"
+      ],
+      "recommended_strategy": "hybrid",
+      "recommendations": [
+        {
+          "code": "KEEP_SET_BASED_SQL",
+          "message": "Keep joins, aggregates, CTEs and bulk DML as parameterized SQL."
+        },
+        {
+          "code": "REWRITE_ROW_BY_ROW",
+          "message": "Collapse per-row statements inside loops into one set-based statement."
+        }
+      ]
+    },
+    "generation": {
+      "strategy": "hybrid",
+      "recommended_strategy": "hybrid",
+      "architectural_decisions": [
+        {
+          "topic": "N+1 cursor loop",
+          "decision": "Collapsed the per-row loop (fee lookup, debit, TARIFA insert, audit insert) into set-based statements sharing one CTE; the debit aggregates fees per account before UPDATE ... FROM.",
+          "rationale": "UPDATE ... FROM applies at most one source row per target, so per-account aggregation is required when one account has several fees; set-based execution removes 4 round-trips per row."
+        },
+        {
+          "topic": "Transaction ownership",
+          "decision": "No commit/rollback in the function; all statements run on the caller's connection/transaction.",
+          "rationale": "The original procedure had no transaction control of its own."
+        },
+        {
+          "topic": "SQL constants",
+          "decision": "All SQL statements are module-level literal constants passed to sqlalchemy.text(); no string building at call sites.",
+          "rationale": "Avoids S608 and any injection surface; bind parameters are the only variable parts."
+        }
+      ],
+      "warnings": [
+        "The CASE over v_tipo was corrected: TRANSFERENCIA keeps the fee unchanged (v_taxa := v_taxa), SAQUE multiplies by 1.10, any other tipo by 0.90. The previous version wrongly applied 1.10 to TRANSFERENCIA.",
+        "v_taxa is declared plain NUMERIC (unbounded) in the original, so no intermediate rounding is applied in the CTE; rounding happens only when values are written to the NUMERIC(18,2) columns (transacoes.valor, contas.saldo), matching PL/pgSQL behaviour.",
+        "v_total_taxas is treated as initialized to 0 (validation showed the original logs total_taxas 0 for an empty batch), implemented as COALESCE(SUM(taxa), 0).",
+        "The summary log row is written even when the reference date is NULL or no transactions match, with transacoes 0 and total_taxas 0, as in the original.",
+        "Ties in taxas.vigente_de are resolved by an arbitrary LIMIT 1, exactly as the original ORDER BY vigente_de DESC LIMIT 1."
+      ],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "generation-v5-sem-source",
+      "input_tokens": 7518,
+      "output_tokens": 5529,
+      "latency_ms": 60679.49,
+      "finish_reason": "stop",
+      "attempt": 3
+    },
+    "case_generation": {
+      "seed_generated": false,
+      "kept": [
+        "NULL reference date matches nothing but still logs empty batch",
+        "SAQUE where valor_minimo dominates the percentage fee",
+        "transfer where origin and destination belong to the same client",
+        "transfer debiting a POUPANCA account",
+        "transfer crediting account 10 from another client's account",
+        "holdout batch with double rounding and two fees on one account"
+      ],
+      "discarded": [],
+      "warnings": [],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "cases-v1",
+      "input_tokens": 4169,
+      "output_tokens": 1225,
+      "latency_ms": 14392.75
+    },
+    "validation": {
+      "results": [
+        {
+          "validator": "python_ast",
+          "success": true,
+          "blocking": true,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "ruff",
+          "success": false,
+          "blocking": false,
+          "messages": [
+            {
+              "message": "Possible SQL injection vector through string-based query construction",
+              "code": "S608",
+              "line": 54,
+              "column": 27
+            }
+          ],
+          "skipped": null
+        },
+        {
+          "validator": "behavior",
+          "success": false,
+          "blocking": false,
+          "messages": [
+            {
+              "message": "case 'batch with two fees on the same account, rounding and skipped rows': contas: 1 row(s) only in the original e.g. {\"agencia\": \"0001\", \"cliente_id\": \"1\", \"data_abertura\": \"2025-01-10T00:00:00\", \"numero\": \"10-1\", \"saldo\": \"993.99\", \"status\": \"ATIVA\", \"tipo\": \"CORRENTE\"} 1 only in the generated e.g. {\"agencia\": \"0001\", \"cliente_id\": \"1\", \"data_abertura\": \"2025-01-10T00:00:00\", \"numero\": \"10-1\", \"saldo\": \"994\", \"status\": \"ATIVA\", \"tipo\": \"CORRENTE\"}; transacoes: 1 row(s) only in the original e.g. {\"conta_destino_id\": null, \"conta_origem_id\": \"10\", \"status\": \"EFETIVADA\", \"tipo\": \"TARIFA\", \"valor\": \"5.01\"} 1 only in the generated e.g. {\"conta_destino_id\": null, \"conta_origem_id\": \"10\", \"status\": \"EFETIVADA\", \"tipo\": \"TARIFA\", \"valor\": \"5\"}; log_auditoria: 2 row(s) only in the original e.g. {\"acao\": \"LOTE_PROCESSADO\", \"detalhes\": {\"data_referencia\": \"2026-09-15\", \"total_taxas\": \"6.46\", \"transacoes\": \"3\"}, \"entidade\": \"lote_taxas\", \"entidade_id\": null} 2 only in the generated e.g. {\"acao\": \"LOTE_PROCESSADO\", \"detalhes\": {\"data_referencia\": \"2026-09-15\", \"total_taxas\": \"6.4495\", \"transacoes\": \"3\"}, \"entidade\": \"lote_taxas\", \"entidade_id\": null}. The original returned nothing; the generated code returned 0 row(s): ",
+              "code": "BEHAVIOR",
+              "line": null,
+              "column": null
+            },
+            {
+              "message": "case 'holdout batch with double rounding and two fees on one account' (generated): contas: 1 row(s) only in the original e.g. {\"agencia\": \"0002\", \"cliente_id\": \"2\", \"data_abertura\": \"2025-02-10T00:00:00\", \"numero\": \"20-2\", \"saldo\": \"193.99\", \"status\": \"ATIVA\", \"tipo\": \"CORRENTE\"} 1 only in the generated e.g. {\"agencia\": \"0002\", \"cliente_id\": \"2\", \"data_abertura\": \"2025-02-10T00:00:00\", \"numero\": \"20-2\", \"saldo\": \"194\", \"status\": \"ATIVA\", \"tipo\": \"CORRENTE\"}; transacoes: 1 row(s) only in the original e.g. {\"conta_destino_id\": null, \"conta_origem_id\": \"20\", \"status\": \"EFETIVADA\", \"tipo\": \"TARIFA\", \"valor\": \"5.01\"} 1 only in the generated e.g. {\"conta_destino_id\": null, \"conta_origem_id\": \"20\", \"status\": \"EFETIVADA\", \"tipo\": \"TARIFA\", \"valor\": \"5\"}; log_auditoria: 2 row(s) only in the original e.g. {\"acao\": \"LOTE_PROCESSADO\", \"detalhes\": {\"data_referencia\": \"2026-09-17\", \"total_taxas\": \"6.01\", \"transacoes\": \"2\"}, \"entidade\": \"lote_taxas\", \"entidade_id\": null} 2 only in the generated e.g. {\"acao\": \"LOTE_PROCESSADO\", \"detalhes\": {\"data_referencia\": \"2026-09-17\", \"total_taxas\": \"5.9995\", \"transacoes\": \"2\"}, \"entidade\": \"lote_taxas\", \"entidade_id\": null}. The original returned nothing; the generated code returned 0 row(s): ",
+              "code": "BEHAVIOR",
+              "line": null,
+              "column": null
+            }
+          ],
+          "skipped": null
+        }
+      ]
+    },
+    "completed_steps": [
+      "parsing",
+      "semantic_analysis",
+      "case_generation",
+      "generation",
+      "validation",
+      "generation",
+      "validation",
+      "generation",
+      "validation"
+    ],
+    "errors": [],
+    "warnings": [
+      "generation attempt 2: regenerated after 3 validation issue(s) in the previous attempt",
+      "generation attempt 3: regenerated after 11 validation issue(s) in the previous attempt",
+      "[ruff] L54: S608 Possible SQL injection vector through string-based query construction",
+      "[behavior] BEHAVIOR case 'batch with two fees on the same account, rounding and skipped rows': contas: 1 row(s) only in the original e.g. {\"agencia\": \"0001\", \"cliente_id\": \"1\", \"data_abertura\": \"2025-01-10T00:00:00\", \"numero\": \"10-1\", \"saldo\": \"993.99\", \"status\": \"ATIVA\", \"tipo\": \"CORRENTE\"} 1 only in the generated e.g. {\"agencia\": \"0001\", \"cliente_id\": \"1\", \"data_abertura\": \"2025-01-10T00:00:00\", \"numero\": \"10-1\", \"saldo\": \"994\", \"status\": \"ATIVA\", \"tipo\": \"CORRENTE\"}; transacoes: 1 row(s) only in the original e.g. {\"conta_destino_id\": null, \"conta_origem_id\": \"10\", \"status\": \"EFETIVADA\", \"tipo\": \"TARIFA\", \"valor\": \"5.01\"} 1 only in the generated e.g. {\"conta_destino_id\": null, \"conta_origem_id\": \"10\", \"status\": \"EFETIVADA\", \"tipo\": \"TARIFA\", \"valor\": \"5\"}; log_auditoria: 2 row(s) only in the original e.g. {\"acao\": \"LOTE_PROCESSADO\", \"detalhes\": {\"data_referencia\": \"2026-09-15\", \"total_taxas\": \"6.46\", \"transacoes\": \"3\"}, \"entidade\": \"lote_taxas\", \"entidade_id\": null} 2 only in the generated e.g. {\"acao\": \"LOTE_PROCESSADO\", \"detalhes\": {\"data_referencia\": \"2026-09-15\", \"total_taxas\": \"6.4495\", \"transacoes\": \"3\"}, \"entidade\": \"lote_taxas\", \"entidade_id\": null}. The original returned nothing; the generated code returned 0 row(s): ",
+      "[behavior] BEHAVIOR case 'holdout batch with double rounding and two fees on one account' (generated): contas: 1 row(s) only in the original e.g. {\"agencia\": \"0002\", \"cliente_id\": \"2\", \"data_abertura\": \"2025-02-10T00:00:00\", \"numero\": \"20-2\", \"saldo\": \"193.99\", \"status\": \"ATIVA\", \"tipo\": \"CORRENTE\"} 1 only in the generated e.g. {\"agencia\": \"0002\", \"cliente_id\": \"2\", \"data_abertura\": \"2025-02-10T00:00:00\", \"numero\": \"20-2\", \"saldo\": \"194\", \"status\": \"ATIVA\", \"tipo\": \"CORRENTE\"}; transacoes: 1 row(s) only in the original e.g. {\"conta_destino_id\": null, \"conta_origem_id\": \"20\", \"status\": \"EFETIVADA\", \"tipo\": \"TARIFA\", \"valor\": \"5.01\"} 1 only in the generated e.g. {\"conta_destino_id\": null, \"conta_origem_id\": \"20\", \"status\": \"EFETIVADA\", \"tipo\": \"TARIFA\", \"valor\": \"5\"}; log_auditoria: 2 row(s) only in the original e.g. {\"acao\": \"LOTE_PROCESSADO\", \"detalhes\": {\"data_referencia\": \"2026-09-17\", \"total_taxas\": \"6.01\", \"transacoes\": \"2\"}, \"entidade\": \"lote_taxas\", \"entidade_id\": null} 2 only in the generated e.g. {\"acao\": \"LOTE_PROCESSADO\", \"detalhes\": {\"data_referencia\": \"2026-09-17\", \"total_taxas\": \"5.9995\", \"transacoes\": \"2\"}, \"entidade\": \"lote_taxas\", \"entidade_id\": null}. The original returned nothing; the generated code returned 0 row(s): "
+    ]
+  }
+}

@@ -1,0 +1,323 @@
+{
+  "execution_id": "01a0fab4-eb9e-735e-9953-25223bb27df3",
+  "status": "success",
+  "created_at": "2026-10-02T03:42:35.934613+00:00",
+  "report": {
+    "parsing": {
+      "procedure_name": "sp_relatorio_mensal_cliente",
+      "kind": "function",
+      "parser": "pglast",
+      "parameters": [
+        {
+          "name": "p_cliente_id",
+          "data_type": "bigint",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "p_data_inicio",
+          "data_type": "date",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "p_data_fim",
+          "data_type": "date",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "mes_referencia",
+          "data_type": "date",
+          "mode": "table",
+          "has_default": false
+        },
+        {
+          "name": "total_creditos",
+          "data_type": "numeric(18, 2)",
+          "mode": "table",
+          "has_default": false
+        },
+        {
+          "name": "total_debitos",
+          "data_type": "numeric(18, 2)",
+          "mode": "table",
+          "has_default": false
+        },
+        {
+          "name": "saldo_consolidado",
+          "data_type": "numeric(18, 2)",
+          "mode": "table",
+          "has_default": false
+        },
+        {
+          "name": "qtd_transacoes",
+          "data_type": "integer",
+          "mode": "table",
+          "has_default": false
+        }
+      ],
+      "return_type": "TABLE(mes_referencia date, total_creditos numeric(18, 2), total_debitos numeric(18, 2), saldo_consolidado numeric(18, 2), qtd_transacoes integer)",
+      "statement_count": 8,
+      "referenced_tables": [
+        "contas",
+        "transacoes"
+      ],
+      "called_functions": [
+        "count",
+        "date_trunc",
+        "fn_saldo_cliente",
+        "sum"
+      ],
+      "warnings": []
+    },
+    "semantic_analysis": {
+      "constructs": [
+        {
+          "construct": "aggregation",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "construct": "conditional",
+          "occurrences": 1,
+          "lines": [
+            27
+          ]
+        },
+        {
+          "construct": "cte",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "construct": "exception_handling",
+          "occurrences": 1,
+          "lines": [
+            26
+          ]
+        },
+        {
+          "construct": "in_parameters",
+          "occurrences": 3,
+          "lines": []
+        },
+        {
+          "construct": "join",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "construct": "out_parameters",
+          "occurrences": 5,
+          "lines": []
+        },
+        {
+          "construct": "raise",
+          "occurrences": 3,
+          "lines": [
+            28,
+            32,
+            75
+          ]
+        },
+        {
+          "construct": "recursive_cte",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "construct": "return_query",
+          "occurrences": 2,
+          "lines": [
+            34,
+            77
+          ]
+        },
+        {
+          "construct": "variables",
+          "occurrences": 1,
+          "lines": [
+            25
+          ]
+        }
+      ],
+      "risks": [
+        {
+          "code": "SWALLOWED_EXCEPTION",
+          "severity": "medium",
+          "message": "WHEN OTHERS handler does not re-raise: errors are swallowed.",
+          "line": 26
+        },
+        {
+          "code": "RECURSIVE_CTE",
+          "severity": "low",
+          "message": "Recursive CTE should stay in SQL; re-implementing it in Python is costly.",
+          "line": null
+        },
+        {
+          "code": "EXTERNAL_ROUTINE_DEPENDENCY",
+          "severity": "low",
+          "message": "Depends on other database routines: fn_saldo_cliente.",
+          "line": null
+        }
+      ],
+      "dependencies": [
+        {
+          "name": "contas",
+          "kind": "table"
+        },
+        {
+          "name": "transacoes",
+          "kind": "table"
+        },
+        {
+          "name": "fn_saldo_cliente",
+          "kind": "function"
+        }
+      ],
+      "parameters": {
+        "inputs": [
+          "p_cliente_id",
+          "p_data_inicio",
+          "p_data_fim"
+        ],
+        "outputs": [
+          "mes_referencia",
+          "total_creditos",
+          "total_debitos",
+          "saldo_consolidado",
+          "qtd_transacoes"
+        ],
+        "in_out": []
+      },
+      "variables": [
+        "v_saldo_atual"
+      ],
+      "recommended_strategy": "hybrid",
+      "recommendations": [
+        {
+          "code": "KEEP_SET_BASED_SQL",
+          "message": "Keep joins, aggregates, CTEs and bulk DML as parameterized SQL."
+        },
+        {
+          "code": "TYPED_EXCEPTIONS",
+          "message": "Map RAISE EXCEPTION to typed exceptions and RAISE NOTICE to logging."
+        },
+        {
+          "code": "RESULT_TYPE_FOR_OUT_PARAMS",
+          "message": "Return OUT/INOUT parameters as an immutable result type."
+        },
+        {
+          "code": "TYPED_ROWS",
+          "message": "Return RETURN QUERY rows as a sequence of typed rows."
+        }
+      ]
+    },
+    "generation": {
+      "strategy": "hybrid",
+      "recommended_strategy": "hybrid",
+      "architectural_decisions": [
+        {
+          "topic": "Set-based report query",
+          "decision": "The recursive month CTE, the aggregated movimento CTE and the final LEFT JOIN stay as one parameterized SQL statement.",
+          "rationale": "Joins, aggregates and recursive CTEs belong in the database; re-implementing them in Python would be costly and error-prone."
+        },
+        {
+          "topic": "Exception handler as savepoint",
+          "decision": "The BEGIN...EXCEPTION WHEN OTHERS block is executed inside `async with conn.begin_nested():` and the handler logic runs in the outer `except` after the savepoint rollback.",
+          "rationale": "The original block is a savepoint; without begin_nested the transaction would stay aborted and the fallback query would fail."
+        },
+        {
+          "topic": "Swallowed exceptions preserved",
+          "decision": "The WHEN OTHERS handler does not re-raise: any failure (including the PeriodoInvalidoError raised for an invalid period) logs a WARNING and returns the single fallback row, exactly like the original.",
+          "rationale": "Behaviour preservation: the original RAISE EXCEPTION is caught by its own block handler and never propagates."
+        },
+        {
+          "topic": "NULL date three-valued logic",
+          "decision": "The period validation is guarded with explicit None checks so a NULL date skips the IF branch (as SQL NULL comparison does) instead of raising TypeError in Python.",
+          "rationale": "PL/pgSQL `NULL > NULL` is NULL, so the RAISE EXCEPTION is skipped and the main query runs with NULL dates, producing one degraded row carrying the current saldo."
+        }
+      ],
+      "warnings": [
+        "Depends on the database routine fn_saldo_cliente, which is called via SQL and must exist in the target database.",
+        "Errors are swallowed by design (WHEN OTHERS without re-raise): callers always get at least one fallback row; only a WARNING is logged.",
+        "When p_data_inicio is NULL, the fallback/main row has mes_referencia NULL, matching the original degraded output.",
+        "The caller owns the transaction; no commit/rollback is issued here (begin_nested savepoints are released/rolled back automatically)."
+      ],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "generation-v5-sem-source",
+      "input_tokens": 5081,
+      "output_tokens": 2910,
+      "latency_ms": 35097.39,
+      "finish_reason": "stop",
+      "attempt": 2
+    },
+    "case_generation": {
+      "seed_generated": false,
+      "kept": [
+        "NULL client id over a valid period",
+        "NULL dates produce degraded single row",
+        "client with only closed account (id 3)",
+        "internal transfer between own accounts counts once as credit and debit",
+        "boundary day inclusion and rounding-heavy batch for client 1",
+        "single-day period with self-transfer nets to zero"
+      ],
+      "discarded": [],
+      "warnings": [],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "cases-v1",
+      "input_tokens": 4482,
+      "output_tokens": 797,
+      "latency_ms": 9604.49
+    },
+    "validation": {
+      "results": [
+        {
+          "validator": "python_ast",
+          "success": true,
+          "blocking": true,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "ruff",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "behavior",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        }
+      ]
+    },
+    "completed_steps": [
+      "parsing",
+      "semantic_analysis",
+      "case_generation",
+      "generation",
+      "validation",
+      "generation",
+      "validation"
+    ],
+    "errors": [],
+    "warnings": [
+      "generation attempt 2: regenerated after 1 validation issue(s) in the previous attempt"
+    ]
+  }
+}

@@ -1,0 +1,76 @@
+{
+  "id": "01a0fab7-ef2a-7129-8027-ee930074299e",
+  "modernization_id": "01a0fab6-d126-70d2-b587-bd45abd06177",
+  "procedure_name": "sp_transferir_entre_contas",
+  "metric": "behavioral_equivalence",
+  "prompt_version": "generation-v5-sem-source",
+  "model": "z-ai/glm-5.3-flash",
+  "static_valid": true,
+  "completed": true,
+  "cases": [
+    {
+      "name": "transfer between active accounts",
+      "passed": true,
+      "detail": "same result and same final state",
+      "original": "returned nothing",
+      "generated": "returned 0 row(s): ",
+      "source": "user",
+      "holdout": false
+    },
+    {
+      "name": "transfer of the whole balance",
+      "passed": true,
+      "detail": "same result and same final state",
+      "original": "returned nothing",
+      "generated": "returned 0 row(s): ",
+      "source": "user",
+      "holdout": true
+    },
+    {
+      "name": "insufficient balance",
+      "passed": true,
+      "detail": "both raised",
+      "original": "raised RaiseError: Saldo insuficiente: saldo=200.00 valor=9999.00",
+      "generated": "raised SaldoInsuficienteError: Saldo insuficiente: saldo=200.00 valor=9999.00 (at generated line 109: raise SaldoInsuficienteError()",
+      "source": "user",
+      "holdout": false
+    },
+    {
+      "name": "same account",
+      "passed": true,
+      "detail": "both raised",
+      "original": "raised RaiseError: Conta de origem e destino nao podem ser iguais",
+      "generated": "raised ContasIguaisError: Conta de origem e destino nao podem ser iguais (at generated line 68: raise ContasIguaisError()",
+      "source": "user",
+      "holdout": false
+    },
+    {
+      "name": "inactive destination",
+      "passed": true,
+      "detail": "both raised",
+      "original": "raised RaiseError: Ambas as contas precisam estar ATIVAS",
+      "generated": "raised ContasNaoAtivasError: Ambas as contas precisam estar ATIVAS (at generated line 105: raise ContasNaoAtivasError(\"Ambas as contas precisam estar ATIVAS\"))",
+      "source": "user",
+      "holdout": true
+    },
+    {
+      "name": "unknown origin",
+      "passed": true,
+      "detail": "both raised",
+      "original": "raised RaiseError: Conta de origem 999 nao encontrada",
+      "generated": "raised ContaOrigemNaoEncontradaError: Conta de origem 999 nao encontrada (at generated line 99: raise ContaOrigemNaoEncontradaError()",
+      "source": "user",
+      "holdout": true
+    },
+    {
+      "name": "negative amount",
+      "passed": true,
+      "detail": "both raised",
+      "original": "raised RaiseError: Valor invalido para transferencia: -5.00",
+      "generated": "raised ValorInvalidoError: Valor invalido para transferencia: -5.00 (at generated line 62: raise ValorInvalidoError()",
+      "source": "user",
+      "holdout": false
+    }
+  ],
+  "created_at": "2026-10-02T03:45:53.450856Z"
+}

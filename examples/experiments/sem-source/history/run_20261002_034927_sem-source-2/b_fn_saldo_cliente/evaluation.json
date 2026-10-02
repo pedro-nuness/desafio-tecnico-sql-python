@@ -1,0 +1,40 @@
+{
+  "id": "01a0fab6-8f67-7401-9b6a-b6292bdaaa6e",
+  "modernization_id": "01a0fab6-2e50-7665-899b-ddf30a76d959",
+  "procedure_name": "fn_saldo_cliente",
+  "metric": "behavioral_equivalence",
+  "prompt_version": "generation-v5-sem-source",
+  "model": "z-ai/glm-5.3-flash",
+  "static_valid": true,
+  "completed": true,
+  "cases": [
+    {
+      "name": "active accounts only (inactive one is not summed)",
+      "passed": true,
+      "detail": "same result and same final state",
+      "original": "returned 1 row(s): [\"1500\"]",
+      "generated": "returned 1 row(s): [\"1500\"]",
+      "source": "user",
+      "holdout": false
+    },
+    {
+      "name": "client without active accounts",
+      "passed": true,
+      "detail": "same result and same final state",
+      "original": "returned 1 row(s): [\"0\"]",
+      "generated": "returned 1 row(s): [\"0\"]",
+      "source": "user",
+      "holdout": true
+    },
+    {
+      "name": "unknown client",
+      "passed": true,
+      "detail": "same result and same final state",
+      "original": "returned 1 row(s): [\"0\"]",
+      "generated": "returned 1 row(s): [\"0\"]",
+      "source": "user",
+      "holdout": false
+    }
+  ],
+  "created_at": "2026-10-02T03:44:23.399044Z"
+}

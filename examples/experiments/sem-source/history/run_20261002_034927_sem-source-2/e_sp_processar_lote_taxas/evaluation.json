@@ -1,0 +1,40 @@
+{
+  "id": "01a0faba-718c-722f-bf7e-fd5ec72fb7fd",
+  "modernization_id": "01a0fab7-ef38-77ec-908b-bc2ef0319814",
+  "procedure_name": "sp_processar_lote_taxas",
+  "metric": "behavioral_equivalence",
+  "prompt_version": "generation-v5-sem-source",
+  "model": "z-ai/glm-5.3-flash",
+  "static_valid": true,
+  "completed": true,
+  "cases": [
+    {
+      "name": "batch with two fees on the same account, rounding and skipped rows",
+      "passed": false,
+      "detail": "contas: 1 row(s) only in the original e.g. {\"agencia\": \"0001\", \"cliente_id\": \"1\", \"data_abertura\": \"2025-01-10T00:00:00\", \"numero\": \"10-1\", \"saldo\": \"993.99\", \"status\": \"ATIVA\", \"tipo\": \"CORRENTE\"} 1 only in the generated e.g. {\"agencia\": \"0001\", \"cliente_id\": \"1\", \"data_abertura\": \"2025-01-10T00:00:00\", \"numero\": \"10-1\", \"saldo\": \"994\", \"status\": \"ATIVA\", \"tipo\": \"CORRENTE\"}; transacoes: 1 row(s) only in the original e.g. {\"conta_destino_id\": null, \"conta_origem_id\": \"10\", \"status\": \"EFETIVADA\", \"tipo\": \"TARIFA\", \"valor\": \"5.01\"} 1 only in the generated e.g. {\"conta_destino_id\": null, \"conta_origem_id\": \"10\", \"status\": \"EFETIVADA\", \"tipo\": \"TARIFA\", \"valor\": \"5\"}; log_auditoria: 2 row(s) only in the original e.g. {\"acao\": \"LOTE_PROCESSADO\", \"detalhes\": {\"data_referencia\": \"2026-09-15\", \"total_taxas\": \"6.46\", \"transacoes\": \"3\"}, \"entidade\": \"lote_taxas\", \"entidade_id\": null} 2 only in the generated e.g. {\"acao\": \"LOTE_PROCESSADO\", \"detalhes\": {\"data_referencia\": \"2026-09-15\", \"total_taxas\": \"6.4495\", \"transacoes\": \"3\"}, \"entidade\": \"lote_taxas\", \"entidade_id\": null}",
+      "original": "returned nothing",
+      "generated": "returned 0 row(s): ",
+      "source": "user",
+      "holdout": false
+    },
+    {
+      "name": "day without transactions still logs the batch",
+      "passed": true,
+      "detail": "same result and same final state",
+      "original": "returned nothing",
+      "generated": "returned 0 row(s): ",
+      "source": "user",
+      "holdout": false
+    },
+    {
+      "name": "another batch with the same traps on another account",
+      "passed": false,
+      "detail": "contas: 1 row(s) only in the original e.g. {\"agencia\": \"0002\", \"cliente_id\": \"2\", \"data_abertura\": \"2025-02-10T00:00:00\", \"numero\": \"20-2\", \"saldo\": \"193.99\", \"status\": \"ATIVA\", \"tipo\": \"CORRENTE\"} 1 only in the generated e.g. {\"agencia\": \"0002\", \"cliente_id\": \"2\", \"data_abertura\": \"2025-02-10T00:00:00\", \"numero\": \"20-2\", \"saldo\": \"194\", \"status\": \"ATIVA\", \"tipo\": \"CORRENTE\"}; transacoes: 1 row(s) only in the original e.g. {\"conta_destino_id\": null, \"conta_origem_id\": \"20\", \"status\": \"EFETIVADA\", \"tipo\": \"TARIFA\", \"valor\": \"5.01\"} 1 only in the generated e.g. {\"conta_destino_id\": null, \"conta_origem_id\": \"20\", \"status\": \"EFETIVADA\", \"tipo\": \"TARIFA\", \"valor\": \"5\"}; log_auditoria: 2 row(s) only in the original e.g. {\"acao\": \"LOTE_PROCESSADO\", \"detalhes\": {\"data_referencia\": \"2026-09-17\", \"total_taxas\": \"6.01\", \"transacoes\": \"2\"}, \"entidade\": \"lote_taxas\", \"entidade_id\": null} 2 only in the generated e.g. {\"acao\": \"LOTE_PROCESSADO\", \"detalhes\": {\"data_referencia\": \"2026-09-17\", \"total_taxas\": \"5.9995\", \"transacoes\": \"2\"}, \"entidade\": \"lote_taxas\", \"entidade_id\": null}",
+      "original": "returned nothing",
+      "generated": "returned 0 row(s): ",
+      "source": "user",
+      "holdout": true
+    }
+  ],
+  "created_at": "2026-10-02T03:48:37.900185Z"
+}

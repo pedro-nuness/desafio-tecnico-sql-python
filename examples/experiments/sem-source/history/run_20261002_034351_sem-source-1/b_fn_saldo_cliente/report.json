@@ -1,0 +1,156 @@
+{
+  "execution_id": "01a0fab0-5c8d-74a8-a25d-665ef6281c7b",
+  "status": "success",
+  "created_at": "2026-10-02T03:37:37.165869+00:00",
+  "report": {
+    "parsing": {
+      "procedure_name": "fn_saldo_cliente",
+      "kind": "function",
+      "parser": "pglast",
+      "parameters": [
+        {
+          "name": "p_cliente_id",
+          "data_type": "bigint",
+          "mode": "in",
+          "has_default": false
+        }
+      ],
+      "return_type": "numeric(18, 2)",
+      "statement_count": 2,
+      "referenced_tables": [
+        "contas"
+      ],
+      "called_functions": [
+        "sum"
+      ],
+      "warnings": []
+    },
+    "semantic_analysis": {
+      "constructs": [
+        {
+          "construct": "aggregation",
+          "occurrences": 1,
+          "lines": [
+            15
+          ]
+        },
+        {
+          "construct": "in_parameters",
+          "occurrences": 1,
+          "lines": []
+        },
+        {
+          "construct": "variables",
+          "occurrences": 1,
+          "lines": [
+            13
+          ]
+        }
+      ],
+      "risks": [],
+      "dependencies": [
+        {
+          "name": "contas",
+          "kind": "table"
+        }
+      ],
+      "parameters": {
+        "inputs": [
+          "p_cliente_id"
+        ],
+        "outputs": [],
+        "in_out": []
+      },
+      "variables": [
+        "v_total"
+      ],
+      "recommended_strategy": "database_delegated",
+      "recommendations": [
+        {
+          "code": "KEEP_SET_BASED_SQL",
+          "message": "Keep joins, aggregates, CTEs and bulk DML as parameterized SQL."
+        }
+      ]
+    },
+    "generation": {
+      "strategy": "database_delegated",
+      "recommended_strategy": "database_delegated",
+      "architectural_decisions": [
+        {
+          "topic": "aggregation stays in SQL",
+          "decision": "The SUM over contas is executed as one parameterized SELECT via SQLAlchemy text(); Python only binds the parameter and unwraps the scalar.",
+          "rationale": "Aggregation belongs to the database; the function is a single set-based query with no procedural logic."
+        },
+        {
+          "topic": "return type",
+          "decision": "The scalar result is returned as decimal.Decimal, quantized to 2 decimal places to mirror numeric(18,2).",
+          "rationale": "NUMERIC values must remain Decimal end to end, never float."
+        }
+      ],
+      "warnings": [
+        "The original returns numeric(18,2); SUM(saldo) of NUMERIC(18,2) columns is already exact, the final quantize is a safety no-op for values already at 2 decimals.",
+        "CAST(:p_cliente_id AS BIGINT) is used because asyncpg cannot infer the type of a bare bind in a polymorphic position; the parameter is a Python int.",
+        "No transaction control is performed: the caller owns the transaction, matching the original read-only function."
+      ],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "generation-v5-sem-source",
+      "input_tokens": 2083,
+      "output_tokens": 535,
+      "latency_ms": 23814.66,
+      "finish_reason": "stop",
+      "attempt": 1
+    },
+    "case_generation": {
+      "seed_generated": false,
+      "kept": [
+        "multiple active accounts including zero-balance one",
+        "client with no active accounts returns zero",
+        "null client id sums nothing",
+        "single active account exact match"
+      ],
+      "discarded": [],
+      "warnings": [],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "cases-v1",
+      "input_tokens": 3506,
+      "output_tokens": 259,
+      "latency_ms": 26262.81
+    },
+    "validation": {
+      "results": [
+        {
+          "validator": "python_ast",
+          "success": true,
+          "blocking": true,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "ruff",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "behavior",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        }
+      ]
+    },
+    "completed_steps": [
+      "parsing",
+      "semantic_analysis",
+      "case_generation",
+      "generation",
+      "validation"
+    ],
+    "errors": [],
+    "warnings": []
+  }
+}

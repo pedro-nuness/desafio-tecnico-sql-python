@@ -1,0 +1,251 @@
+{
+  "execution_id": "01a0fab2-9e10-74f3-9f1f-9db905bc58a1",
+  "status": "success",
+  "created_at": "2026-10-02T03:40:05.008734+00:00",
+  "report": {
+    "parsing": {
+      "procedure_name": "sp_processar_lote_taxas",
+      "kind": "procedure",
+      "parser": "pglast",
+      "parameters": [
+        {
+          "name": "p_data_referencia",
+          "data_type": "date",
+          "mode": "in",
+          "has_default": false
+        }
+      ],
+      "return_type": null,
+      "statement_count": 22,
+      "referenced_tables": [
+        "contas",
+        "log_auditoria",
+        "taxas",
+        "transacoes"
+      ],
+      "called_functions": [
+        "date",
+        "jsonb_build_object"
+      ],
+      "warnings": []
+    },
+    "semantic_analysis": {
+      "constructs": [
+        {
+          "construct": "conditional",
+          "occurrences": 5,
+          "lines": [
+            47,
+            53,
+            54,
+            55,
+            59
+          ]
+        },
+        {
+          "construct": "cursor",
+          "occurrences": 4,
+          "lines": [
+            15,
+            32,
+            35,
+            82
+          ]
+        },
+        {
+          "construct": "dml",
+          "occurrences": 4,
+          "lines": [
+            60,
+            62,
+            65,
+            84
+          ]
+        },
+        {
+          "construct": "in_parameters",
+          "occurrences": 1,
+          "lines": []
+        },
+        {
+          "construct": "jsonb",
+          "occurrences": 2,
+          "lines": [
+            65,
+            84
+          ]
+        },
+        {
+          "construct": "loop",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "construct": "variables",
+          "occurrences": 9,
+          "lines": [
+            22,
+            23,
+            24,
+            25,
+            26,
+            27,
+            28,
+            29,
+            30
+          ]
+        }
+      ],
+      "risks": [
+        {
+          "code": "N_PLUS_ONE",
+          "severity": "high",
+          "message": "4 SQL statements executed on every iteration of this LOOP (lines 38, 60, 62, 65): one database round-trip each per row. Prefer set-based statements.",
+          "line": 34
+        }
+      ],
+      "dependencies": [
+        {
+          "name": "contas",
+          "kind": "table"
+        },
+        {
+          "name": "log_auditoria",
+          "kind": "table"
+        },
+        {
+          "name": "taxas",
+          "kind": "table"
+        },
+        {
+          "name": "transacoes",
+          "kind": "table"
+        }
+      ],
+      "parameters": {
+        "inputs": [
+          "p_data_referencia"
+        ],
+        "outputs": [],
+        "in_out": []
+      },
+      "variables": [
+        "v_id",
+        "v_origem",
+        "v_tipo",
+        "v_valor",
+        "v_taxa",
+        "v_percentual",
+        "v_minimo",
+        "v_total_taxas",
+        "v_count"
+      ],
+      "recommended_strategy": "hybrid",
+      "recommendations": [
+        {
+          "code": "KEEP_SET_BASED_SQL",
+          "message": "Keep joins, aggregates, CTEs and bulk DML as parameterized SQL."
+        },
+        {
+          "code": "REWRITE_ROW_BY_ROW",
+          "message": "Collapse per-row statements inside loops into one set-based statement."
+        }
+      ]
+    },
+    "generation": {
+      "strategy": "hybrid",
+      "recommended_strategy": "hybrid",
+      "architectural_decisions": [
+        {
+          "topic": "N+1 cursor loop",
+          "decision": "Rewrote the per-row loop (fee lookup, saldo update, TARIFA insert, audit insert per transaction) as one set-based statement with data-modifying CTEs.",
+          "rationale": "Semantics allow it: the fee lookup is a lateral join, and per-account debits are pre-aggregated because UPDATE ... FROM applies at most one source row per target row."
+        },
+        {
+          "topic": "Intermediate NUMERIC(18,2) rounding",
+          "decision": "Reproduced the legacy v_taxa NUMERIC(18,2) assignment rounding with CAST(... AS NUMERIC(18,2)) at both assignment points (after GREATEST, and after the operation-type factor), instead of one combined expression.",
+          "rationale": "The legacy variable rounds to 2 dp on every assignment; a single combined expression rounds only once and produced totals like 6.4495 instead of 6.46."
+        },
+        {
+          "topic": "Transaction control",
+          "decision": "No commit/rollback in the function; the caller owns the transaction.",
+          "rationale": "The original procedure does not manage transactions itself."
+        }
+      ],
+      "warnings": [
+        "The legacy v_taxa is treated as NUMERIC(18,2) (rounding on each assignment), which is the only behaviour consistent with the reference outputs; the declaration in the outline ('numeric') was assumed imprecise.",
+        "Rows with no fee in effect (CONTINUE in the original) and rows with NULL conta_origem_id are excluded via the inner lateral join and the IS NOT NULL filter; they are neither debited, nor inserted, nor counted, matching the original.",
+        "The batch summary audit row is always written, including on days with zero eligible transactions (transacoes = 0, total_taxas = 0), matching the original.",
+        "The sequential per-row saldo debit was replaced by an aggregated per-account debit; this is exact because every taxa is already rounded to 2 dp before summing.",
+        "Removed a Markdown fence the LLM left inside python_code."
+      ],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "generation-v5-sem-source",
+      "input_tokens": 5112,
+      "output_tokens": 7537,
+      "latency_ms": 113739.13,
+      "finish_reason": "stop",
+      "attempt": 2
+    },
+    "case_generation": {
+      "seed_generated": false,
+      "kept": [
+        "NULL reference date matches no rows, only batch log with zeros",
+        "SAQUE where minimum dominates percentual and gets x1.10",
+        "TRANSFERENCIA where minimum dominates percentual",
+        "TRANSFERENCIA where percentual exceeds minimum",
+        "NUMERIC rounding of fee 0.37625 to 0.38",
+        "holdout day: SAQUE double rounding then second fee on same account"
+      ],
+      "discarded": [],
+      "warnings": [],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "cases-v1",
+      "input_tokens": 4169,
+      "output_tokens": 1511,
+      "latency_ms": 14705.21
+    },
+    "validation": {
+      "results": [
+        {
+          "validator": "python_ast",
+          "success": true,
+          "blocking": true,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "ruff",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "behavior",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        }
+      ]
+    },
+    "completed_steps": [
+      "parsing",
+      "semantic_analysis",
+      "case_generation",
+      "generation",
+      "validation",
+      "generation",
+      "validation"
+    ],
+    "errors": [],
+    "warnings": [
+      "generation attempt 2: regenerated after 2 validation issue(s) in the previous attempt"
+    ]
+  }
+}

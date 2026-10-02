@@ -1,0 +1,40 @@
+{
+  "id": "01a0fab4-eb8f-74fb-9470-7f4f154d0b0f",
+  "modernization_id": "01a0fab2-9e10-74f3-9f1f-9db905bc58a1",
+  "procedure_name": "sp_processar_lote_taxas",
+  "metric": "behavioral_equivalence",
+  "prompt_version": "generation-v5-sem-source",
+  "model": "z-ai/glm-5.3-flash",
+  "static_valid": true,
+  "completed": true,
+  "cases": [
+    {
+      "name": "batch with two fees on the same account, rounding and skipped rows",
+      "passed": true,
+      "detail": "same result and same final state",
+      "original": "returned nothing",
+      "generated": "returned 0 row(s): ",
+      "source": "user",
+      "holdout": false
+    },
+    {
+      "name": "day without transactions still logs the batch",
+      "passed": true,
+      "detail": "same result and same final state",
+      "original": "returned nothing",
+      "generated": "returned 0 row(s): ",
+      "source": "user",
+      "holdout": false
+    },
+    {
+      "name": "another batch with the same traps on another account",
+      "passed": true,
+      "detail": "same result and same final state",
+      "original": "returned nothing",
+      "generated": "returned 0 row(s): ",
+      "source": "user",
+      "holdout": true
+    }
+  ],
+  "created_at": "2026-10-02T03:42:35.919414Z"
+}

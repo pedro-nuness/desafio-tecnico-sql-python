@@ -1,0 +1,154 @@
+{
+  "execution_id": "01a0fab6-2e50-7665-899b-ddf30a76d959",
+  "status": "success",
+  "created_at": "2026-10-02T03:43:58.544377+00:00",
+  "report": {
+    "parsing": {
+      "procedure_name": "fn_saldo_cliente",
+      "kind": "function",
+      "parser": "pglast",
+      "parameters": [
+        {
+          "name": "p_cliente_id",
+          "data_type": "bigint",
+          "mode": "in",
+          "has_default": false
+        }
+      ],
+      "return_type": "numeric(18, 2)",
+      "statement_count": 2,
+      "referenced_tables": [
+        "contas"
+      ],
+      "called_functions": [
+        "sum"
+      ],
+      "warnings": []
+    },
+    "semantic_analysis": {
+      "constructs": [
+        {
+          "construct": "aggregation",
+          "occurrences": 1,
+          "lines": [
+            15
+          ]
+        },
+        {
+          "construct": "in_parameters",
+          "occurrences": 1,
+          "lines": []
+        },
+        {
+          "construct": "variables",
+          "occurrences": 1,
+          "lines": [
+            13
+          ]
+        }
+      ],
+      "risks": [],
+      "dependencies": [
+        {
+          "name": "contas",
+          "kind": "table"
+        }
+      ],
+      "parameters": {
+        "inputs": [
+          "p_cliente_id"
+        ],
+        "outputs": [],
+        "in_out": []
+      },
+      "variables": [
+        "v_total"
+      ],
+      "recommended_strategy": "database_delegated",
+      "recommendations": [
+        {
+          "code": "KEEP_SET_BASED_SQL",
+          "message": "Keep joins, aggregates, CTEs and bulk DML as parameterized SQL."
+        }
+      ]
+    },
+    "generation": {
+      "strategy": "database_delegated",
+      "recommended_strategy": "database_delegated",
+      "architectural_decisions": [
+        {
+          "topic": "aggregation stays in SQL",
+          "decision": "The SUM/COALESCE aggregate is executed as one parameterized SELECT on the same connection; Python only binds the parameter and unwraps the scalar.",
+          "rationale": "Guiding principle: keep relational logic close to the database; a single-row aggregate needs no Python-side control flow."
+        },
+        {
+          "topic": "return type",
+          "decision": "The result is cast to NUMERIC(18,2) in SQL and returned as a scalar (asyncpg yields decimal.Decimal).",
+          "rationale": "Preserves the numeric(18,2) return type and the Decimal end-to-end rule; the source column is already NUMERIC(18,2) so no intermediate rounding is introduced."
+        }
+      ],
+      "warnings": [
+        "The caller owns the transaction: no commit/rollback is issued, matching the original read-only function.",
+        "COALESCE is in a polymorphic position, so the SUM result is explicitly CAST to NUMERIC(18,2) and the bind parameter is CAST to BIGINT to keep asyncpg type inference deterministic."
+      ],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "generation-v5-sem-source",
+      "input_tokens": 2083,
+      "output_tokens": 447,
+      "latency_ms": 8832.8,
+      "finish_reason": "stop",
+      "attempt": 1
+    },
+    "case_generation": {
+      "seed_generated": false,
+      "kept": [
+        "several active accounts summed",
+        "client exists but only non-active accounts yields zero via coalesce",
+        "null client id matches nothing"
+      ],
+      "discarded": [],
+      "warnings": [],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "cases-v1",
+      "input_tokens": 3506,
+      "output_tokens": 231,
+      "latency_ms": 19420.19
+    },
+    "validation": {
+      "results": [
+        {
+          "validator": "python_ast",
+          "success": true,
+          "blocking": true,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "ruff",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "behavior",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        }
+      ]
+    },
+    "completed_steps": [
+      "parsing",
+      "semantic_analysis",
+      "case_generation",
+      "generation",
+      "validation"
+    ],
+    "errors": [],
+    "warnings": []
+  }
+}

@@ -1,0 +1,323 @@
+{
+  "execution_id": "01a0faa3-48b2-75b6-b7dc-2a979e118841",
+  "status": "success",
+  "created_at": "2026-10-02T03:23:20.114866+00:00",
+  "report": {
+    "parsing": {
+      "procedure_name": "sp_relatorio_mensal_cliente",
+      "kind": "function",
+      "parser": "pglast",
+      "parameters": [
+        {
+          "name": "p_cliente_id",
+          "data_type": "bigint",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "p_data_inicio",
+          "data_type": "date",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "p_data_fim",
+          "data_type": "date",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "mes_referencia",
+          "data_type": "date",
+          "mode": "table",
+          "has_default": false
+        },
+        {
+          "name": "total_creditos",
+          "data_type": "numeric(18, 2)",
+          "mode": "table",
+          "has_default": false
+        },
+        {
+          "name": "total_debitos",
+          "data_type": "numeric(18, 2)",
+          "mode": "table",
+          "has_default": false
+        },
+        {
+          "name": "saldo_consolidado",
+          "data_type": "numeric(18, 2)",
+          "mode": "table",
+          "has_default": false
+        },
+        {
+          "name": "qtd_transacoes",
+          "data_type": "integer",
+          "mode": "table",
+          "has_default": false
+        }
+      ],
+      "return_type": "TABLE(mes_referencia date, total_creditos numeric(18, 2), total_debitos numeric(18, 2), saldo_consolidado numeric(18, 2), qtd_transacoes integer)",
+      "statement_count": 8,
+      "referenced_tables": [
+        "contas",
+        "transacoes"
+      ],
+      "called_functions": [
+        "count",
+        "date_trunc",
+        "fn_saldo_cliente",
+        "sum"
+      ],
+      "warnings": []
+    },
+    "semantic_analysis": {
+      "constructs": [
+        {
+          "construct": "aggregation",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "construct": "conditional",
+          "occurrences": 1,
+          "lines": [
+            27
+          ]
+        },
+        {
+          "construct": "cte",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "construct": "exception_handling",
+          "occurrences": 1,
+          "lines": [
+            26
+          ]
+        },
+        {
+          "construct": "in_parameters",
+          "occurrences": 3,
+          "lines": []
+        },
+        {
+          "construct": "join",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "construct": "out_parameters",
+          "occurrences": 5,
+          "lines": []
+        },
+        {
+          "construct": "raise",
+          "occurrences": 3,
+          "lines": [
+            28,
+            32,
+            75
+          ]
+        },
+        {
+          "construct": "recursive_cte",
+          "occurrences": 1,
+          "lines": [
+            34
+          ]
+        },
+        {
+          "construct": "return_query",
+          "occurrences": 2,
+          "lines": [
+            34,
+            77
+          ]
+        },
+        {
+          "construct": "variables",
+          "occurrences": 1,
+          "lines": [
+            25
+          ]
+        }
+      ],
+      "risks": [
+        {
+          "code": "SWALLOWED_EXCEPTION",
+          "severity": "medium",
+          "message": "WHEN OTHERS handler does not re-raise: errors are swallowed.",
+          "line": 26
+        },
+        {
+          "code": "RECURSIVE_CTE",
+          "severity": "low",
+          "message": "Recursive CTE should stay in SQL; re-implementing it in Python is costly.",
+          "line": null
+        },
+        {
+          "code": "EXTERNAL_ROUTINE_DEPENDENCY",
+          "severity": "low",
+          "message": "Depends on other database routines: fn_saldo_cliente.",
+          "line": null
+        }
+      ],
+      "dependencies": [
+        {
+          "name": "contas",
+          "kind": "table"
+        },
+        {
+          "name": "transacoes",
+          "kind": "table"
+        },
+        {
+          "name": "fn_saldo_cliente",
+          "kind": "function"
+        }
+      ],
+      "parameters": {
+        "inputs": [
+          "p_cliente_id",
+          "p_data_inicio",
+          "p_data_fim"
+        ],
+        "outputs": [
+          "mes_referencia",
+          "total_creditos",
+          "total_debitos",
+          "saldo_consolidado",
+          "qtd_transacoes"
+        ],
+        "in_out": []
+      },
+      "variables": [
+        "v_saldo_atual"
+      ],
+      "recommended_strategy": "hybrid",
+      "recommendations": [
+        {
+          "code": "KEEP_SET_BASED_SQL",
+          "message": "Keep joins, aggregates, CTEs and bulk DML as parameterized SQL."
+        },
+        {
+          "code": "TYPED_EXCEPTIONS",
+          "message": "Map RAISE EXCEPTION to typed exceptions and RAISE NOTICE to logging."
+        },
+        {
+          "code": "RESULT_TYPE_FOR_OUT_PARAMS",
+          "message": "Return OUT/INOUT parameters as an immutable result type."
+        },
+        {
+          "code": "TYPED_ROWS",
+          "message": "Return RETURN QUERY rows as a sequence of typed rows."
+        }
+      ]
+    },
+    "generation": {
+      "strategy": "hybrid",
+      "recommended_strategy": "hybrid",
+      "architectural_decisions": [
+        {
+          "topic": "WHEN OTHERS swallows the validation error",
+          "decision": "PeriodoInvalidoError is raised inside the try block whose except returns the fallback row, instead of propagating to the caller",
+          "rationale": "In the original, the RAISE EXCEPTION at L28 is raised inside the block protected by the WHEN OTHERS handler at L75, which logs a warning and returns the degraded fallback row; the caller never sees the exception. Reproducing that control flow is required for behavioural fidelity."
+        },
+        {
+          "topic": "NULL date parameters",
+          "decision": "The period comparison is only evaluated when both dates are non-NULL; NULL dates flow into the SQL where DATE_TRUNC/interval arithmetic yield NULL months",
+          "rationale": "PL/pgSQL treats NULL > NULL as NULL (not true), so validation is skipped; the report query then naturally produces a single row with a NULL month, matching the original."
+        },
+        {
+          "topic": "Exception block as savepoint",
+          "decision": "The report query runs inside `async with conn.begin_nested():` and the fallback query runs in the except clause after the savepoint rollback",
+          "rationale": "A PL/pgSQL BEGIN...EXCEPTION block is a savepoint; without it the transaction would stay aborted and the fallback SELECT would fail too."
+        },
+        {
+          "topic": "Relational logic stays in SQL",
+          "decision": "The recursive month CTE, aggregation and LEFT JOIN remain one parameterized statement; fn_saldo_cliente is called via SQL",
+          "rationale": "Rule 1/7: set-based logic stays close to the database; Python only coordinates control flow, logging and fallback."
+        }
+      ],
+      "warnings": [
+        "The WHEN OTHERS handler swallows all errors (including PeriodoInvalidoError and fn_saldo_cliente failures) and returns a degraded fallback row; this mirrors the original but means callers never receive an error. If the inverted-period case should actually raise, remove PeriodoInvalidoError from the protected block.",
+        "The function depends on fn_saldo_cliente, which must exist in the target database; its failure is treated as any other error inside the protected block (fallback row with saldo 0).",
+        "If fn_saldo_cliente fails, the original skips the NOTICE and jumps straight to the handler; here the info log is likewise skipped and a warning is emitted instead.",
+        "The caller owns the transaction; no commit/rollback is issued by this module."
+      ],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "generation-v5",
+      "input_tokens": 6335,
+      "output_tokens": 3319,
+      "latency_ms": 76336.07,
+      "finish_reason": "stop",
+      "attempt": 2
+    },
+    "case_generation": {
+      "seed_generated": false,
+      "kept": [
+        "null dates skip validation and yield single null-month row",
+        "null client id returns zero saldo and empty months",
+        "nonexistent client id returns zero rows values",
+        "boundary dates include fim day 23:59 and exclude day after",
+        "transaction with both sides owned by client counts once as credit and debit",
+        "single-day period excludes cancelled and includes tarifa as debit"
+      ],
+      "discarded": [],
+      "warnings": [],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "cases-v1",
+      "input_tokens": 4482,
+      "output_tokens": 1278,
+      "latency_ms": 17893.09
+    },
+    "validation": {
+      "results": [
+        {
+          "validator": "python_ast",
+          "success": true,
+          "blocking": true,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "ruff",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "behavior",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        }
+      ]
+    },
+    "completed_steps": [
+      "parsing",
+      "semantic_analysis",
+      "case_generation",
+      "generation",
+      "validation",
+      "generation",
+      "validation"
+    ],
+    "errors": [],
+    "warnings": [
+      "generation attempt 2: regenerated after 2 validation issue(s) in the previous attempt"
+    ]
+  }
+}

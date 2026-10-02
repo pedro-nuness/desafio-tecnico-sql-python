@@ -6,9 +6,10 @@
 # both raise — the Python side with an exception class it defines), same result rows (when
 # the routine returns any) and the same final rows in `compare_tables`.
 #
-# `holdout: true` cases never reach the LLM: the behavior check inside the pipeline (repair
-# loop) only runs the other ("dev") cases, so the holdout pass rate measures whether a fix
-# generalizes instead of being fitted to the cases it was shown.
+# `holdout: true` cases never reach the LLM: scripts/run_examples.py sends only the other
+# ("dev") cases to the pipeline as its `behavior`, and the metric runs all of them, so the
+# holdout pass rate measures whether a fix generalizes instead of being fitted to the cases
+# it was shown.
 
 schema: ../schema.sql
 seed: seed.sql

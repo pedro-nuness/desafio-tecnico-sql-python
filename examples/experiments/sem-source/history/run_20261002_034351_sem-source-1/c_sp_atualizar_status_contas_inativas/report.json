@@ -1,0 +1,242 @@
+{
+  "execution_id": "01a0fab0-d953-7329-8a54-97d486fbf7b5",
+  "status": "success",
+  "created_at": "2026-10-02T03:38:09.107479+00:00",
+  "report": {
+    "parsing": {
+      "procedure_name": "sp_atualizar_status_contas_inativas",
+      "kind": "procedure",
+      "parser": "pglast",
+      "parameters": [
+        {
+          "name": "p_dias",
+          "data_type": "integer",
+          "mode": "in",
+          "has_default": false
+        },
+        {
+          "name": "p_afetadas",
+          "data_type": "integer",
+          "mode": "out",
+          "has_default": false
+        }
+      ],
+      "return_type": null,
+      "statement_count": 5,
+      "referenced_tables": [
+        "contas",
+        "log_auditoria",
+        "transacoes"
+      ],
+      "called_functions": [
+        "jsonb_build_object",
+        "now"
+      ],
+      "warnings": []
+    },
+    "semantic_analysis": {
+      "constructs": [
+        {
+          "construct": "conditional",
+          "occurrences": 1,
+          "lines": [
+            15
+          ]
+        },
+        {
+          "construct": "dml",
+          "occurrences": 2,
+          "lines": [
+            19,
+            31
+          ]
+        },
+        {
+          "construct": "get_diagnostics",
+          "occurrences": 1,
+          "lines": [
+            29
+          ]
+        },
+        {
+          "construct": "in_parameters",
+          "occurrences": 1,
+          "lines": []
+        },
+        {
+          "construct": "jsonb",
+          "occurrences": 1,
+          "lines": [
+            31
+          ]
+        },
+        {
+          "construct": "out_parameters",
+          "occurrences": 1,
+          "lines": []
+        },
+        {
+          "construct": "raise",
+          "occurrences": 1,
+          "lines": [
+            16
+          ]
+        }
+      ],
+      "risks": [
+        {
+          "code": "DIAGNOSTICS_SEMANTICS",
+          "severity": "low",
+          "message": "GET DIAGNOSTICS must be mapped to driver equivalents (e.g. rowcount).",
+          "line": null
+        }
+      ],
+      "dependencies": [
+        {
+          "name": "contas",
+          "kind": "table"
+        },
+        {
+          "name": "log_auditoria",
+          "kind": "table"
+        },
+        {
+          "name": "transacoes",
+          "kind": "table"
+        }
+      ],
+      "parameters": {
+        "inputs": [
+          "p_dias"
+        ],
+        "outputs": [
+          "p_afetadas"
+        ],
+        "in_out": []
+      },
+      "variables": [],
+      "recommended_strategy": "hybrid",
+      "recommendations": [
+        {
+          "code": "KEEP_SET_BASED_SQL",
+          "message": "Keep joins, aggregates, CTEs and bulk DML as parameterized SQL."
+        },
+        {
+          "code": "TYPED_EXCEPTIONS",
+          "message": "Map RAISE EXCEPTION to typed exceptions and RAISE NOTICE to logging."
+        },
+        {
+          "code": "RESULT_TYPE_FOR_OUT_PARAMS",
+          "message": "Return OUT/INOUT parameters as an immutable result type."
+        },
+        {
+          "code": "ROWCOUNT",
+          "message": "Use the driver's rowcount instead of GET DIAGNOSTICS ROW_COUNT."
+        }
+      ]
+    },
+    "generation": {
+      "strategy": "hybrid",
+      "recommended_strategy": "hybrid",
+      "architectural_decisions": [
+        {
+          "topic": "Set-based UPDATE kept in SQL",
+          "decision": "The bulk UPDATE with NOT EXISTS subquery runs as one parameterized statement via sqlalchemy.text().",
+          "rationale": "Joins/filters and bulk DML stay close to the database; no N+1 possible here."
+        },
+        {
+          "topic": "Interval construction",
+          "decision": "Replaced `(p_dias || ' days')::INTERVAL` with `make_interval(days => CAST(:p_dias AS INTEGER))`.",
+          "rationale": "asyncpg cannot infer the type of a bind in a polymorphic position (`||`); the CAST makes the Python int match the expected type and avoids the str/int TypeError."
+        },
+        {
+          "topic": "OUT parameter",
+          "decision": "p_afetadas is returned as a frozen dataclass (ResultadoAtualizacaoStatus) with the field named exactly like the OUT parameter.",
+          "rationale": "Rule 6: OUT parameters map to an immutable result type."
+        },
+        {
+          "topic": "GET DIAGNOSTICS ROW_COUNT",
+          "decision": "Mapped to `result.rowcount` of the UPDATE execution.",
+          "rationale": "Driver equivalent of ROW_COUNT for a single UPDATE."
+        },
+        {
+          "topic": "RAISE EXCEPTION",
+          "decision": "Validation raise mapped to ParametroInvalidoError, raised before any SQL runs.",
+          "rationale": "Typed exception per rule 5; no database work is wasted on invalid input."
+        },
+        {
+          "topic": "Transaction ownership",
+          "decision": "No commit/rollback in the function; both statements run on the caller's connection/transaction.",
+          "rationale": "The original procedure does not manage transactions; the caller owns them."
+        }
+      ],
+      "warnings": [
+        "The audit INSERT uses rowcount from the UPDATE; with SQLAlchemy/asyncpg this reflects the rows matched/updated by the UPDATE, matching GET DIAGNOSTICS ROW_COUNT semantics for UPDATE.",
+        "jsonb_build_object values are cast to their own types (INTEGER) so the JSON stores numbers (e.g. {\"dias\": 30}), not strings.",
+        "The original message used the `%` placeholder formatting of RAISE; the Python exception reproduces the same final message via f-string interpolation.",
+        "No row locks are needed: the UPDATE takes its own row locks atomically within the caller's transaction."
+      ],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "generation-v5-sem-source",
+      "input_tokens": 2499,
+      "output_tokens": 1410,
+      "latency_ms": 32564.34,
+      "finish_reason": "stop",
+      "attempt": 1
+    },
+    "case_generation": {
+      "seed_generated": false,
+      "kept": [
+        "NULL p_dias raises exception",
+        "negative p_dias raises exception",
+        "one day boundary: only recent activity keeps accounts active",
+        "large p_dias: no account qualifies, zero affected, log still written",
+        "several accounts of same client with mixed statuses and activity",
+        "destination-only activity counts (account 21 as destino)"
+      ],
+      "discarded": [],
+      "warnings": [],
+      "provider": "openrouter",
+      "model": "z-ai/glm-5.3-flash",
+      "prompt_version": "cases-v1",
+      "input_tokens": 3716,
+      "output_tokens": 327,
+      "latency_ms": 4145.4
+    },
+    "validation": {
+      "results": [
+        {
+          "validator": "python_ast",
+          "success": true,
+          "blocking": true,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "ruff",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        },
+        {
+          "validator": "behavior",
+          "success": true,
+          "blocking": false,
+          "messages": [],
+          "skipped": null
+        }
+      ]
+    },
+    "completed_steps": [
+      "parsing",
+      "semantic_analysis",
+      "case_generation",
+      "generation",
+      "validation"
+    ],
+    "errors": [],
+    "warnings": []
+  }
+}
