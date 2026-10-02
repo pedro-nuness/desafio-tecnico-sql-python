@@ -18,12 +18,12 @@ from app.core.database.engine import create_engine
 from app.core.database.session import create_session_factory
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
 from app.features.modernization.case_generation.generate_cases import GenerateCases
+from app.features.modernization.code_generation.generate_code import GenerateCode
+from app.features.modernization.code_generation.prompt import CodeGenerationPromptBuilder
 from app.features.modernization.evaluation.repository import (
     EvaluationRepository,
     SqlAlchemyEvaluationRepository,
 )
-from app.features.modernization.generation.generate_code import GenerateCode
-from app.features.modernization.generation.prompt import GenerationPromptBuilder
 from app.features.modernization.graph.builder import (
     ModernizationGraph,
     RetryPolicy,
@@ -108,7 +108,7 @@ class ModernizationProvider(Provider):
     def generate_code(self, settings: Settings, llm: LLM) -> GenerateCode:
         return GenerateCode(
             llm,
-            GenerationPromptBuilder(),
+            CodeGenerationPromptBuilder(),
             temperature=settings.llm_temperature,
             max_output_tokens=settings.llm_max_output_tokens,
         )
@@ -155,8 +155,8 @@ class ModernizationProvider(Provider):
             execution_log=execution_log,
             generate_cases=generate_cases,
             retry=RetryPolicy(
-                max_attempts=settings.generation_max_attempts,
-                budget_seconds=settings.generation_retry_budget_seconds,
+                max_attempts=settings.code_generation_max_attempts,
+                budget_seconds=settings.code_generation_retry_budget_seconds,
             ),
         )
         if langfuse:

@@ -6,6 +6,8 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
+from app.features.modernization.code_generation.generate_code import GenerateCode
+from app.features.modernization.code_generation.prompt import CodeGenerationPromptBuilder
 from app.features.modernization.domain import (
     Modernization,
     ModernizationReport,
@@ -14,8 +16,6 @@ from app.features.modernization.domain import (
     PipelineProgress,
     PipelineStep,
 )
-from app.features.modernization.generation.generate_code import GenerateCode
-from app.features.modernization.generation.prompt import GenerationPromptBuilder
 from app.features.modernization.graph.builder import build_modernization_graph
 from app.features.modernization.parsing.plpgsql import PglastParser
 from app.features.modernization.persistence.execution_log import ExecutionLog
@@ -41,7 +41,7 @@ type SessionFactory = async_sessionmaker[AsyncSession]
 def _failed(modernization: Modernization) -> Modernization:
     report = ModernizationReport(
         completed_steps=(PipelineStep.PARSING,),
-        errors=(PipelineError(step=PipelineStep.GENERATION, error_type="X", message="boom"),),
+        errors=(PipelineError(step=PipelineStep.CODE_GENERATION, error_type="X", message="boom"),),
     )
     return modernization.complete(report, None)
 
@@ -74,7 +74,7 @@ async def test_update_persists_report_as_jsonb(session_factory: SessionFactory) 
                 {"id": modernization.id},
             )
         ).one()
-    assert tuple(row) == ("failure", "object", "generation")
+    assert tuple(row) == ("failure", "object", "code_generation")
 
 
 async def test_update_of_unknown_aggregate_raises(session_factory: SessionFactory) -> None:
@@ -90,7 +90,7 @@ def _use_cases(
     graph = build_modernization_graph(
         parser=PglastParser(),
         analyzer=SemanticAnalyzer(),
-        generate_code=GenerateCode(llm, GenerationPromptBuilder()),
+        generate_code=GenerateCode(llm, CodeGenerationPromptBuilder()),
         validate_code=ValidateCode([Rule(PythonASTCheck(), blocking=True)]),
         execution_log=ExecutionLog(modernizations),
     )

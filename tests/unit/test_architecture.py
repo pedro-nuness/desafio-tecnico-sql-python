@@ -51,7 +51,7 @@ DOMAIN_FILES = (
     "features/modernization/domain.py",
     "features/modernization/parsing/domain.py",
     "features/modernization/analysis/domain.py",
-    "features/modernization/generation/domain.py",
+    "features/modernization/code_generation/domain.py",
     "features/modernization/case_generation/domain.py",
     "features/modernization/validation/domain.py",
     "features/modernization/validation/checks/behavior/domain.py",
@@ -69,7 +69,7 @@ FORBIDDEN: dict[str, set[str]] = {
     "core/config": VENDORS | {"fastapi", "langgraph", "app.features"},
     "core/database": {"fastapi", "langgraph", "app.features", "openai", "pglast", "ruff"},
     "features/modernization/use_cases.py": PURE | ENTRY,
-    "features/modernization/generation": PURE | IMPLEMENTATION | {f"{FEATURE}.graph"},
+    "features/modernization/code_generation": PURE | IMPLEMENTATION | {f"{FEATURE}.graph"},
     # Runs the original routine through the behavior harness, never a driver itself.
     "features/modernization/case_generation": PURE | IMPLEMENTATION | {f"{FEATURE}.graph"},
     "features/modernization/parsing/parser.py": PURE | IMPLEMENTATION,
@@ -208,7 +208,7 @@ def test_no_init_py_files_exist_in_app() -> None:
 # which only adds verification and never fails the run (graph/nodes.py).
 LOCAL_EXCEPT_ALLOWED = [
     "features/modernization/case_generation/generate_cases.py",
-    "features/modernization/generation/generate_code.py",
+    "features/modernization/code_generation/generate_code.py",
     "features/modernization/graph/builder.py",
     "features/modernization/graph/nodes.py",
     "features/modernization/parsing/plpgsql.py",
@@ -240,7 +240,7 @@ def test_local_exception_handlers_only_where_needed() -> None:
 ERROR_CLASSES_ALLOWED_IN = {
     "IntegrationError": (
         "shared/integrations/",
-        "features/modernization/generation/",
+        "features/modernization/code_generation/",
         "features/modernization/case_generation/",
     ),
     "NotFoundError": ("features/modernization/persistence/",),

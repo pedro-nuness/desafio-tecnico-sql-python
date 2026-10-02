@@ -1,11 +1,11 @@
 """Builds the generation prompt from the deterministic analysis (not just the raw source)."""
 
 from app.features.modernization.analysis.domain import GenerationStrategy, SemanticAnalysis
-from app.features.modernization.generation.domain import RepairFeedback
+from app.features.modernization.code_generation.domain import RepairFeedback
 from app.features.modernization.parsing.domain import ParsedProcedure, Statement
 from app.shared.domain.value_object import ValueObject
 
-PROMPT_VERSION = "generation-v5"
+PROMPT_VERSION = "code-generation-v5"
 
 SYSTEM_PROMPT = f"""\
 You are a senior backend engineer modernizing PostgreSQL PL/pgSQL routines into Python 3.14.
@@ -85,13 +85,13 @@ Answer with ONE JSON object and nothing else, using exactly this shape:
 """
 
 
-class GenerationPrompt(ValueObject):
+class CodeGenerationPrompt(ValueObject):
     system: str
     user: str
     version: str
 
 
-class GenerationPromptBuilder:
+class CodeGenerationPromptBuilder:
     def build(
         self,
         *,
@@ -100,7 +100,7 @@ class GenerationPromptBuilder:
         source_code: str,
         schema_context: str | None,
         feedback: RepairFeedback | None = None,
-    ) -> GenerationPrompt:
+    ) -> CodeGenerationPrompt:
         sections = [
             _signature_section(procedure),
             _declarations_section(procedure),
@@ -114,7 +114,7 @@ class GenerationPromptBuilder:
         ]
         if feedback is not None:
             sections.append(_feedback_section(feedback))
-        return GenerationPrompt(
+        return CodeGenerationPrompt(
             system=SYSTEM_PROMPT,
             user="\n\n".join(sections),
             version=PROMPT_VERSION,

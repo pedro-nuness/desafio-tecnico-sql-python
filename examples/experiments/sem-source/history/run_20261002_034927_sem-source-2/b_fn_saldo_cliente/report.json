@@ -72,7 +72,7 @@
         }
       ]
     },
-    "generation": {
+    "code_generation": {
       "strategy": "database_delegated",
       "recommended_strategy": "database_delegated",
       "architectural_decisions": [
@@ -93,7 +93,7 @@
       ],
       "provider": "openrouter",
       "model": "z-ai/glm-5.3-flash",
-      "prompt_version": "generation-v5-sem-source",
+      "prompt_version": "code-generation-v5-sem-source",
       "input_tokens": 2083,
       "output_tokens": 447,
       "latency_ms": 8832.8,
@@ -145,7 +145,7 @@
       "parsing",
       "semantic_analysis",
       "case_generation",
-      "generation",
+      "code_generation",
       "validation"
     ],
     "errors": [],

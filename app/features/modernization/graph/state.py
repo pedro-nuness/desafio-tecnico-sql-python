@@ -5,6 +5,7 @@ from uuid import UUID
 
 from app.features.modernization.analysis.domain import SemanticAnalysis
 from app.features.modernization.case_generation.domain import CaseGenerationResult
+from app.features.modernization.code_generation.domain import CodeGenerationResult
 from app.features.modernization.domain import (
     Modernization,
     ModernizationReport,
@@ -13,7 +14,6 @@ from app.features.modernization.domain import (
     PipelineError,
     PipelineStep,
 )
-from app.features.modernization.generation.domain import GenerationResult
 from app.features.modernization.parsing.domain import ParsedProcedure
 from app.features.modernization.validation.checks.behavior.domain import Scenario
 from app.features.modernization.validation.domain import ValidationResult
@@ -45,7 +45,7 @@ class ModernizationState(TypedDict):
     semantic_analysis: SemanticAnalysis | None
 
     generated_code: str | None
-    generation: GenerationResult | None
+    code_generation: CodeGenerationResult | None
     """Strategy, architectural decisions, model and tokens of the latest attempt."""
     generation_attempts: int
 
@@ -72,7 +72,7 @@ def to_report(state: ModernizationState) -> ModernizationReport:
     return ModernizationReport(
         parsing=ParsingSummary.of(procedure) if procedure else None,
         semantic_analysis=state.get("semantic_analysis"),
-        generation=state.get("generation"),
+        code_generation=state.get("code_generation"),
         case_generation=state.get("case_generation"),
         validation=validation,
         completed_steps=tuple(state.get("completed_steps", [])),
@@ -89,7 +89,7 @@ class StateUpdate(TypedDict, total=False):
     parsed_procedure: ParsedProcedure
     semantic_analysis: SemanticAnalysis
     generated_code: str
-    generation: GenerationResult
+    code_generation: CodeGenerationResult
     generation_attempts: int
     behavior: Scenario | None
     case_generation: CaseGenerationResult

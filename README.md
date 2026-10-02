@@ -108,11 +108,11 @@ flowchart LR
     START((START)) --> record_start
     record_start --> parsing
     parsing --> semantic_analysis
-    semantic_analysis --> generation
+    semantic_analysis --> code_generation
     semantic_analysis -. "generate_cases (padrão)" .-> case_generation
-    generation --> validation
+    code_generation --> validation
     case_generation --> validation
-    validation -- "reprovado, tentativas e tempo sobrando" --> generation
+    validation -- "reprovado, tentativas e tempo sobrando" --> code_generation
     validation -- "aprovado ou sem retry" --> record_result
     record_result --> END((END))
 ```
@@ -125,8 +125,8 @@ flowchart LR
 | `record_start`      | grava a execução como `running` antes do LLM                                                                            | `ExecutionLog.start`    |
 | `parsing`           | PL/pgSQL → IR `ParsedProcedure` (parâmetros, declarações, árvore de statements, SQL embutido com tabelas/funções/locks) | `PglastParser`          |
 | `semantic_analysis` | construtos SQL, riscos (N+1, `FOR UPDATE`, exceção engolida, SQL dinâmico…), dependências e estratégia recomendada      | `SemanticAnalyzer`      |
-| `generation`        | prompt montado a partir das duas etapas anteriores → LLM → contrato JSON                                                | `GenerateCode`          |
-| `case_generation`   | em paralelo com `generation`: LLM propõe casos de teste, a rotina original filtra, somam-se aos do chamador             | `GenerateCases`         |
+| `code_generation`   | prompt montado a partir das duas etapas anteriores → LLM → contrato JSON                                                | `GenerateCode`          |
+| `case_generation`   | em paralelo com `code_generation`: LLM propõe casos de teste, a rotina original filtra, somam-se aos do chamador        | `GenerateCases`         |
 | `validation`        | `ast.parse` (bloqueante), Ruff e comportamento contra a rotina original (não bloqueantes)                               | `ValidateCode`          |
 | `record_result`     | calcula o status e grava código e relatório                                                                             | `ExecutionLog.complete` |
 
@@ -138,12 +138,12 @@ domínio de cada etapa e três canais append-only (`completed_steps`, `warnings`
 - **Falha em qualquer etapa**: um wrapper em volta de cada nó grava `failure` com tudo o que já foi
 produzido e relança a exceção, que vira resposta HTTP no handler global. Funciona igual pelo
 `POST /modernize`, pela API do LangGraph e pelo Studio, porque a gravação está no próprio grafo.
-- **Loop de reparo** (`validation → generation`): se algum check reprova, a geração roda de novo
-com o código anterior e a lista de problemas no prompt. Limites: `GENERATION_MAX_ATTEMPTS`
-(padrão 2) e `GENERATION_RETRY_BUDGET_SECONDS` (padrão 90 s), porque a request é síncrona.
-- **Fan-out** (`semantic_analysis → generation + case_generation`): os dois nós rodam no mesmo
+- **Loop de reparo** (`validation → code_generation`): se algum check reprova, a geração roda de novo
+com o código anterior e a lista de problemas no prompt. Limites: `CODE_GENERATION_MAX_ATTEMPTS`
+(padrão 2) e `CODE_GENERATION_RETRY_BUDGET_SECONDS` (padrão 90 s), porque a request é síncrona.
+- **Fan-out** (`semantic_analysis → code_generation + case_generation`): os dois nós rodam no mesmo
 superstep, em paralelo, e `validation` roda uma vez quando ambos terminam. O retry volta só
-para `generation`: os casos são gerados uma vez por execução. `case_generation` nunca derruba a
+para `code_generation`: os casos são gerados uma vez por execução. `case_generation` nunca derruba a
 execução: falha do LLM vira warning e ficam só os casos do chamador.
 
 ---
@@ -175,7 +175,7 @@ app/
         ├── graph/              # builder · nodes · state
         ├── parsing/            # domain.py (o IR) · parser.py (SQLParser) · plpgsql.py
         ├── analysis/           # domain.py · analyzer.py · risks.py · catalog.py
-        ├── generation/         # domain.py · prompt.py · generate_code.py
+        ├── code_generation/    # domain.py · prompt.py · generate_code.py
         ├── case_generation/    # domain.py · prompt.py · generate_cases.py
         ├── validation/         # domain.py · validate_code.py (CodeCheck, Rule, ValidateCode)
         │   └── checks/         # syntax.py (ast.parse) · lint.py (Ruff)
@@ -272,7 +272,7 @@ comportamento não é verificado e o relatório diz isso. A resposta traz `execu
 | ------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | `parsing`           | nome, tipo, parâmetros e modos, retorno, nº de statements, tabelas, funções chamadas                                        |
 | `semantic_analysis` | construtos SQL (com linhas), riscos (`code`, `severity`, `message`, `line`), dependências, estratégia recomendada           |
-| `generation`        | estratégia escolhida e recomendada, decisões arquiteturais, provider, modelo, `prompt_version`, tokens, latência, tentativa |
+| `code_generation`   | estratégia escolhida e recomendada, decisões arquiteturais, provider, modelo, `prompt_version`, tokens, latência, tentativa |
 | `case_generation`   | casos mantidos, descartados (com o motivo), se o seed foi gerado, warnings, provider, modelo, tokens, latência             |
 | `validation`        | resultado por check (`validator`, `success`, `blocking`, `messages`, `skipped`)                                             |
 | raiz                | `completed_steps` (repete geração/validação a cada tentativa), `errors`, `warnings`                                         |
@@ -347,7 +347,7 @@ ramos do PL/pgSQL, executar o código gerado em container sem rede e com papel d
 
 ### Resultado
 
-Modelo `z-ai/glm-5.3-flash`, prompt `generation-v5`, Anexo A como schema, temperatura 0, casos
+Modelo `z-ai/glm-5.3-flash`, prompt `code-generation-v5`, Anexo A como schema, temperatura 0, casos
 gerados pelo LLM ligados ([`HISTORY.md`](examples/results/HISTORY.md)):
 
 | rotinas | casos | holdout | validade AST | conclusão | tokens (in / out) | duração |
@@ -416,7 +416,7 @@ Sem as chaves, o tracing fica desligado.
 
 O que é registrado: um trace por execução, um span por nó do grafo (inclusive cada tentativa do
 loop de reparo), via o callback nativo do LangChain/LangGraph; e a chamada ao LLM como geração
-filha do nó `generation` (`TracedLLM`), com prompt, resposta, modelo, tokens e latência. Custo
+filha do nó `code_generation` (`TracedLLM`), com prompt, resposta, modelo, tokens e latência. Custo
 aparece quando o modelo tem preço cadastrado no Langfuse.
 
 ![Trace do Anexo D no Langfuse](docs/langfuse/langfuse_screenshot_1.png)
@@ -630,8 +630,8 @@ valores do `.env.example` (sem segredos), para não depender do `.env` de quem r
 | `LLM_TEMPERATURE` / `LLM_MAX_OUTPUT_TOKENS` | `0.0` / `8192` | |
 | `LLM_TIMEOUT_SECONDS` / `LLM_MAX_RETRIES` | `120` / `2` | |
 | `LLM_CIRCUIT_BREAKER_*` | `5` falhas / `60` s | abre e fecha o circuito |
-| `GENERATION_MAX_ATTEMPTS` | `2` | tentativas de geração (1 desliga o reparo) |
-| `GENERATION_RETRY_BUDGET_SECONDS` | `90` | nenhuma retentativa começa depois disso |
+| `CODE_GENERATION_MAX_ATTEMPTS` | `2` | tentativas de geração (1 desliga o reparo) |
+| `CODE_GENERATION_RETRY_BUDGET_SECONDS` | `90` | nenhuma retentativa começa depois disso |
 | `RUFF_TIMEOUT_SECONDS` | `20` | |
 | `EVALUATION_DATABASE_URL` | `…/modernizer_eval` | banco descartável; vazio = check de comportamento pulado |
 | `EVALUATION_DATASET_FILE` / `EVALUATION_CASE_TIMEOUT_SECONDS` | `examples/evaluation/scenarios.yml` / `10` | |

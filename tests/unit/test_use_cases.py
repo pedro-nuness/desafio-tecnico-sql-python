@@ -35,7 +35,7 @@ async def test_success_runs_all_four_nodes_and_persists_twice(
     report = result.report
     assert report.parsing is not None
     assert report.semantic_analysis is not None
-    assert report.generation is not None and report.generation.provider == "fake"
+    assert report.code_generation is not None and report.code_generation.provider == "fake"
     assert report.validation is not None and report.validation.is_valid
     # RUNNING row committed before the pipeline, final row committed after it
     assert [m.status for m in store.history] == [
@@ -67,7 +67,7 @@ async def test_llm_failure_is_recorded_then_propagates(
     )
     [recorded_error] = recorded.report.errors
     assert (recorded_error.step, recorded_error.error_type) == (
-        PipelineStep.GENERATION,
+        PipelineStep.CODE_GENERATION,
         "IntegrationError",
     )
 

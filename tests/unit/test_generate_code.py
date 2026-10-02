@@ -5,11 +5,11 @@ import pytest
 
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
 from app.features.modernization.analysis.domain import GenerationStrategy, SemanticAnalysis
-from app.features.modernization.generation.domain import GenerationResult
-from app.features.modernization.generation.generate_code import GenerateCode
-from app.features.modernization.generation.prompt import (
+from app.features.modernization.code_generation.domain import CodeGenerationResult
+from app.features.modernization.code_generation.generate_code import GenerateCode
+from app.features.modernization.code_generation.prompt import (
     PROMPT_VERSION,
-    GenerationPromptBuilder,
+    CodeGenerationPromptBuilder,
 )
 from app.features.modernization.parsing.domain import ParsedProcedure
 from app.features.modernization.parsing.plpgsql import PglastParser
@@ -30,9 +30,9 @@ def analyzed(load_procedure: Callable[[str], str]) -> Analyzed:
 
 async def _generate(
     llm: FakeLLM, analyzed: Analyzed, schema: str | None = None
-) -> tuple[str, GenerationResult]:
+) -> tuple[str, CodeGenerationResult]:
     source, procedure, analysis = analyzed
-    step = GenerateCode(llm, GenerationPromptBuilder())
+    step = GenerateCode(llm, CodeGenerationPromptBuilder())
     return await step.execute(
         procedure=procedure, analysis=analysis, source_code=source, schema_context=schema
     )

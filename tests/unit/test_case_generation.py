@@ -10,9 +10,9 @@ import pytest
 
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
 from app.features.modernization.case_generation.generate_cases import GenerateCases
+from app.features.modernization.code_generation.generate_code import GenerateCode
+from app.features.modernization.code_generation.prompt import CodeGenerationPromptBuilder
 from app.features.modernization.domain import ModernizationStatus, PipelineStep
-from app.features.modernization.generation.generate_code import GenerateCode
-from app.features.modernization.generation.prompt import GenerationPromptBuilder
 from app.features.modernization.graph.builder import (
     ModernizationGraph,
     RetryPolicy,
@@ -181,7 +181,7 @@ def _graph(
     return build_modernization_graph(
         parser=PglastParser(),
         analyzer=SemanticAnalyzer(),
-        generate_code=GenerateCode(code_llm, GenerationPromptBuilder()),
+        generate_code=GenerateCode(code_llm, CodeGenerationPromptBuilder()),
         validate_code=ValidateCode(
             [Rule(PythonASTCheck(), blocking=True), Rule(check, blocking=False)]
         ),
@@ -202,7 +202,7 @@ async def test_cases_are_generated_next_to_the_code_and_reach_validation() -> No
     modernization = final["modernization"]
     assert modernization.status is ModernizationStatus.SUCCESS
     steps = modernization.report.completed_steps
-    assert {PipelineStep.GENERATION, PipelineStep.CASE_GENERATION} <= set(steps)
+    assert {PipelineStep.CODE_GENERATION, PipelineStep.CASE_GENERATION} <= set(steps)
     assert steps[-1] is PipelineStep.VALIDATION  # validation ran once, after both
     assert steps.count(PipelineStep.VALIDATION) == 1
     assert modernization.report.case_generation.kept == ("inactive account",)

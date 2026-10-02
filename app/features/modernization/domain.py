@@ -10,7 +10,7 @@ from pydantic import Field, JsonValue
 
 from app.features.modernization.analysis.domain import SemanticAnalysis
 from app.features.modernization.case_generation.domain import CaseGenerationResult
-from app.features.modernization.generation.domain import GenerationResult
+from app.features.modernization.code_generation.domain import CodeGenerationResult
 from app.features.modernization.parsing.domain import Parameter, ParsedProcedure, RoutineKind
 from app.features.modernization.validation.domain import ValidationResult
 from app.shared.domain.value_object import ValueObject
@@ -36,9 +36,9 @@ class ModernizationStatus(StrEnum):
 class PipelineStep(StrEnum):
     PARSING = "parsing"
     SEMANTIC_ANALYSIS = "semantic_analysis"
-    GENERATION = "generation"
+    CODE_GENERATION = "code_generation"
     CASE_GENERATION = "case_generation"
-    """Runs in parallel with GENERATION (fan-out after the analysis)."""
+    """Runs in parallel with CODE_GENERATION (fan-out after the analysis)."""
     VALIDATION = "validation"
 
 
@@ -106,7 +106,7 @@ class ModernizationReport(ValueObject):
 
     parsing: ParsingSummary | None = None
     semantic_analysis: SemanticAnalysis | None = None
-    generation: GenerationResult | None = None
+    code_generation: CodeGenerationResult | None = None
     """The latest attempt (the code itself lives in Modernization.generated_code)."""
     case_generation: CaseGenerationResult | None = None
     """None when the step did not run (disabled, no schema, no evaluation database)."""
@@ -116,7 +116,7 @@ class ModernizationReport(ValueObject):
     warnings: tuple[str, ...] = ()
 
     def status(self) -> ModernizationStatus:
-        if self.generation is None:
+        if self.code_generation is None:
             return ModernizationStatus.FAILURE
         if self.validation is None:
             return ModernizationStatus.PARTIAL  # code exists but was never verified

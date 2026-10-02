@@ -8,6 +8,7 @@ from langgraph.graph.state import CompiledStateGraph
 
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
 from app.features.modernization.case_generation.generate_cases import GenerateCases
+from app.features.modernization.code_generation.generate_code import GenerateCode
 from app.features.modernization.domain import (
     Modernization,
     ModernizationStatus,
@@ -15,10 +16,9 @@ from app.features.modernization.domain import (
     PipelineProgress,
     PipelineStep,
 )
-from app.features.modernization.generation.generate_code import GenerateCode
 from app.features.modernization.graph.nodes import (
     CaseGenerationNode,
-    GenerationNode,
+    CodeGenerationNode,
     ParsingNode,
     RecordResultNode,
     RecordStartNode,
@@ -83,7 +83,7 @@ def build_modernization_graph(
     steps: list[StepNode] = [
         ParsingNode(parser),
         SemanticAnalysisNode(analyzer),
-        GenerationNode(generate_code),
+        CodeGenerationNode(generate_code),
         ValidationNode(validate_code),
     ]
     if generate_cases is not None:
@@ -100,19 +100,19 @@ def build_modernization_graph(
     graph.add_edge(RECORD_START, PipelineStep.PARSING.value)
     graph.add_edge(PipelineStep.PARSING.value, PipelineStep.SEMANTIC_ANALYSIS.value)
     if generate_cases is None:
-        graph.add_edge(PipelineStep.SEMANTIC_ANALYSIS.value, PipelineStep.GENERATION.value)
+        graph.add_edge(PipelineStep.SEMANTIC_ANALYSIS.value, PipelineStep.CODE_GENERATION.value)
     else:
         graph.add_conditional_edges(
             PipelineStep.SEMANTIC_ANALYSIS.value,
             _after_analysis(generate_cases),
-            [PipelineStep.GENERATION.value, PipelineStep.CASE_GENERATION.value],
+            [PipelineStep.CODE_GENERATION.value, PipelineStep.CASE_GENERATION.value],
         )
         graph.add_edge(PipelineStep.CASE_GENERATION.value, PipelineStep.VALIDATION.value)
-    graph.add_edge(PipelineStep.GENERATION.value, PipelineStep.VALIDATION.value)
+    graph.add_edge(PipelineStep.CODE_GENERATION.value, PipelineStep.VALIDATION.value)
     graph.add_conditional_edges(
         PipelineStep.VALIDATION.value,
         _after_validation(retry),
-        [PipelineStep.GENERATION.value, RECORD_RESULT],
+        [PipelineStep.CODE_GENERATION.value, RECORD_RESULT],
     )
     graph.add_edge(RECORD_RESULT, END)
     return graph.compile(name=GRAPH_NAME)
@@ -170,7 +170,7 @@ def _tracked(
 
 def _after_analysis(generate_cases: GenerateCases) -> Callable[[ModernizationState], list[str]]:
     def route(state: ModernizationState) -> list[str]:
-        targets = [PipelineStep.GENERATION.value]
+        targets = [PipelineStep.CODE_GENERATION.value]
         if state.get("generate_cases", True) and generate_cases.available:
             targets.append(PipelineStep.CASE_GENERATION.value)
         return targets
@@ -189,6 +189,8 @@ def _after_validation(retry: RetryPolicy) -> Callable[[ModernizationState], str]
         ):
             return RECORD_RESULT
         elapsed = (datetime.now(UTC) - state["started_at"]).total_seconds()
-        return PipelineStep.GENERATION.value if elapsed < retry.budget_seconds else RECORD_RESULT
+        return (
+            PipelineStep.CODE_GENERATION.value if elapsed < retry.budget_seconds else RECORD_RESULT
+        )
 
     return route

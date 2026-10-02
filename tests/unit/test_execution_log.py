@@ -30,7 +30,7 @@ async def test_fail_is_always_a_failure_and_keeps_the_error_payload(
 ) -> None:
     started = await log.start("src", None)
     error = PipelineError.from_exception(
-        PipelineStep.GENERATION, IntegrationError("llm down", upstream_status=503)
+        PipelineStep.CODE_GENERATION, IntegrationError("llm down", upstream_status=503)
     )
 
     failed = await log.fail(started.id, ModernizationReport(), None, error)

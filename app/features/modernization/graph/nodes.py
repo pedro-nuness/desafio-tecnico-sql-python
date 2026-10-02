@@ -8,9 +8,9 @@ from typing import ClassVar, Protocol
 
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
 from app.features.modernization.case_generation.generate_cases import GenerateCases
+from app.features.modernization.code_generation.domain import RepairFeedback
+from app.features.modernization.code_generation.generate_code import GenerateCode
 from app.features.modernization.domain import PipelineStep
-from app.features.modernization.generation.domain import RepairFeedback
-from app.features.modernization.generation.generate_code import GenerateCode
 from app.features.modernization.graph.state import ModernizationState, StateUpdate, to_report
 from app.features.modernization.parsing.parser import SQLParser
 from app.features.modernization.persistence.execution_log import ExecutionLog
@@ -69,11 +69,11 @@ class SemanticAnalysisNode:
         )
 
 
-class GenerationNode:
+class CodeGenerationNode:
     """On a retry (routed back from validation) the previous code and the validation issues
     go into the prompt as RepairFeedback."""
 
-    step = PipelineStep.GENERATION
+    step = PipelineStep.CODE_GENERATION
 
     def __init__(self, generate_code: GenerateCode) -> None:
         self._generate_code = generate_code
@@ -97,7 +97,7 @@ class GenerationNode:
             else []
         )
         return StateUpdate(
-            generation=result,
+            code_generation=result,
             generated_code=code,
             generation_attempts=attempt,
             completed_steps=[self.step],
@@ -114,7 +114,7 @@ def _feedback(state: ModernizationState, attempt: int) -> RepairFeedback | None:
 
 
 class CaseGenerationNode:
-    """Runs next to GenerationNode (fan-out after the analysis). Never fails the run: the
+    """Runs next to CodeGenerationNode (fan-out after the analysis). Never fails the run: the
     cases only add verification, so a failure here becomes a warning and the caller's
     scenario is kept as is."""
 

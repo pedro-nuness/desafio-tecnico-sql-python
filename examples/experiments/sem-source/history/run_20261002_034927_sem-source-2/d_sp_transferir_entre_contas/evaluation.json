@@ -3,7 +3,7 @@
   "modernization_id": "01a0fab6-d126-70d2-b587-bd45abd06177",
   "procedure_name": "sp_transferir_entre_contas",
   "metric": "behavioral_equivalence",
-  "prompt_version": "generation-v5-sem-source",
+  "prompt_version": "code-generation-v5-sem-source",
   "model": "z-ai/glm-5.3-flash",
   "static_valid": true,
   "completed": true,

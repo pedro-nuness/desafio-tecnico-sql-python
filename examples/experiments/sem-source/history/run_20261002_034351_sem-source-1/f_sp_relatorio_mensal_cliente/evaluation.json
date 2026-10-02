@@ -3,7 +3,7 @@
   "modernization_id": "01a0fab4-eb9e-735e-9953-25223bb27df3",
   "procedure_name": "sp_relatorio_mensal_cliente",
   "metric": "behavioral_equivalence",
-  "prompt_version": "generation-v5-sem-source",
+  "prompt_version": "code-generation-v5-sem-source",
   "model": "z-ai/glm-5.3-flash",
   "static_valid": true,
   "completed": true,

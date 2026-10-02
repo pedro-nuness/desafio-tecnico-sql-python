@@ -4,12 +4,12 @@ import re
 from pydantic import BaseModel, ValidationError
 
 from app.features.modernization.analysis.domain import GenerationStrategy, SemanticAnalysis
-from app.features.modernization.generation.domain import (
+from app.features.modernization.code_generation.domain import (
     ArchitecturalDecision,
-    GenerationResult,
+    CodeGenerationResult,
     RepairFeedback,
 )
-from app.features.modernization.generation.prompt import GenerationPromptBuilder
+from app.features.modernization.code_generation.prompt import CodeGenerationPromptBuilder
 from app.features.modernization.parsing.domain import ParsedProcedure
 from app.shared.integrations.errors import IntegrationError
 from app.shared.integrations.llm.llm import LLM, LLMRequest, LLMResponse, ResponseFormat
@@ -33,12 +33,12 @@ class _GenerationPayload(BaseModel):
 
 
 class GenerateCode:
-    """Generation step: prompt from the deterministic analysis -> LLM -> GenerationResult."""
+    """Code generation step: prompt from the deterministic analysis -> LLM -> result."""
 
     def __init__(
         self,
         llm: LLM,
-        prompt_builder: GenerationPromptBuilder,
+        prompt_builder: CodeGenerationPromptBuilder,
         *,
         temperature: float = 0.0,
         max_output_tokens: int = 8192,
@@ -56,7 +56,7 @@ class GenerateCode:
         source_code: str,
         schema_context: str | None,
         feedback: RepairFeedback | None = None,
-    ) -> tuple[str, GenerationResult]:
+    ) -> tuple[str, CodeGenerationResult]:
         """Returns the generated module and everything else about the generation."""
         prompt = self._prompt_builder.build(
             procedure=procedure,
@@ -113,7 +113,7 @@ class GenerateCode:
                 "LLM did not report a strategy; assuming the recommended one "
                 f"({analysis.recommended_strategy.value})."
             )
-        return code, GenerationResult(
+        return code, CodeGenerationResult(
             strategy=payload.strategy or analysis.recommended_strategy,
             recommended_strategy=analysis.recommended_strategy,
             architectural_decisions=decisions,

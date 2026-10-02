@@ -8,8 +8,8 @@ import pytest
 from dotenv import dotenv_values
 
 from app.features.modernization.analysis.analyzer import SemanticAnalyzer
-from app.features.modernization.generation.generate_code import GenerateCode
-from app.features.modernization.generation.prompt import GenerationPromptBuilder
+from app.features.modernization.code_generation.generate_code import GenerateCode
+from app.features.modernization.code_generation.prompt import CodeGenerationPromptBuilder
 from app.features.modernization.graph.builder import (
     DEFAULT_RETRY,
     ModernizationGraph,
@@ -119,7 +119,9 @@ def make_graph(store: InMemoryDatabase) -> GraphFactory:
         return build_modernization_graph(
             parser=PglastParser(),
             analyzer=SemanticAnalyzer(),
-            generate_code=GenerateCode(llm or FakeLLM([llm_payload()]), GenerationPromptBuilder()),
+            generate_code=GenerateCode(
+                llm or FakeLLM([llm_payload()]), CodeGenerationPromptBuilder()
+            ),
             validate_code=validate_code or default_validate_code(),
             execution_log=ExecutionLog(InMemoryModernizationRepository(store)),
             retry=retry,

@@ -35,8 +35,10 @@ class Evaluation(ValueObject):
             id=uuid7(),
             modernization_id=modernization.id,
             procedure_name=_bare_name(report.parsing.procedure_name if report.parsing else None),
-            prompt_version=report.generation.prompt_version if report.generation else None,
-            model=report.generation.model if report.generation else None,
+            prompt_version=report.code_generation.prompt_version
+            if report.code_generation
+            else None,
+            model=report.code_generation.model if report.code_generation else None,
             static_valid=bool(report.validation and report.validation.is_valid),
             completed=modernization.status
             in {ModernizationStatus.SUCCESS, ModernizationStatus.PARTIAL},

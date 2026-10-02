@@ -31,7 +31,7 @@ async def test_generation_is_a_child_of_its_graph_node(make_graph, load_procedur
         schema_context=None,
     )
     assert callback.parent is not None
-    assert callback.nodes[callback.parent] == "generation"
+    assert callback.nodes[callback.parent] == "code_generation"
 
 
 async def test_container_enables_tracing_only_with_both_keys(monkeypatch):

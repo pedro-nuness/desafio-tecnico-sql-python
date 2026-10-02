@@ -51,9 +51,9 @@ class Settings(BaseSettings):
     llm_circuit_breaker_reset_seconds: float = Field(gt=0)
     """How long an open circuit fails fast before letting one trial call through."""
 
-    generation_max_attempts: int = Field(ge=1)
+    code_generation_max_attempts: int = Field(ge=1)
     """Total generation attempts; >1 regenerates with the validation issues as feedback."""
-    generation_retry_budget_seconds: float = Field(gt=0)
+    code_generation_retry_budget_seconds: float = Field(gt=0)
     """No retry starts once the run is older than this (bounds the synchronous request)."""
 
     ruff_timeout_seconds: float = Field(gt=0)

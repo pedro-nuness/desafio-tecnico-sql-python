@@ -17,7 +17,7 @@ class RepairFeedback(ValueObject):
     issues: tuple[str, ...]
 
 
-class GenerationResult(ValueObject):
+class CodeGenerationResult(ValueObject):
     """Everything about one generation except the code (returned next to it)."""
 
     strategy: GenerationStrategy

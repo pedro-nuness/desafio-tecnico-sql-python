@@ -154,7 +154,7 @@
         }
       ]
     },
-    "generation": {
+    "code_generation": {
       "strategy": "hybrid",
       "recommended_strategy": "hybrid",
       "architectural_decisions": [
@@ -183,7 +183,7 @@
       ],
       "provider": "openrouter",
       "model": "z-ai/glm-5.3-flash",
-      "prompt_version": "generation-v5-sem-source",
+      "prompt_version": "code-generation-v5-sem-source",
       "input_tokens": 7518,
       "output_tokens": 5529,
       "latency_ms": 60679.49,
@@ -258,11 +258,11 @@
       "parsing",
       "semantic_analysis",
       "case_generation",
-      "generation",
+      "code_generation",
       "validation",
-      "generation",
+      "code_generation",
       "validation",
-      "generation",
+      "code_generation",
       "validation"
     ],
     "errors": [],

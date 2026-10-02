@@ -30,8 +30,8 @@ async def test_rejected_code_is_regenerated_with_validation_feedback(
     assert "rejected by validation" not in first.user_prompt
     assert "Attempt 2" in retry.user_prompt
     assert "[python_ast]" in retry.user_prompt and "def broken(:" in retry.user_prompt
-    assert result.report.generation is not None and result.report.generation.attempt == 2
-    generation, validation = PipelineStep.GENERATION, PipelineStep.VALIDATION
+    assert result.report.code_generation is not None and result.report.code_generation.attempt == 2
+    generation, validation = PipelineStep.CODE_GENERATION, PipelineStep.VALIDATION
     assert result.report.completed_steps[2:] == (generation, validation, generation, validation)
     assert any("generation attempt 2" in warning for warning in result.report.warnings)
 
@@ -46,7 +46,7 @@ async def test_retries_stop_at_max_attempts(
 
     assert result.status is ModernizationStatus.FAILURE
     assert len(llm.requests) == 3
-    assert result.report.generation is not None and result.report.generation.attempt == 3
+    assert result.report.code_generation is not None and result.report.code_generation.attempt == 3
 
 
 async def test_no_retry_once_the_time_budget_is_spent(
@@ -76,7 +76,7 @@ async def test_failed_retry_keeps_the_previous_attempt(
     assert recorded.status is ModernizationStatus.FAILURE
     assert recorded.generated_code == LINT_ONLY
     [error] = recorded.report.errors
-    assert (error.step, error.error_type) == (PipelineStep.GENERATION, "IntegrationError")
+    assert (error.step, error.error_type) == (PipelineStep.CODE_GENERATION, "IntegrationError")
 
 
 async def test_failing_runs_started_on_the_graph_are_recorded(
@@ -93,7 +93,7 @@ async def test_failing_runs_started_on_the_graph_are_recorded(
         ModernizationStatus.FAILURE,
     ]
     [error] = store.history[-1].report.errors
-    assert (error.step, error.error_type) == (PipelineStep.GENERATION, "RuntimeError")
+    assert (error.step, error.error_type) == (PipelineStep.CODE_GENERATION, "RuntimeError")
 
 
 async def test_runs_started_on_the_graph_are_persisted(

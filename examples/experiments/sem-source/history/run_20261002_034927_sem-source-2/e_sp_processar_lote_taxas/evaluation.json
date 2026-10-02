@@ -3,7 +3,7 @@
   "modernization_id": "01a0fab7-ef38-77ec-908b-bc2ef0319814",
   "procedure_name": "sp_processar_lote_taxas",
   "metric": "behavioral_equivalence",
-  "prompt_version": "generation-v5-sem-source",
+  "prompt_version": "code-generation-v5-sem-source",
   "model": "z-ai/glm-5.3-flash",
   "static_valid": true,
   "completed": true,

@@ -3,7 +3,7 @@
   "modernization_id": "01a0fab0-d953-7329-8a54-97d486fbf7b5",
   "procedure_name": "sp_atualizar_status_contas_inativas",
   "metric": "behavioral_equivalence",
-  "prompt_version": "generation-v5-sem-source",
+  "prompt_version": "code-generation-v5-sem-source",
   "model": "z-ai/glm-5.3-flash",
   "static_valid": true,
   "completed": true,

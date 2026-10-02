@@ -184,16 +184,16 @@ def _record_history(
     metrics = EvaluationSummary(evaluations=tuple(evaluations))
 
     tokens_in = sum(
-        (r.report.generation.input_tokens if r.report.generation else 0) for _, r in runs
+        (r.report.code_generation.input_tokens if r.report.code_generation else 0) for _, r in runs
     )
     tokens_out = sum(
-        (r.report.generation.output_tokens if r.report.generation else 0) for _, r in runs
+        (r.report.code_generation.output_tokens if r.report.code_generation else 0) for _, r in runs
     )
     prompt_versions = sorted({e.prompt_version or "unknown" for e in evaluations})
 
     procedures_detail = {}
     for (name, r), ev in zip(runs, evaluations, strict=True):
-        gen = r.report.generation
+        gen = r.report.code_generation
         dur = round((r.updated_at - r.created_at).total_seconds(), 1)
         procedures_detail[name] = {
             "status": r.status.value,
@@ -404,7 +404,7 @@ def _summary(
     ]
     for (name, run), evaluation in zip(runs, evaluations, strict=True):
         report = run.report
-        generation = report.generation
+        generation = report.code_generation
         analysis = report.semantic_analysis
         validation = report.validation
         cases = report.case_generation
@@ -545,10 +545,10 @@ def _print_screen_report(
     h_color = "bold green" if h_rate >= 0.8 else ("bold yellow" if h_rate > 0 else "bold red")
 
     total_tok_in = sum(
-        (r.report.generation.input_tokens if r.report.generation else 0) for _, r in runs
+        (r.report.code_generation.input_tokens if r.report.code_generation else 0) for _, r in runs
     )
     total_tok_out = sum(
-        (r.report.generation.output_tokens if r.report.generation else 0) for _, r in runs
+        (r.report.code_generation.output_tokens if r.report.code_generation else 0) for _, r in runs
     )
     total_tok = total_tok_in + total_tok_out
 
@@ -621,7 +621,7 @@ def _print_screen_report(
 
     for (name, run), evaluation in zip(runs, evaluations, strict=True):
         report = run.report
-        generation = report.generation
+        generation = report.code_generation
         analysis = report.semantic_analysis
         validation = report.validation
         cases = report.case_generation

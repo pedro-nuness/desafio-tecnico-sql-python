@@ -83,9 +83,9 @@ async def test_modernize_returns_structured_report(
     body = response.json()
     assert body["status"] == "success"
     assert body["generated_code"]
-    assert set(body["report"]) >= {"parsing", "semantic_analysis", "generation", "validation"}
+    assert set(body["report"]) >= {"parsing", "semantic_analysis", "code_generation", "validation"}
     assert body["report"]["parsing"]["procedure_name"] == "billing.process_customer_orders"
-    assert body["report"]["generation"]["strategy"] == "hybrid"
+    assert body["report"]["code_generation"]["strategy"] == "hybrid"
     assert body["report"]["semantic_analysis"]["recommended_strategy"] == "hybrid"
     assert all(check["success"] for check in body["report"]["validation"]["results"])
 
@@ -195,7 +195,7 @@ async def test_global_handler_maps_failures_and_points_to_the_recorded_run(
     assert stored["report"]["completed_steps"] == ["parsing", "semantic_analysis"]
     [recorded_error] = stored["report"]["errors"]
     assert recorded_error["error_type"] == type(error).__name__
-    assert recorded_error["step"] == "generation"
+    assert recorded_error["step"] == "code_generation"
     if isinstance(error, IntegrationError):
         assert recorded_error["payload"] == error.payload
     assert [m.status for m in store.history] == [
@@ -223,7 +223,7 @@ async def test_invalid_llm_payload_reaches_the_handler(
     assert response.status_code == 502
     stored = (await client.get(f"/modernizations/{response.json()['execution_id']}")).json()
     assert stored["status"] == "failure"
-    assert stored["report"]["errors"][0]["step"] == "generation"
+    assert stored["report"]["errors"][0]["step"] == "code_generation"
 
 
 async def test_validation_exception_keeps_generated_code_before_http_response(
@@ -254,7 +254,11 @@ async def test_validation_exception_keeps_generated_code_before_http_response(
     stored = (await client.get(f"/modernizations/{response.json()['execution_id']}")).json()
     assert stored["status"] == "failure"
     assert stored["generated_code"] == code
-    assert stored["report"]["completed_steps"] == ["parsing", "semantic_analysis", "generation"]
+    assert stored["report"]["completed_steps"] == [
+        "parsing",
+        "semantic_analysis",
+        "code_generation",
+    ]
     assert stored["report"]["errors"][0]["step"] == "validation"
     assert stored["report"]["errors"][0]["error_type"] == "RuntimeError"
 

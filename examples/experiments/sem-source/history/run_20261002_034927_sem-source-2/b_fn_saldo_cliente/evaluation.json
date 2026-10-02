@@ -3,7 +3,7 @@
   "modernization_id": "01a0fab6-2e50-7665-899b-ddf30a76d959",
   "procedure_name": "fn_saldo_cliente",
   "metric": "behavioral_equivalence",
-  "prompt_version": "generation-v5-sem-source",
+  "prompt_version": "code-generation-v5-sem-source",
   "model": "z-ai/glm-5.3-flash",
   "static_valid": true,
   "completed": true,

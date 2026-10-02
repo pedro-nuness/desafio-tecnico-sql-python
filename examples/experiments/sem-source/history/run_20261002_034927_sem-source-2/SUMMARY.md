@@ -2,7 +2,7 @@
 
 Modelo: `openrouter/z-ai/glm-5.3-flash` · schema do Anexo A enviado como contexto · gerado por `scripts/run_examples.py` · tag: `sem-source-2`.
 
-Prompt: `generation-v5-sem-source`. Equivalência: **4/5 rotinas (80%)**; **19/21 casos (90.5%)**. Só holdout (casos nunca mostrados ao LLM): **4/5 rotinas, 8/9 casos (88.9%)**. Validade estática (AST): 100%; conclusão: 100%.
+Prompt: `code-generation-v5-sem-source`. Equivalência: **4/5 rotinas (80%)**; **19/21 casos (90.5%)**. Só holdout (casos nunca mostrados ao LLM): **4/5 rotinas, 8/9 casos (88.9%)**. Validade estática (AST): 100%; conclusão: 100%.
 
 Casos gerados pelo LLM (somados aos dev no pipeline): **ligado**.
 
